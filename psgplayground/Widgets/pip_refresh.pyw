@@ -22,7 +22,7 @@ pip_refresh.pyw  -  Pip Refresh: keeps your pip packages fresh from GitHub and P
         Brightness... opens a slider under the card: any theme darker (down to -80%) or lighter (+50%), the card changing as you drag.
 
     Where the versions come from:  installed = importlib.metadata (pip's direct_url.json says where it came from);  GitHub = the version= line of
-        setup.py (or pyproject.toml) on that branch;  PyPI = pypi.org/pypi/<name>/json (the latest release, and every release with its upload date).
+        setup.py (or pyproject.toml, or the file setup.py reads) on that branch;  PyPI = pypi.org/pypi/<name>/json (the latest release, and every release with its upload date).
     The installs:  GitHub:  python -m pip install --upgrade --no-cache-dir https://github.com/<owner/repo>/zipball/<branch>
                    PyPI:    python -m pip install --upgrade --no-cache-dir <name>==<version>
         --upgrade alone reinstalls a zipball; --force-reinstall would also reinstall every dependency from PyPI.  The same PyPI version again (say
@@ -32,6 +32,7 @@ pip_refresh.pyw  -  Pip Refresh: keeps your pip packages fresh from GitHub and P
     Requires:  pip install PySimpleGUI pillow          optional:  psgdnd  (drop GitHub links onto the Settings window)
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-02  v2.0.10  Claude: GitHub column: when setup.py takes its VERSION from another file (psgplayground: playground.py), Pip Refresh reads that file
 2026-11-02  v2.0.9  Claude: Linux: the Settings window can no longer jump away while an entry is dragged (grab-anywhere is off during the drag)
 2026-11-02  v2.0.8  Claude: fixed 'A version check crashed' (KeyError in importlib.invalidate_caches) - the check threads now take turns calling it
 2026-11-02  v2.0.7  Claude: Linux / Mac: square corners - only Windows can make them see-through, elsewhere they showed black; the Brightness panel too
@@ -77,7 +78,7 @@ try:
 except Exception:
     psgdnd = None
 
-VERSION = '2.0.9'
+VERSION = '2.0.10'
 APP_NAME = 'Pip Refresh'
 SETTINGS_FILE = 'pip_refresh.json'
 OLD_APP_NAME, OLD_SETTINGS_FILE = 'Pip Fresh', 'pip_fresh.json'          # its name for the morning of 1-Nov-2026
@@ -283,7 +284,7 @@ def local_version(name):
 
 
 def github_version(repo, branch):
-    """(version, None) from the version= line of setup.py or pyproject.toml on that branch, or (None, the reason it couldn't be read)"""
+    """(version, None) from the version= line of setup.py or pyproject.toml on that branch (or of the file setup.py reads it from), or (None, the reason it couldn't be read)"""
     if not repo:
         return None, 'no GitHub repo set - open Settings'
     reason = 'no setup.py or pyproject.toml found - check the repo and branch'
@@ -302,6 +303,18 @@ def github_version(repo, branch):
         if m:
             return m.group(1), None
         reason = f'no version = "..." line in {filename}'
+        vfile = re.search(r'os\.path\.join\([^()"\']*((?:["\'][^"\']+["\']\s*,\s*)*["\'][^"\']+\.py["\'])\s*\)', text) if filename == 'setup.py' else None
+        if vfile:                                   # setup.py reads its VERSION from a package file (psgplayground: playground.py) - read the version there
+            path = '/'.join(re.findall(r'["\']([^"\']+)["\']', vfile.group(1)))
+            url = url.rsplit('/', 1)[0] + '/' + path
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': f'{APP_NAME.replace(" ", "")}/{VERSION}'}), timeout=15) as res:
+                    m = re.search(r'^(?:__version__|VERSION|version)\s*=\s*["\']([^"\']+)["\']', res.read().decode('utf-8', 'replace'), re.M)
+            except Exception as e:
+                return None, f'could not read {path} ({e.__class__.__name__})'
+            if m:
+                return m.group(1), None
+            reason = f'no version line in setup.py or {path}'
     return None, reason
 
 
