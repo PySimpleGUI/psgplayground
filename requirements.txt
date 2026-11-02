@@ -1,0 +1,15 @@
+# Everything any app in the Playground can use.  Each app lists its own needs in catalog.json and the launcher installs them per app,
+# so you only need this file if you want all of it at once:   python -m pip install -r requirements.txt
+PySimpleGUI>=5
+pillow
+psutil
+psgdnd
+psgtray
+pystray
+watchdog
+deep-translator
+pymupdf
+pyfiglet
+keyboard
+mouse
+pywin32; sys_platform == 'win32'
