@@ -7,6 +7,7 @@ dev/icons_out/
 psgplayground/Programming/snap_regression/output/
 psgplayground/Programming/snap_regression/diffs/
 build/
+dist/
 *.egg-info/
 _download_mover_backup/
 dev/readme_copies/
