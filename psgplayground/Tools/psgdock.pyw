@@ -25,7 +25,8 @@ import json
     Each style keeps its own place - floating anywhere, or docked to the bottom / top / left / right edge of a screen, auto-hidden if you
     like - and its own size:  S M L on the dock, or drag across them for any size between.  Drop programs from Explorer onto the dock - they
     land where you drop them.  Right-click a program for its own menu (open its folder, edit its source, rename, remove...).  Windows: an
-    optional Glass look - see-through, with soft shadows.  The Programs window edits the whole list: drag entries by their ☰ grip.
+    optional Glass look - see-through, with soft shadows.  Rearrange in the Panel: drag a program, or a heading to move its whole section
+    (the Bar shows the same order).  The Programs window edits the whole list: drag entries by their ☰ grip.
 
     Changelog
     2.1     29-Oct-2026     Claude: single file (settings window merged in), toolbar + OK/Apply/Cancel settings window, drag-and-drop of
@@ -37,6 +38,11 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.28  03-Nov-2026     Claude: Programs window - dragging an entry near the list's top or bottom scrolls much faster: faster the
+                            closer to the edge, faster still past it (move the mouse beyond the list), and it speeds up while you hold
+                            it there; the mouse wheel scrolls too while dragging. The dock says where to rearrange: the Panel's bottom
+                            line (drag to rearrange), the Programs window's hint, and a docked Bar shows a tip the first time an icon
+                            is dragged (rearranging is done in the Panel - the Bar shows the same order).
     2.2.27  03-Nov-2026     Claude: Panel - drag a program to a new place in the dock (another section or column too), or drag a heading
                             to move its whole section. A copy follows the mouse, a blue line shows where it lands, it is saved at once;
                             let go outside the dock and nothing moves. A floating dock now moves by its title strip or an empty spot -
@@ -146,7 +152,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.27'
+version = '2.2.28'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -212,6 +218,7 @@ class G:
     location, legacy_style, default_pt = None, 'Panel', None                                  # this style's floating spot; the style 2.2.19 showed; where the last dock was
     full_size, sliding = None, False                    # the whole dock's size (the window is only its handle while auto-hidden); sliding in / out
     scrub = None                                        # dragging across S M L
+    tip_shown, scroll_since = False, None               # the Bar's 'rearrange in the Panel' tip was shown; Programs window: held at an edge since
     drag_item = None                                    # Panel: a program / section being dragged to a new place (its list positions, the copy that follows the mouse...)
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
     stack_open, stack_closed, drop_stack = None, None, None                                   # Bar Stacks: the one flown out, the last closed (num, time), a drop aimed at one
@@ -260,6 +267,7 @@ K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE = '-E RENAME-', '-E REMOVE-', 
 K_E_BAR = '-E IN BAR-'                          # a program's / heading's menu: Show in the Bar
 K_MOVED = '-MOVED-'                             # the floating dock was dragged to a new place
 K_REORDER = '-REORDER-'                         # Panel: a program / section dragged to a new place, value = (start, end, list position)
+K_TIP = '-TIP-'                                 # a short tip to show beside the mouse, value = its text
 K_TEXT = '-TEXT SIZE-'                          # right-click > Text size (settings entry, and the prefix of the menu keys)
 KT_TEXT = lambda name: f'{K_TEXT}{name}'
 K_SECTIONS = '-SECTION COLORS-'                 # right-click > Colored sections
@@ -596,9 +604,11 @@ def slot_colors():
     bg = sg.theme_background_color()
     return blend(bg, 'black' if T().get('light') else 'white', 0.07 if T().get('light') else 0.18), blend(bg, sg.theme_text_color(), 0.45)
 DRAG_START = 6                                                                  # pixels the mouse moves before a press on the grip becomes a drag
-AUTOSCROLL_EDGE = 40                                                            # dragging within this many pixels of the list's top/bottom scrolls it
-AUTOSCROLL_MS = 30                                                              # auto-scroll tick while the pointer is in that edge zone
-AUTOSCROLL_MIN_PX, AUTOSCROLL_MAX_PX = 1, 8                                     # pixels per tick - slow just inside the zone, fastest at the very edge
+AUTOSCROLL_EDGE = 50                                                            # dragging within this many pixels of the list's top/bottom scrolls it
+AUTOSCROLL_MS = 25                                                              # auto-scroll tick while the pointer is in that edge zone
+AUTOSCROLL_MIN_PX, AUTOSCROLL_MAX_PX = 2.5, 10                                  # pixels per tick inside the zone - slow at its inner side, faster at the very edge
+AUTOSCROLL_PAST, AUTOSCROLL_PAST_PX = 120, 32                                   # the mouse past the list's edge: up to this much further = up to this many more per tick
+AUTOSCROLL_RAMP = 1.5                                                           # held in the zone for this many seconds: it scrolls twice as fast
                                                                                 # (all three in 96-dpi pixels - multiplied by the display scaling, G.dpi)
 FILENAME_INPUT_LENGTH = 80
 
@@ -1218,6 +1228,8 @@ def drag_lift(window:sg.Window, drag, y_root):
     n = drag['src']                                                         # the copy sits under the pointer, so it may get the mouse events instead of the grip
     top.bind('<B1-Motion>', lambda e: window.write_event_value(K_DRAG_MOTION, (n, e.x_root, e.y_root)))
     top.bind('<ButtonRelease-1>', lambda e: window.write_event_value(K_DRAG_RELEASE, (n, e.x_root, e.y_root)))
+    for seq in ('<MouseWheel>', '<Button-4>', '<Button-5>'):                # the wheel scrolls the list while an entry is dragged (Windows / Linux)
+        top.bind(seq, lambda e: wheel_while_dragging(window, drag, e))
     try:                                                                    # Linux: unmapping the grip's row ended its hold on the mouse, so the moves went to the
         top.update()                                                        # window instead (it jumped away, and the drop was lost) - the copy takes every mouse event
         top.grab_set()
@@ -1245,18 +1257,21 @@ def drag_motion(window:sg.Window, drag, x_root, y_root):
 
 
 def autoscroll_speed(window:sg.Window, y_root):
-    """ Pixels to scroll per tick for a pointer at y_root: 0 away from the edges, negative = up.  Gets faster the deeper into the edge zone """
+    """ Pixels to scroll per tick for a pointer at y_root: 0 away from the edges, negative = up.  Gets faster the deeper into the edge zone,
+        much faster with the mouse past the list's edge, and up to twice as fast once it has been held there AUTOSCROLL_RAMP seconds """
     column = window[K_ALL_COLS].widget
     top, bottom = column.winfo_rooty(), column.winfo_rooty() + column.winfo_height()
-    edge = AUTOSCROLL_EDGE * G.dpi                                      # the list is drawn G.dpi times bigger on a scaled display
+    edge, past = AUTOSCROLL_EDGE * G.dpi, AUTOSCROLL_PAST * G.dpi       # the list is drawn G.dpi times bigger on a scaled display
     if y_root < top + edge:
         depth, direction = top + edge - y_root, -1
     elif y_root > bottom - edge:
         depth, direction = y_root - (bottom - edge), 1
     else:
         return 0
-    depth = min(1.0, depth / edge)
-    return direction * round((AUTOSCROLL_MIN_PX + (AUTOSCROLL_MAX_PX - AUTOSCROLL_MIN_PX) * depth) * G.dpi)
+    inside, beyond = min(1.0, depth / edge), min(1.0, max(0.0, depth - edge) / past)
+    held = time.time() - G.scroll_since if G.scroll_since else 0
+    ramp = 1 + min(1.0, held / AUTOSCROLL_RAMP)
+    return direction * ((AUTOSCROLL_MIN_PX + (AUTOSCROLL_MAX_PX - AUTOSCROLL_MIN_PX) * inside ** 2) * ramp + AUTOSCROLL_PAST_PX * beyond) * G.dpi
 
 
 def autoscroll_tick(window:sg.Window, drag):
@@ -1264,14 +1279,26 @@ def autoscroll_tick(window:sg.Window, drag):
     drag['after'] = None
     if drag.get('done'):
         return
+    G.scroll_since = G.scroll_since or time.time()                      # how long it has been held in the edge zone - it speeds up
     speed = autoscroll_speed(window, drag['pointer_y'])
     if not speed:
+        G.scroll_since = None
         return
     column = window[K_ALL_COLS].widget
     first = column.canvas.yview()[0]
     column.canvas.yview_moveto(first + speed / max(1, column.TKFrame.winfo_height()))
     move_slot(window, drag, drag['pointer_y'])
     drag['after'] = window.TKroot.after(AUTOSCROLL_MS, lambda: autoscroll_tick(window, drag))
+
+
+def wheel_while_dragging(window:sg.Window, drag, e):
+    """ The mouse wheel turned while an entry is dragged: scroll the list (3 lines a notch) and move the slot along """
+    if drag.get('done'):
+        return
+    notches = (e.delta / 120 if e.delta else 0) or (1 if getattr(e, 'num', 0) == 4 else -1 if getattr(e, 'num', 0) == 5 else 0)
+    if notches:
+        window[K_ALL_COLS].widget.canvas.yview_scroll(-round(notches * 3) or (-1 if notches > 0 else 1), 'units')
+        move_slot(window, drag, drag.get('pointer_y', e.y_root))
 
 
 def move_slot(window:sg.Window, drag, y_root):
@@ -1592,7 +1619,7 @@ def programs_window(near=None):
     all_columns = sg.Column(col_layouts, size=(None, list_height), k=K_ALL_COLS, vertical_scroll_only=True, scrollable=True, expand_y=True, expand_x=True, p=(6, 2))
     status_bar = [sg.T('', k=K_STATUS, font='_ 10'), sg.Push(),                                  # file name only - the full path is in its tooltip, so the bar stays narrow
                   sg.T(os.path.basename(G.launcher_settings.get_filename()), font='_ 9', text_color=T()['dim'], tooltip=f'The list is saved in\n{G.launcher_settings.get_filename()}'), sg.Sizegrip()]
-    hint = 'Drag ☰ to reorder.   Drop a program or a picture onto an entry.'
+    hint = 'Drag ☰ to reorder - or drag them right on the dock, in the Panel.   Drop a program or a picture onto an entry.'
     body = [title_strip(f'{APP_NAME} Programs', 'Exit'),                                        # the strip's x sends 'Exit', handled like Cancel
             [sg.Column([toolbar], expand_x=True, p=(8, (8, 2)))],
             [sg.Text(hint, font='_ 9', text_color=T()['dim'], p=(12, (2, 4)))],
@@ -2085,7 +2112,9 @@ def hint(part):
         ver = G.versions.get(b.block_num, '') if G.show_versions else ''
         return (b.path + (f'   ·   v{ver}' if ver else '')) if b.path else 'No program set for this entry - add one in the Programs window'
     n = sum(1 for b in Block.active_blocks.values() if b.kind != KIND_HEADING)
-    return f'{n} program{"s" * (n != 1)}   ·   drop programs here   ·   right-click for options' if n else 'No programs yet - drop some here, or click the gear'
+    if not n:
+        return 'No programs yet - drop some here, or click the gear'
+    return f'{n} program{"s" * (n != 1)}   ·   drag to rearrange   ·   drop programs here   ·   right-click for options'
 
 
 def render_card():
@@ -2182,6 +2211,10 @@ def render_card():
     # ---- bottom line: the path of the program under the mouse, or a summary
     d.line((14 * k, foot_y * k, (W - 14) * k, foot_y * k), fill=t['track'], width=max(1, round(k)))
     text = G.drag_item['hint'] if G.drag_item else hint(('size', '') if G.scrub is not None else G.hover)
+    if '   ·   ' in text and (G.drag_item or G.hover is None):            # a narrow dock: a shorter line instead of a cut-off one
+        p = text.split('   ·   ')                                       # (the summary keeps 'drag to rearrange' longest)
+        choices = {4: [p, p[:2] + p[3:], p[1:2] + p[3:], p[1:2]], 3: [p, p[:1] + p[2:], p[:1]]}.get(len(p), [p, p[:1]])
+        text = next(('   ·   '.join(c) for c in choices if d.textlength('   ·   '.join(c), font=small_font) <= (W - 28) * k), '   ·   '.join(choices[-1]))
     d.text((W / 2 * k, (foot_y + FOOT_H / 2 - 1) * k), fit(d, text, small_font, (W - 28) * k, keep_end=True), font=small_font, fill=t['text'] if G.hover or G.scrub else t['dim'], anchor='mm')
     im = im.resize((round(W * s), round(H * s)), Image.LANCZOS)
     off = round(PANEL_SHADOW * s) if G.glass else 0                     # Glass: room all round for a soft shadow
@@ -3231,6 +3264,9 @@ def bind_mouse(window):
                 drag_entry(window, e.x_root, e.y_root)
                 return
             if G.place != 'Floating':
+                if G.style == 'Bar' and not G.tip_shown and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'stack'):
+                    G.tip_shown = True                                  # the Bar doesn't rearrange - say where it's done (once)
+                    window.write_event_value(K_TIP, 'To rearrange your programs, use the Panel:\nclick the switch, then drag them where you want.\nThe Bar shows the same order.')
                 return
             p['moving'] = True
             widget.configure(cursor='fleur')
@@ -3515,12 +3551,19 @@ def pointer():
         return tuple(v // 2 for v in sg.Window.get_screen_size())
 
 
-def notice(text, color='#2e7d32', seconds=2):
-    """ A short message beside the mouse - where you are looking - that goes away by itself """
+def notice(text, color='#2e7d32', seconds=2, beside_dock=False):
+    """ A short message beside the mouse - where you are looking - that goes away by itself.  beside_dock: next to a docked dock instead, on
+        its inward side (above a Bar at the bottom...), so it doesn't cover it """
     px, py = pointer()
     w = round((max(len(line) for line in text.split('\n')) * 9 + 60) * G.dpi)
     h = round((40 + 22 * text.count('\n')) * G.dpi)
-    x, y = onto_screen(px + round(16 * G.dpi), py + round(20 * G.dpi), w, h)
+    x, y = px + round(16 * G.dpi), py + round(20 * G.dpi)
+    if beside_dock and G.window is not None:
+        dx, dy, dw, dh = window_rect(G.window)
+        gap = round(12 * G.dpi)
+        x, y = {'Bottom': (px - w // 2, dy - h - gap), 'Top': (px - w // 2, dy + dh + gap), 'Left': (dx + dw + gap, py - h // 2),
+                'Right': (dx - w - gap, py - h // 2)}.get(G.place, (x, y))
+    x, y = onto_screen(x, y, w, h)
     sg.popup_quick_message(text, font='_ 12', text_color='white', background_color=color, keep_on_top=True, auto_close_duration=seconds, location=(x, y))
 
 
@@ -4358,6 +4401,8 @@ def main():
             remember_location(window, values[K_MOVED])
         elif event == K_REORDER:                                        # a program or section dragged to a new place in the Panel
             move_entries(window, *values[K_REORDER])
+        elif event == K_TIP:                                            # a tip next to the dock (a docked Bar: on its inward side, not over it)
+            notice(values[K_TIP], C_SELECT, 6, beside_dock=True)
         elif event == K_CLICK:
             part = values[K_CLICK]
             if part == 'close':
