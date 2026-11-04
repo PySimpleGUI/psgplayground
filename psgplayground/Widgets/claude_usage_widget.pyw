@@ -7,7 +7,8 @@ THE WIDGET
       Session      ▓▓▓░░░░░░░░░   9%   in 4h 51m   bar: % of that limit used · the thin grey tick is where you'd be at an even pace
       All models   ▓▓░░░░░░░░░░   8%   Mon 3 PM
       Fable        ▓▓▓▓░░░░░░░░  16%   Mon 3 PM
-      Credits      $209.19 spent · resets Oct 1
+      Credits      ▓▓▓░░░░░░░░░  31%   $103.50 left    the month's usage credits against your monthly limit (green bar)
+                   $46.50 of $150.00 spent · about $13.20/day
       [ graph ]    % over time for one limit (0-100 on the Y axis), solid = what happened, dashed = where your current rate leads
       ⚠ Session runs out ~7:40 PM - 1h 23m before its reset
     Click it          ->  Detail window: every limit with its own history graph + forecast, reset time, spend, raw JSON.
@@ -36,6 +37,10 @@ Needs only PySimpleGUI - everything else is stdlib.  Settings and history live i
 user-settings folder; problems are logged to claude_usage_widget.log in the same folder.
 
 CHANGELOG
+    1.6.6  03-Nov-2026   Credits get a bar row like the limits - % of the monthly limit, $ left, $ spent and $/day - and count in the
+                         forecast line ("Credits reach the $150 limit ~Nov 11").  Detail window: a Credits graph + forecast, and this week's
+                         use by app (Cowork / Claude Code / Chats).  Credits can be the widget's graph.  The usage response no longer gives
+                         a reset date for credits, so the 1st of next month is used (Claude's settings page shows 'Resets <month> 1')
     1.6.5  01-Nov-2026   Keep on top can be turned off - right-click / ≡ menu (✓ when on) or Settings; remembered between runs
 """
 import base64
@@ -58,7 +63,7 @@ from datetime import datetime, timedelta, timezone
 import PySimpleGUI as sg
 
 APP_NAME = 'Claude Usage'
-VERSION = '1.6.5'
+VERSION = '1.6.6'
 SETTINGS_FILE = 'claude_usage_widget.json'
 LOG_FILE_NAME = 'claude_usage_widget.log'
 DEMO = '--demo' in sys.argv
@@ -76,9 +81,9 @@ USER_AGENT = 'claude-code/2.0.31'                                # a claude-code
 MAX_BARS = 6                                                     # limit rows built into the layout; extra buckets are ignored
 HISTORY_KEEP = 3000                                              # samples kept in the settings file (~10 days at 5 min)
 WINDOW_SECONDS = {'session': 5 * 3600, 'weekly_all': 7 * 86400, 'weekly_scoped': 7 * 86400}
-RATE_LOOKBACK = {'session': 90 * 60, 'weekly_all': 24 * 3600, 'weekly_scoped': 24 * 3600}   # how far back the slope is fitted
+RATE_LOOKBACK = {'session': 90 * 60, 'weekly_all': 24 * 3600, 'weekly_scoped': 24 * 3600, 'spend': 3 * 86400}   # how far back the slope is fitted
 MIN_FIT_SECONDS = 15 * 60                                        # a slope needs checks spanning at least this long
-GRAPH_CHOICES = ['Favorite model', 'Session', 'All models', 'Most urgent']
+GRAPH_CHOICES = ['Favorite model', 'Session', 'All models', 'Credits', 'Most urgent']
 
 # ---------------------------------------------------------------- colors (GitHub dark palette, same as github_repo_watch) ----------------------------------------------------------------
 C_BG, C_BG2, C_BG3, C_LINE = '#0d1117', '#161b22', '#21262d', '#30363d'
@@ -101,6 +106,10 @@ K_STATUS = '-STATUS-'
 K_CLICK = '-CLICK-'
 K_SPEND_ROW = '-SPEND ROW-'
 K_SPEND_TEXT = '-SPEND TEXT-'
+K_SPEND_LABEL = '-SPEND LABEL-'
+K_SPEND_BAR = '-SPEND BAR-'
+K_SPEND_PCT = '-SPEND PCT-'
+K_SPEND_LEFT = '-SPEND LEFT-'
 K_GRAPH_ROW = '-GRAPH ROW-'
 K_GRAPH = '-GRAPH-'
 K_GRAPH_NAME = '-GRAPH NAME-'
@@ -123,6 +132,11 @@ K_D_CAST = '-D CAST-';        KT_D_CAST = lambda i: (K_D_CAST, i)
 K_D_PANE = '-D PANE-'
 K_D_HEAD = '-D HEAD-'
 K_D_SPEND = '-D SPEND-'
+K_D_CRED_PCT = '-D CRED PCT-'
+K_D_CRED_BAR = '-D CRED BAR-'
+K_D_CRED_GRAPH = '-D CRED GRAPH-'
+K_D_CRED_CAST = '-D CRED CAST-'
+K_D_BREAKDOWN = '-D BREAKDOWN-'
 K_D_ACCOUNT = '-D ACCOUNT-'
 K_REFRESH = '-REFRESH-'
 K_RAW = '-RAW-'
@@ -287,9 +301,9 @@ def when_text(dt):
 
 
 def time_ticks(t0, t1):
-    """(datetime, label) pairs for the X axis: hourly for a few hours, 6-hourly for a couple of days, daily beyond."""
+    """(datetime, label) pairs for the X axis: hourly for a few hours, 6-hourly for a couple of days, daily for a week or two, weekly beyond."""
     span = (t1 - t0).total_seconds()
-    step = 3600 if span <= 8 * 3600 else 6 * 3600 if span <= 60 * 3600 else 86400
+    step = 3600 if span <= 8 * 3600 else 6 * 3600 if span <= 60 * 3600 else 86400 if span <= 16 * 86400 else 7 * 86400
     local = t0.astimezone()
     first = local.replace(minute=0, second=0, microsecond=0)
     if step >= 86400:
@@ -300,7 +314,8 @@ def time_ticks(t0, t1):
         first += timedelta(seconds=step)
     out = []
     while first <= t1.astimezone():
-        out.append((first, f'{first:%a}' if step >= 86400 else (first.strftime('%I %p').lstrip('0') if step == 3600 else f'{first:%a} ' + first.strftime('%I %p').lstrip('0'))))
+        hour = first.strftime('%I %p').lstrip('0')
+        out.append((first, f'{first:%b} {first.day}' if step > 86400 else f'{first:%a}' if step == 86400 else hour if step == 3600 else f'{first:%a} {hour}'))
         first += timedelta(seconds=step)
     return out
 
@@ -316,6 +331,25 @@ def dashed(graph, a, b, color, width=2, dash=6, gap=4):
         end = min(length, pos + dash)
         graph.draw_line((a[0] + ux * pos, a[1] + uy * pos), (a[0] + ux * end, a[1] + uy * end), color=color, width=width)
         pos = end + gap
+
+
+def next_month_start():
+    """Midnight on the 1st of next month, local time - when the monthly credit limit starts over.  The usage response stopped giving a reset date
+       for credits (seen 3-Nov-2026); Claude's settings page has always said 'Resets <month> 1'."""
+    first = (datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=32)).replace(day=1)
+    return first.astimezone()                                   # local midnight, with that day's UTC offset (daylight saving)
+
+
+def month_span(resets_at):
+    """Seconds from the 1st of the month before resets_at to resets_at - the length of the credits' month"""
+    end = resets_at.astimezone()
+    start = (end.replace(tzinfo=None) - timedelta(days=1)).replace(day=1)        # naive local time, so a daylight-saving change in between is counted right
+    return (end - start.astimezone()).total_seconds()
+
+
+def span_of(bucket):
+    """How long a limit's window is: the credits carry their month's length, the others come from WINDOW_SECONDS"""
+    return bucket.get('span') or WINDOW_SECONDS.get(bucket['kind'])
 
 
 def minor(obj):
@@ -570,17 +604,21 @@ def parse_usage(raw):
     spend = None
     extra, sp = raw.get('extra_usage') or {}, raw.get('spend') or {}
     if sp.get('enabled'):
-        spend = {'used': money(sp.get('used')), 'limit': money(sp.get('limit')) or 'Unlimited', 'percent': sp.get('percent'), 'resets_at': parse_iso(sp.get('resets_at')),
-                 'used_num': minor(sp.get('used')), 'limit_num': minor(sp.get('limit')), 'symbol': SYMBOL.get((sp.get('used') or {}).get('currency', 'USD'), '')}
+        spend = {'used': money(sp.get('used')), 'limit': money(sp.get('limit')) or 'Unlimited', 'percent': sp.get('percent'),
+                 'resets_at': parse_iso(sp.get('resets_at')) or next_month_start(), 'used_num': minor(sp.get('used')), 'limit_num': minor(sp.get('limit')),
+                 'symbol': SYMBOL.get((sp.get('used') or {}).get('currency', 'USD'), ''), 'balance': money(sp.get('balance')), 'severity': sp.get('severity') or ''}
     elif extra.get('is_enabled'):
         div = 10 ** extra.get('decimal_places', 2)
         used, cap = extra.get('used_credits'), extra.get('monthly_limit')
         spend = {'used': f'${used / div:,.2f}' if used is not None else None, 'limit': f'${cap / div:,.2f}' if cap is not None else 'Unlimited',
-                 'percent': extra.get('utilization'), 'resets_at': parse_iso(extra.get('resets_at')), 'used_num': used / div if used is not None else None,
-                 'limit_num': cap / div if cap is not None else None, 'symbol': '$'}
+                 'percent': extra.get('utilization'), 'resets_at': parse_iso(extra.get('resets_at')) or next_month_start(), 'used_num': used / div if used is not None else None,
+                 'limit_num': cap / div if cap is not None else None, 'symbol': '$', 'balance': None, 'severity': ''}
     account = raw.get('account') or {}
     plan = account.get('subscription_level') or raw.get('rate_limit_tier') or raw.get('subscription_type') or ''
-    return {'buckets': buckets[:MAX_BARS], 'spend': spend, 'plan': plan_label(plan), 'account': account, 'raw': raw, 'at': utcnow()}
+    rows = (raw.get('seven_day_breakdown') or {}).get('rows') or []
+    breakdown = sorted(((r.get('display_name') or r.get('key') or '?', r['percent']) for r in rows if isinstance(r, dict) and (r.get('percent') or 0) > 0),
+                       key=lambda x: -x[1])                       # this week's use by app: Cowork / Claude Code / Chats / Other
+    return {'buckets': buckets[:MAX_BARS], 'spend': spend, 'plan': plan_label(plan), 'account': account, 'raw': raw, 'at': utcnow(), 'breakdown': breakdown}
 
 
 def demo_snapshot():
@@ -593,8 +631,10 @@ def demo_snapshot():
                        'scope': {'model': {'display_name': 'Fable 5'}}},
                       {'kind': 'weekly_scoped', 'percent': 7, 'resets_at': weekly.isoformat(), 'severity': 'normal', 'is_active': True, 'group': 'weekly',
                        'scope': {'model': {'display_name': 'Fable 5.1'}}}],
-           'spend': {'enabled': True, 'percent': 42, 'used': {'amount_minor': 20919, 'currency': 'USD', 'exponent': 2}, 'limit': {'amount_minor': 50000, 'currency': 'USD', 'exponent': 2},
-                     'resets_at': (now + timedelta(days=13)).isoformat()},
+           'spend': {'enabled': True, 'percent': 31, 'used': {'amount_minor': 4650, 'currency': 'USD', 'exponent': 2},
+                     'limit': {'amount_minor': 15000, 'currency': 'USD', 'exponent': 2}, 'severity': 'normal', 'balance': None},
+           'seven_day_breakdown': {'rows': [{'key': 'claude_code', 'display_name': 'Claude Code', 'percent': 64}, {'key': 'chat', 'display_name': 'Chats', 'percent': 21},
+                                            {'key': 'cowork', 'display_name': 'Cowork', 'percent': 15}, {'key': 'other', 'display_name': 'Other', 'percent': 0}]},
            'account': {'email': 'you@example.com', 'subscription_level': 'max_20x', 'display_name': 'Demo account'}}
     snap = parse_usage(raw)
     snap['source'] = 'demo data'
@@ -613,7 +653,7 @@ def demo_history():
             k = (ago_h - 115 / 60) % 5
             session = 0 if k < 1.5 else min(88.0, (k - 1.5) * 26)
         out.append({'t': t.isoformat(), 'session': round(session, 1), 'weekly_all': round(max(0.0, 8 - ago_h * 0.09), 1), 'scoped:Fable 5': round(max(0.0, 16 - ago_h * 0.2), 1),
-                    'scoped:Fable 5.1': round(max(0.0, 7 - ago_h * 0.24), 1), 'spend': round(209.19 - ago_h * 0.62, 2)})
+                    'scoped:Fable 5.1': round(max(0.0, 7 - ago_h * 0.24), 1), 'spend': round(max(0.0, 46.5 - 0.55 * (ago_h // 4) * 4), 2)})   # credits go up in steps
     return out
 
 
@@ -683,7 +723,7 @@ class App:
 
     def pace(self, bucket):
         """How far through this limit's window we are, 0-100 - the even-pace mark the bar's grey tick shows."""
-        span = WINDOW_SECONDS.get(bucket['kind'])
+        span = span_of(bucket)
         if not span or not bucket['resets_at'] or not cfg(K_SHOW_PACE):
             return None
         left = (bucket['resets_at'] - utcnow()).total_seconds()
@@ -719,14 +759,17 @@ class App:
                    sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=KT_PCT(i), pad=(0, 1)),
                    sg.Text('', size=(10, 1), font=f['small'], text_color=C_MUTED, key=KT_RESET(i), pad=((6, 8), 1))]
             rows.append([sg.Column([row], key=KT_ROW(i), pad=0, visible=False, background_color=C_BG)])
+        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=C_SPEND, key=K_SPEND_LABEL, pad=((10, 6), 1)),
+                                 sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=K_SPEND_BAR, pad=((0, 6), 1)),
+                                 sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_SPEND_PCT, pad=(0, 1)),
+                                 sg.Text('', size=(10, 1), font=f['small'], text_color=C_MUTED, key=K_SPEND_LEFT, pad=((6, 8), 1))],
+                                [sg.Text('', font=f['small'], text_color=C_MUTED, key=K_SPEND_TEXT, pad=((10, 8), (0, 3)))]],
+                               key=K_SPEND_ROW, pad=0, visible=False, background_color=C_BG)])
         graph_size = (int(280 * self.scale), int(46 * self.scale))
         rows.append([sg.Column([[sg.Text('', size=(12, 1), font=f['small'], key=K_GRAPH_NAME, pad=((10, 6), 1)),
                                  sg.Graph(graph_size, (0, 0), graph_size, background_color=C_BG, key=K_GRAPH, pad=((0, 8), (3, 2)), tooltip='Solid: checks so far · dashed: at the current rate · dotted line: the reset')]],
                                key=K_GRAPH_ROW, pad=0, visible=False, background_color=C_BG)])
         rows.append([sg.Text('', font=f['small'], text_color=C_DIM, key=K_FORECAST, pad=((10, 8), (0, 2)))])
-        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=C_SPEND, pad=((10, 6), 1)),
-                                 sg.Text('', font=f['small'], text_color=C_MUTED, key=K_SPEND_TEXT, pad=((0, 8), 2))]],
-                               key=K_SPEND_ROW, pad=0, visible=False, background_color=C_BG)])
         rows.append([sg.Text('starting…', font=f['small'], text_color=C_DIM, key=K_STATUS, pad=((10, 0), (0, 3))), sg.Push(background_color=C_BG),
                      sg.ButtonMenu('≡', MENU, key=K_MENU, font=f['name'], button_color=(C_MUTED, C_BG), border_width=0, pad=((0, 6), (0, 2)), tooltip='Menu (or right-click anywhere)')])
         self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100, auto_save_location=True,
@@ -755,7 +798,8 @@ class App:
     def refresh_widget(self):
         snap, f = self.snap, self.fonts()
         buckets = snap['buckets'] if snap and snap.get('ok') else []
-        worst = max((b['percent'] for b in buckets), default=None)
+        cb = self.credit_bucket() if cfg(K_SHOW_SPEND) else None
+        worst = max([b['percent'] for b in buckets] + ([cb['percent']] if cb else []), default=None)
         self.widget[K_DOT].update(text_color=C_BUSY if self.busy else C_CRIT if snap and not snap.get('ok') else self.level_color(worst))
         self.widget[K_PLAN].update(snap['plan'] if snap and snap.get('ok') and snap['plan'] else ('demo' if DEMO else ''))
         for i in range(MAX_BARS):
@@ -773,8 +817,20 @@ class App:
         spend = snap.get('spend') if snap and snap.get('ok') else None
         self.widget[K_SPEND_ROW].update(visible=bool(spend) and bool(cfg(K_SHOW_SPEND)))
         if spend:
-            self.widget[K_SPEND_TEXT].update(f'{spend["used"] or "-"} spent · limit {spend["limit"]}{day_text(spend["resets_at"])}')
-            self.widget[K_SPEND_TEXT].set_tooltip(self.spend_forecast_text(spend) or 'spend rate appears after a few checks')
+            fc = self.forecast(cb) if cb else None
+            self.widget[K_SPEND_BAR].update(visible=bool(cb))
+            self.widget[K_SPEND_PCT].update(visible=bool(cb))
+            if cb:
+                left = max(0.0, spend['limit_num'] - spend['used_num'])
+                self.draw_bar(self.widget[K_SPEND_BAR], cb['percent'], C_SPEND, self.pace(cb))
+                self.widget[K_SPEND_PCT].update(f'{round(cb["percent"])}%', text_color=self.level_color(cb['percent']))
+                self.widget[K_SPEND_LEFT].update(f'{spend["symbol"]}{left:,.2f} left', text_color=C_CRIT if left <= 0 else C_MUTED)
+            else:
+                self.widget[K_SPEND_LEFT].update('no limit', text_color=C_MUTED)
+            self.widget[K_SPEND_TEXT].update(self.spend_line(spend, fc))
+            tip = self.credit_forecast_text(cb, fc) if cb else (self.spend_forecast_text(spend) or 'the spending rate appears after a few checks')
+            self.widget[K_SPEND_LABEL].set_tooltip(tip)
+            self.widget[K_SPEND_TEXT].set_tooltip(tip)
         self.refresh_forecast()
         if self.snap_pending and buckets:                       # the first snap happened while the rows were still hidden, so the window was narrower
             self.snap_to(self.snap_pending)
@@ -792,7 +848,8 @@ class App:
         if not buckets:
             self.widget[K_FORECAST].update('')
             return
-        casts = [(b, self.forecast(b)) for b in buckets]
+        cb = self.credit_bucket() if cfg(K_SHOW_SPEND) else None
+        casts = [(b, self.forecast(b)) for b in buckets + ([cb] if cb else [])]
         danger = [(b, fc) for b, fc in casts if fc['runs_out'] and fc['hit']]
         if danger:
             b, fc = min(danger, key=lambda x: x[1]['hit'])
@@ -846,11 +903,13 @@ class App:
     # ---------------------------------------------------------------- forecast ----------------------------------------------------------------
     def series(self, bucket):
         """This bucket's samples back to the start of its current window - and never past a reset we can see in the data."""
-        span = WINDOW_SECONDS.get(bucket['kind'], 86400)
+        span = span_of(bucket) or 86400
         start = utcnow() - timedelta(seconds=span)
         if bucket['resets_at']:
             start = max(start, bucket['resets_at'] - timedelta(seconds=span))
         pts = self.history_since(start, field_of(bucket))
+        if bucket['kind'] == 'spend':                           # the history keeps dollars; graphs and forecasts work in % of the current limit
+            pts = [(t, v / bucket['spend']['limit_num'] * 100) for t, v in pts]
         if not pts and bucket['kind'] == 'weekly_scoped':
             pts = self.history_since(start, 'scoped')           # samples recorded before per-model series existed
         for i in range(len(pts) - 1, 0, -1):
@@ -875,9 +934,9 @@ class App:
         pts = self.series(bucket)
         look = RATE_LOOKBACK.get(bucket['kind'], 3600)
         rate = self.slope([(t, v) for t, v in pts if (now - t).total_seconds() <= look])
-        basis = f'slope of the last {until_text(now + timedelta(seconds=look))}'
+        basis = f'slope of the last {span_text(look)}'
         if rate is None:
-            pace, span = self.pace(bucket), WINDOW_SECONDS.get(bucket['kind'])
+            pace, span = self.pace(bucket), span_of(bucket)
             if pace and pace >= 3 and span:
                 rate, basis = pct / (pace / 100 * span / 3600), 'average since the window started'
         out = {'rate': rate, 'basis': basis, 'hit': None, 'runs_out': False, 'at_reset': None, 'points': pts}
@@ -890,6 +949,8 @@ class App:
         return out
 
     def forecast_text(self, bucket, fc, short=False):
+        if bucket['kind'] == 'spend':
+            return self.credit_forecast_text(bucket, fc, short)
         if fc['rate'] is None:
             return 'no rate yet - needs a few checks' if short else 'not enough checks yet to work out a rate'
         rate = f'{fc["rate"]:.1f}%/h' if fc['rate'] < 10 else f'{fc["rate"]:.0f}%/h'
@@ -902,6 +963,48 @@ class App:
             return f'{bucket["label"]} {head}' if short else f'{head} at {rate} ({fc["basis"]})'
         reach = f'{round(fc["at_reset"])}% by the reset' if fc['at_reset'] is not None else '100% only after the reset'
         return f'{bucket["label"]} fine - {reach}' if short else f'reset comes first: {reach} at {rate} ({fc["basis"]})'
+
+    def credit_bucket(self):
+        """The usage credits as a bucket the bars, graphs and forecasts can use - only when there's a monthly limit to measure them against"""
+        spend = self.snap.get('spend') if self.snap and self.snap.get('ok') else None
+        if not spend or not spend.get('limit_num') or spend.get('used_num') is None:
+            return None
+        return {'label': 'Credits', 'kind': 'spend', 'model': None, 'surface': None, 'percent': spend['used_num'] / spend['limit_num'] * 100,
+                'resets_at': spend['resets_at'], 'severity': spend.get('severity') or '', 'is_active': True, 'group': 'spend', 'span': month_span(spend['resets_at']),
+                'spend': spend}
+
+    def credit_forecast_text(self, bucket, fc, short=False):
+        """The forecast in dollars: the rate per day, and whether the monthly limit is reached before the month starts over"""
+        sp = bucket['spend']
+        sym, limit, day = sp['symbol'], sp['limit_num'], f'{bucket["resets_at"].astimezone():%b} {bucket["resets_at"].astimezone().day}'
+        if bucket['percent'] >= 100:
+            return f'Credits: the {sym}{limit:,.0f} monthly limit is used up' if short else f'the {sym}{limit:,.2f} monthly limit is used up until {day}'
+        if fc['rate'] is None:
+            return 'Credits: no spending rate yet' if short else 'not enough checks yet to work out a spending rate'
+        rate = f'about {sym}{fc["rate"] / 100 * limit * 24:,.2f}/day'
+        fc = dict(fc, basis=fc['basis'].replace('average since the window started', "this month's average"))
+        if fc['hit'] is None:
+            return f'Credits fine - {rate}' if short else f'{rate} - hardly any spending lately, the limit is nowhere near'
+        hit = f'{fc["hit"].astimezone():%b} {fc["hit"].astimezone().day}'
+        if fc['runs_out']:
+            if short:
+                return f'Credits reach the {sym}{limit:,.0f} limit ~{hit} (in {until_text(fc["hit"])})'
+            return f'the {sym}{limit:,.2f} limit is reached ~{hit} (in {until_text(fc["hit"])}), before the month starts over on {day} - {rate} ({fc["basis"]})'
+        by_reset = min(fc['at_reset'], 100) / 100 * limit
+        if short:
+            return f'Credits fine - ~{sym}{by_reset:,.0f} of {sym}{limit:,.0f} by {day}'
+        return f'the month ends first: ~{sym}{by_reset:,.2f} of the {sym}{limit:,.2f} limit spent by {day} - {rate} ({fc["basis"]})'
+
+    def spend_line(self, spend, fc):
+        """The small line under the Credits bar: what's been spent, and how fast"""
+        sym = spend['symbol']
+        text = f'{spend["used"] or "-"} of {spend["limit"]} spent' if spend.get('limit_num') else f'{spend["used"] or "-"} spent this month'
+        if fc and fc['rate']:
+            text += f' · about {sym}{fc["rate"] / 100 * spend["limit_num"] * 24:,.2f}/day'
+        elif not spend.get('limit_num'):
+            rate = self.spend_forecast_text(spend)
+            text += f' · {rate}' if rate else ''
+        return text + (f' · balance {spend["balance"]}' if spend.get('balance') else '')
 
     def spend_forecast_text(self, spend):
         """For a finite monthly limit: the $/day rate over the last few days and when the cap would be reached."""
@@ -931,9 +1034,13 @@ class App:
         buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
         if not buckets:
             return None
-        want = cfg(K_GRAPH_OF)
+        want, cb = cfg(K_GRAPH_OF), self.credit_bucket()
+        if want == 'Credits':
+            if cb:
+                return cb
+            want = 'Session'
         if want == 'Most urgent':
-            urgent = [(fc['hit'], b) for b in buckets for fc in [self.forecast(b)] if fc['runs_out'] and fc['hit']]
+            urgent = [(fc['hit'], b) for b in buckets + ([cb] if cb else []) for fc in [self.forecast(b)] if fc['runs_out'] and fc['hit']]
             return min(urgent, key=lambda x: x[0])[1] if urgent else max(buckets, key=lambda b: b['percent'])
         if want in ('Favorite model', 'Per-model'):
             scoped = [b for b in buckets if b['kind'] == 'weekly_scoped']
@@ -952,10 +1059,13 @@ class App:
         w, h = graph.CanvasSize
         now, fc = utcnow(), self.forecast(bucket)
         color, level = KIND_COLOR.get(bucket['kind'], C_WEEKLY), self.level_color(bucket['percent'])
-        span = WINDOW_SECONDS.get(bucket['kind'], 86400)
+        span, dollars = span_of(bucket) or 86400, bucket['kind'] == 'spend'
         t1 = bucket['resets_at'] or now + timedelta(seconds=span / 4)
         t0 = min(now - timedelta(seconds=span), fc['points'][0][0] if fc['points'] else now)
-        left, bottom, top, right = (int(30 * self.scale), int(14 * self.scale), 4, 4) if full else (0, 0, 2, 2)
+        if dollars:                                             # the credits' month, from the 1st to the day it starts over
+            t0 = bucket['resets_at'] - timedelta(seconds=span)
+        yl = (lambda v: f'{bucket["spend"]["symbol"]}{bucket["spend"]["limit_num"] * v / 100:,.0f}') if dollars else (lambda v: f'{v}%')
+        left, bottom, top, right = (int((40 if dollars else 30) * self.scale), int(14 * self.scale), 4, 4) if full else (0, 0, 2, 2)
         pw, ph = w - left - right, h - bottom - top
         tx = lambda dt: left + (dt - t0).total_seconds() / max(1, (t1 - t0).total_seconds()) * pw
         ty = lambda v: bottom + max(0.0, min(100.0, v)) / 100 * ph
@@ -964,10 +1074,12 @@ class App:
         for v in (25, 50, 75, 100):
             graph.draw_line((left, ty(v)), (left + pw, ty(v)), color=C_LINE if v < 100 else C_DIM, width=1)
             if full and v in (50, 100):
-                graph.draw_text(f'{v}%', (left - 14, ty(v)), color=C_MUTED, font=small)
+                graph.draw_text(yl(v), (left - 4, ty(v)) if dollars else (left - 14, ty(v)), color=C_MUTED, font=small,
+                                text_location=sg.TEXT_LOCATION_RIGHT if dollars else sg.TEXT_LOCATION_CENTER)
         xn = tx(now)
         if full:
-            graph.draw_text('0%', (left - 12, ty(0) + 5), color=C_MUTED, font=small)
+            graph.draw_text(yl(0), (left - 4, ty(0) + 5) if dollars else (left - 12, ty(0) + 5), color=C_MUTED, font=small,
+                            text_location=sg.TEXT_LOCATION_RIGHT if dollars else sg.TEXT_LOCATION_CENTER)
             for tick, label in time_ticks(t0, t1):
                 x = tx(tick)
                 graph.draw_line((x, bottom), (x, bottom + 4), color=C_DIM, width=1)
@@ -978,7 +1090,9 @@ class App:
             x = tx(bucket['resets_at'])
             dashed(graph, (x, bottom), (x, bottom + ph), C_MUTED, width=1, dash=3, gap=3)
             if full:
-                graph.draw_text('reset ' + clock(bucket['resets_at'].astimezone()), (x - 3, bottom + ph - 8), color=C_MUTED, font=small, text_location=sg.TEXT_LOCATION_RIGHT)
+                local = bucket['resets_at'].astimezone()
+                graph.draw_text(f'resets {local:%b} {local.day}' if dollars else 'reset ' + clock(local), (x - 3, bottom + ph - 8), color=C_MUTED, font=small,
+                                text_location=sg.TEXT_LOCATION_RIGHT)
         graph.draw_line((xn, bottom), (xn, bottom + ph), color=C_DIM, width=1)
         pts = [(tx(t), ty(v)) for t, v in fc['points']]
         for a, b in zip(pts, pts[1:]):
@@ -994,7 +1108,9 @@ class App:
             if fc['runs_out'] and fc['hit'] <= t1:
                 graph.draw_circle((tx(fc['hit']), ty(100)), 4, fill_color=C_CRIT, line_color=C_CRIT)
                 if full:                                        # bottom-right corner: a line steep enough to hit 100% is never down there
-                    graph.draw_text(f'100% ~{when_text(fc["hit"])}', (left + pw - 6, bottom + 9), color=C_CRIT, font=(UI_FONT, 9, 'bold'), text_location=sg.TEXT_LOCATION_RIGHT)
+                    hit = fc['hit'].astimezone()
+                    graph.draw_text(f'{yl(100)} ~{hit:%b} {hit.day}' if dollars else f'100% ~{when_text(fc["hit"])}', (left + pw - 6, bottom + 9), color=C_CRIT,
+                                    font=(UI_FONT, 9, 'bold'), text_location=sg.TEXT_LOCATION_RIGHT)
 
 
     # ---------------------------------------------------------------- detail window ----------------------------------------------------------------
@@ -1003,7 +1119,8 @@ class App:
             self.detail.bring_to_front()
             return
         f, bar, chart = self.fonts(), (int(440 * self.scale), int(14 * self.scale)), (int(440 * self.scale), int(150 * self.scale))
-        body = [[sg.Text('', font=f['h2'], text_color=C_TEXT, key=K_D_HEAD, pad=((0, 0), (0, 8)), background_color=C_BG2)]]
+        body = [[sg.Text('', font=f['h2'], text_color=C_TEXT, key=K_D_HEAD, pad=((0, 0), (0, 2)), background_color=C_BG2)],
+                [sg.Text('', font=f['small'], text_color=C_MUTED, key=K_D_BREAKDOWN, pad=((0, 0), (0, 8)), background_color=C_BG2)]]
         for i in range(MAX_BARS):
             block = [[sg.Text('', font=f['bold'], key=KT_D_LABEL(i), pad=(0, 0), background_color=C_BG2), sg.Push(background_color=C_BG2),
                       sg.Text('', font=f['big'], key=KT_D_PCT(i), pad=(0, 0), background_color=C_BG2)],
@@ -1012,8 +1129,12 @@ class App:
                      [sg.Graph(chart, (0, 0), chart, background_color=C_BG2, key=KT_D_GRAPH(i), pad=(0, 2))],
                      [sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=KT_D_CAST(i), pad=((0, 0), (0, 12)), background_color=C_BG2)]]
             body.append([sg.Column(block, key=KT_D_ROW(i), pad=0, visible=False, background_color=C_BG2, expand_x=True)])
-        body.append([sg.Text('Usage credits', font=f['bold'], text_color=C_SPEND, pad=((0, 0), (6, 2)), background_color=C_BG2)])
-        body.append([sg.Text('', font=f['body'], text_color=C_TEXT, key=K_D_SPEND, pad=((0, 0), (0, 10)), background_color=C_BG2)])
+        body.append([sg.Text('Usage credits', font=f['bold'], text_color=C_SPEND, pad=((0, 0), (6, 0)), background_color=C_BG2), sg.Push(background_color=C_BG2),
+                     sg.Text('', font=f['big'], key=K_D_CRED_PCT, pad=(0, 0), background_color=C_BG2)])
+        body.append([sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=K_D_CRED_BAR, pad=(0, 3))])
+        body.append([sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=K_D_SPEND, pad=((0, 0), (0, 2)), background_color=C_BG2)])
+        body.append([sg.Graph(chart, (0, 0), chart, background_color=C_BG2, key=K_D_CRED_GRAPH, pad=(0, 2))])
+        body.append([sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=K_D_CRED_CAST, pad=((0, 0), (0, 12)), background_color=C_BG2)])
         body.append([sg.Text('Account', font=f['bold'], text_color=C_TEXT, pad=((0, 0), (6, 2)), background_color=C_BG2)])
         body.append([sg.Text('', font=f['small'], text_color=C_MUTED, key=K_D_ACCOUNT, pad=((0, 0), (0, 6)), background_color=C_BG2)])
         layout = [[sg.Column(body, key=K_D_PANE, scrollable=True, vertical_scroll_only=True, size=(int(560 * self.scale), int(640 * self.scale)), pad=((10, 4), (10, 4)),
@@ -1039,6 +1160,8 @@ class App:
         account = snap.get('account') or {}
         who = ' · '.join(x for x in [snap['plan'] or 'Claude', account.get('email') or account.get('display_name') or '', 'DEMO' if DEMO else ''] if x)
         self.detail[K_D_HEAD].update(who, text_color=C_TEXT)
+        parts = ' · '.join(f'{name} {round(pct)}%' for name, pct in snap.get('breakdown') or [])
+        self.detail[K_D_BREAKDOWN].update(f'This week\'s use by app: {parts}' if parts else '')
         for i in range(MAX_BARS):
             visible = i < len(snap['buckets'])
             self.detail[KT_D_ROW(i)].update(visible=visible)
@@ -1058,12 +1181,24 @@ class App:
             fc = self.forecast(b)
             self.draw_graph(self.detail[KT_D_GRAPH(i)], b, full=True)
             self.detail[KT_D_CAST(i)].update(f'{b["label"]} forecast: ' + self.forecast_text(b, fc), text_color=C_CRIT if fc['runs_out'] else C_MUTED)
-        spend = snap.get('spend')
-        if spend:
-            when = day_text(spend['resets_at'])
-            pct = f' · {round(spend["percent"])}% of limit' if spend.get('percent') is not None else ''
-            rate = self.spend_forecast_text(spend)
-            self.detail[K_D_SPEND].update(f'{spend["used"] or "-"} spent · monthly limit {spend["limit"]}{pct}{when}' + (f'\n{rate}' if rate else ''))
+        spend, cb = snap.get('spend'), self.credit_bucket()
+        for key in (K_D_CRED_BAR, K_D_CRED_GRAPH, K_D_CRED_CAST):
+            self.detail[key].update(visible=bool(cb))
+        self.detail[K_D_CRED_PCT].update(f'{round(cb["percent"])}%' if cb else '', text_color=self.level_color(cb['percent']) if cb else C_TEXT)
+        if cb:
+            fc, pace, sym = self.forecast(cb), self.pace(cb), spend['symbol']
+            self.draw_bar(self.detail[K_D_CRED_BAR], cb['percent'], C_SPEND, pace)
+            bits = [f'{spend["used"]} of the {spend["limit"]} monthly limit spent', f'{sym}{max(0.0, spend["limit_num"] - spend["used_num"]):,.2f} left',
+                    f'resets{day_text(spend["resets_at"]).replace(" · resets", "")}']
+            if pace is not None:
+                bits.append(f'even pace would be {round(pace)}%')
+            if spend.get('balance'):
+                bits.append(f'balance {spend["balance"]}')
+            self.detail[K_D_SPEND].update(' · '.join(bits))
+            self.draw_graph(self.detail[K_D_CRED_GRAPH], cb, full=True)
+            self.detail[K_D_CRED_CAST].update('Credits forecast: ' + self.credit_forecast_text(cb, fc), text_color=C_CRIT if fc['runs_out'] else C_MUTED)
+        elif spend:
+            self.detail[K_D_SPEND].update(self.spend_line(spend, None))
         else:
             self.detail[K_D_SPEND].update('usage credits are off for this account')
         self.detail[K_D_ACCOUNT].update(f'token source: {snap.get("source", "?")}\npolling every {cfg(K_INTERVAL)} · warn at {cfg(K_WARN)}% · near-limit at {cfg(K_CRIT)}%')

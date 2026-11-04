@@ -2,7 +2,7 @@
   "_comment": "The Playground catalog. playground.pyw reads it; README.md's program tables are generated from it by dev/sync_from_sources.py. One entry per app. 'requires' = pip names beyond PySimpleGUI. 'platform' = win / any. A section's apps live in its 'folder'; its 'warning' shows in a warning box (README) and above each app (Toybox).",
   "sections": [
     {"name": "Widgets",     "folder": "Widgets",     "color": "#1e9bff", "blurb": "Small (optionally) always-on-top desktop widgets that sit in a corner and quietly keep you informed."},
-    {"name": "Tools",       "folder": "Tools",       "color": "#2ecc71", "blurb": "Everyday utilities - a program dock, a network scanner, chat search, a translator, screen and window inspectors, printer tools."},
+    {"name": "Tools",       "folder": "Tools",       "color": "#2ecc71", "blurb": "Everyday utilities - a program dock, a network scanner, a task manager, chat search, a translator, screen and window inspectors, printer tools."},
     {"name": "System Tray", "folder": "Tray",        "color": "#2ad4c8", "blurb": "Programs that live in the system tray, out of the way until you need them - right-click the icon for the menu."},
     {"name": "Programming", "folder": "Programming", "color": "#c48cff", "blurb": "Tools that help with PySimpleGUI programming - screenshot regression tests and a previewer for dark themes."},
     {"name": "Music",       "folder": "Music",       "color": "#ffc53d", "blurb": "MIDI piano practice tools. Plug in a MIDI keyboard, pick its port, play - every one of these listens and shows you something interesting and maybe even helpful.  I use the Tempo and Harmony Wheel daily.  I was using the Staff Trainer for a few weeks working on music theory.\n\nThere's one additional music application, Player Coach, that I use constantly when playing/practicing.  I want to spend a little more time getting that one documented first.",
@@ -29,6 +29,8 @@
      "blurb": "A small always-on-top dock of icon buttons that launch your programs. Set it up by dropping programs onto it; drag entries to reorder."},
     {"name": "Network Scanner", "section": "Tools", "file": "network_scanner_v2.pyw", "icon": "network_scanner.png", "platform": "any", "requires": [], "args_demo": "--demo",
      "blurb": "Every device on your LAN as a color-coded tile: names, IPs, MACs, open ports, kind. Standard library only - runs on Python 3.6+."},
+    {"name": "Task Manager", "section": "Tools", "file": "task_manager.pyw", "icon": "task_manager.png", "platform": "any", "requires": ["psutil", "pillow"], "args_demo": "--demo",
+     "blurb": "Every running process with its CPU, memory, threads and command line, kept up to date in place. Type to filter, click a heading to sort, Delete ends a process and all it started."},
     {"name": "Claude Chat Search", "section": "Tools", "file": "claude_chat_search.pyw", "icon": "claude_chat_search.png", "platform": "any", "requires": [],
      "blurb": "Full-text search of every Claude chat you ever had, from Claude's data export - including the tool steps the built-in search can't see."},
     {"name": "English-Spanish Translator", "section": "Tools", "file": "en_es_translator.pyw", "icon": "spanish_translator.png", "platform": "any",

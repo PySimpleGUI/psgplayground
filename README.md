@@ -43,7 +43,7 @@ The Widget Template has all of it, ready for a widget of your own.
 
 Paths are inside the `psgplayground` package - in this repo, or in site-packages once you've installed it.
 
-<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 25d53b1d9191) -->
+<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 2e5fbfdc2d7f) -->
 
 ### Widgets
 
@@ -61,12 +61,13 @@ Small (optionally) always-on-top desktop widgets that sit in a corner and quietl
 
 ### Tools
 
-Everyday utilities - a program dock, a network scanner, chat search, a translator, screen and window inspectors, printer tools.
+Everyday utilities - a program dock, a network scanner, a task manager, chat search, a translator, screen and window inspectors, printer tools.
 
 | Program | What it does | Needs |
 |---|---|---|
 | <img src="psgplayground/icons/psgdock_64.png" width="40" height="40"><br>**PSG Dock** | A small always-on-top dock of icon buttons that launch your programs. Set it up by dropping programs onto it; drag entries to reorder.<br>`Tools/psgdock.pyw`<br><a href="psgplayground/screenshots/psgdock.png"><img src="psgplayground/screenshots/psgdock.png" width="164" height="150"></a> | pillow, psgdnd |
 | <img src="psgplayground/icons/network_scanner.png" width="40" height="40"><br>**Network Scanner** | Every device on your LAN as a color-coded tile: names, IPs, MACs, open ports, kind. Standard library only - runs on Python 3.6+.<br>`Tools/network_scanner_v2.pyw`<br><a href="psgplayground/screenshots/network_scanner_v2.png"><img src="psgplayground/screenshots/network_scanner_v2.png" width="201" height="150"></a> | - |
+| <img src="psgplayground/icons/task_manager.png" width="40" height="40"><br>**Task Manager** | Every running process with its CPU, memory, threads and command line, kept up to date in place. Type to filter, click a heading to sort, Delete ends a process and all it started.<br>`Tools/task_manager.pyw` | psutil, pillow |
 | <img src="psgplayground/icons/claude_chat_search.png" width="40" height="40"><br>**Claude Chat Search** | Full-text search of every Claude chat you ever had, from Claude's data export - including the tool steps the built-in search can't see.<br>`Tools/claude_chat_search.pyw`<br><a href="psgplayground/screenshots/claude_chat_search.png"><img src="psgplayground/screenshots/claude_chat_search.png" width="165" height="150"></a> | - |
 | <img src="psgplayground/icons/spanish_translator.png" width="40" height="40"><br>**English-Spanish Translator** | Translate from the clipboard, by drag-and-drop from any app, or by typing. Four engines, cached.<br>`Tools/en_es_translator.pyw`<br><a href="psgplayground/screenshots/en_es_translator.png"><img src="psgplayground/screenshots/en_es_translator.png" width="240" height="105"></a> | deep-translator, psgdnd (optional: argostranslate) |
 | <img src="psgplayground/icons/screen_ruler.png" width="40" height="40"><br>**Screen Ruler + Window Inspector**<br>**Windows** | Drag to measure anything on screen, drop rulers, inspect windows WinSpy-style, save the rectangle as a screenshot.<br>`Tools/psgScreenRuler2.pyw`<br><a href="psgplayground/screenshots/psgScreenRuler2.png"><img src="psgplayground/screenshots/psgScreenRuler2.png" width="188" height="150"></a> | pywin32, keyboard, mouse, pillow |

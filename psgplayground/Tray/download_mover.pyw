@@ -10,18 +10,15 @@ Requirements:  pip install psgtray pystray pillow watchdog
     watchdog        - event-driven folder monitoring (if missing, falls back to a 3-second timer scan)
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-03  v1.4  Tray like psgsnip (tray_app_recipe.md): click shows/hides the Inbox, right-click = the colored menu, Minimize to tray toggle
 2026-10-31  v1.3  Log kept in the PySimpleGUI settings folder (one per PC, outside Dropbox - no sync conflicts); a crash shows a popup instead of vanishing
 2026-10-31  v1.2  Inbox window remembers its position (auto_save_location); this change log added
 2026-10-29  v1.1  Single instance (localhost port 47321), Delete to the backup folder, Undo, Scan Now, auto-hide toggle, themed tray menu
 2026-10-25  v1.0  First version
 """
-import os, sys, time, shutil, threading, datetime, subprocess, logging, socket
+import os, sys, time, shutil, threading, datetime, subprocess, logging, socket, ctypes
+import tkinter as tk
 import PySimpleGUI as sg
-
-try:
-    from psgtray import SystemTray
-except Exception:                         # not installed, or no tray backend on this system
-    SystemTray = None
 
 try:
     from watchdog.observers import Observer
@@ -29,7 +26,7 @@ try:
 except ImportError:
     Observer = None
 
-__version__ = '1.3'
+__version__ = '1.4'
 SETTINGS_FILE = 'download_mover.json'
 DEFAULT_WATCH = os.path.join(os.path.expanduser('~'), 'Downloads')
 PARTIAL_EXTS = ('.crdownload', '.part', '.partial', '.tmp', '.download', '.!ut', '.opdownload')   # browser in-progress downloads
@@ -63,6 +60,10 @@ K_END = '-END-'
 K_NEW_FILE = '-NEW-FILE-'        # from watcher thread: a file appeared (may still be downloading)
 K_FILE_READY = '-FILE-READY-'    # from stability thread: file finished writing
 K_QUIT_REQUEST = '-QUIT-REQUEST-'  # another copy of this program was launched and wants us to exit
+K_TRAY = '-TRAY-'                # the tray icon's events
+K_TRAY_MENU = '-TRAY MENU-'      # the tray icon was right-clicked
+K_MIN_TO_TRAY = '-minimize-to-tray-'   # settings entry and right-click toggle: closing the Inbox minimizes to the tray
+K_EXIT = 'Exit'
 
 # ---------------------------------------------------------------- theme (Mike's custom dark theme) + colours
 # consistent meaning: blue=files, teal/green=destinations & move, orange=copy, red=remove, grey=skip
@@ -87,12 +88,11 @@ C_TOGGLE_ON = ('#101a1c', '#7CC9CF')   # lit toggle: dark text on bright teal
 C_TOGGLE_OFF = ('#8A9A9D', '#1b2a2d')  # unlit toggle: grey text on input-colour
 C_INFO_BG = CADET_HOUR['INPUT']
 C_INFO_TXT = CADET_HOUR['TEXT_INPUT']
-C_MENU_BG = '#1b2a2d'
-C_MENU_TXT = '#dbe9ea'
+C_MENU_SEL = '#2a62a8'         # menu highlight (white text) - the same blue in every tray app
+FONT_MENU = ('Segoe UI', 10)
 
 TRAY_ICON = b'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABTklEQVR4nO2aTRKCMAyFg+M5cKGHxBPoIXGhF8FVGeRHwCZ5TvO+lc4w9uVroEUQIYQQQkhUqvShbtrOe/DX/VKtH2XLAR0ADQWgA6ChAHQANNBVwItvq02IDqibtlua4BACEnMSQgkQmUoIJ0DkU0Iv4B+2pQh6ASWvAnOkekOeAkPgAp63M3R8qIBUPFICTMC4aJQEiIClYhESjp6DbSkwHXO6PqzjiIhjB+ydXa9ucBHwazEeEswF5BZhLcFUgFZ4SwlmArRDW0kwEWAV1uJ3VZdBj4uW9jKp1gHemxit8VQEoLaxGuNmC0DfzeWOn30N2Hou/hLUYzsM/z8ADQWgA6ChAHQANBSADoCGAtAB0FAAOgAaCkAHQOP2YMTrQcdewndA2DdEUr3sgOGXKF0wrHPSAaVLGNc3ewqUKmGurtVCS3h7rNQJJYSQbN6nzmEdTxhkOQAAAABJRU5ErkJggg=='
 
-TRAY_MENU = ['', ['Show Inbox', 'Scan Now', '---', 'Change Watched Folder...', 'Open Watched Folder', 'Show Log', '---', 'Version', 'Edit Me', 'Exit']]
 LOG_FILE = os.path.join(os.path.dirname(sg.user_settings_filename()), 'download_mover.log')     # per PC, outside Dropbox: copies on several PCs never share one log
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(filename=LOG_FILE, level=logging.DEBUG, format='%(asctime)s %(threadName)s %(message)s', datefmt='%H:%M:%S')
@@ -274,48 +274,95 @@ def wait_until_stable(window, path):
 
 
 # ================================================================ GUI
-def hook_tray_right_click(tray):
-    """ Windows draws pystray's right-click menu itself (grey, unthemed).  Patch the pystray icon so a right click behaves like a left click,
-        which sends ACTIVATED to the window and opens our themed menu instead.  Returns True if the hook was installed. """
-    WM_RBUTTONUP = 0x0205
-    for _ in range(50):                                  # the icon is created in psgtray's thread - wait for it
-        if getattr(tray, 'thread_started', False) and getattr(tray, 'tray_icon', None) is not None:
-            break
-        time.sleep(0.1)
-    icon = getattr(tray, 'tray_icon', None)
-    if icon is None or not hasattr(icon, '_on_notify'):  # not the Win32 backend
-        return False
-    original = icon._on_notify
-
-    def patched(wparam, lparam):
-        if lparam == WM_RBUTTONUP:
-            icon()                                       # pystray's "activate" -> psgtray sends EVENT_SYSTEM_TRAY_ICON_ACTIVATED
-        else:
-            original(wparam, lparam)
-    icon._on_notify = patched
-    return True
+# --- TRAY: the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) ---
+try:
+    from psgtray import SystemTray
+except ImportError:                   # no tray icon - closing the window ends the program
+    SystemTray = None
 
 
-def tray_popup_menu(main_window):
-    """ A CadetHour-themed menu window opened by LEFT-clicking the tray icon (Windows draws the native right-click menu itself, so it can't be themed).
-        Returns the chosen item text, or None. """
-    items = [i for i in TRAY_MENU[1] if i != '---']
-    layout = [[sg.Button(i, key=i, size=(26, 1), button_color=(C_MENU_TXT, C_MENU_BG), mouseover_colors=('#ffffff', C_DESTS), border_width=0, pad=(0, 0), font=('Segoe UI', 11))] for i in items]
-    x, y = main_window.mouse_location()
-    menu = sg.Window('', layout, no_titlebar=True, keep_on_top=True, finalize=True, margins=(2, 2), background_color=C_DESTS_TXT, location=(x - 220, y - 30 * len(items) - 20), grab_anywhere=True)
-    for i in items:
-        menu[i].widget.configure(anchor='w', padx=14)       # left-align like a real menu
-    menu.bind('<Escape>', K_ESCAPE)
-    menu.bind('<FocusOut>', K_ESCAPE)
-    menu.force_focus()
-    while True:
-        event, _ = menu.read()
-        if event in (sg.WINDOW_CLOSED, K_ESCAPE):
-            event = None
-        if event is None or event in items:
-            break
-    menu.close()
-    return event
+class Tray:
+    icon = None                       # the psgtray SystemTray while it is shown
+    use = True                        # closing the window minimizes to the tray (setting K_MIN_TO_TRAY, and psgtray is installed)
+
+
+def tray_start(window, icon, tooltip):
+    """ the tray icon, made in a thread (psgtray sleeps ~0.4 s while its own thread starts).  Click: window shown/hidden.  Right-click: our menu """
+    def make():
+        tray = SystemTray(['', [K_EXIT]], icon=icon, tooltip=tooltip[:127], single_click_events=True, window=window, key=K_TRAY)  # tips over 127 crash
+        tray.key = K_TRAY                                                                            # psgtray makes it '-TRAY-1', '-TRAY-2'... for every later icon
+        handlers = getattr(tray.tray_icon, '_message_handlers', {})                                  # Windows: pystray's own right-click menu is gray - use ours
+        for msg, handler in list(handlers.items()):
+            if getattr(handler, '__name__', '') == '_on_notify':                                      # the icon's mouse messages; 0x0205 = WM_RBUTTONUP
+                handlers[msg] = lambda wparam, lparam, original=handler: window.write_event_value(K_TRAY_MENU, None) if lparam == 0x0205 else original(wparam, lparam)
+        Tray.icon = tray
+    if SystemTray and Tray.use and not Tray.icon:
+        threading.Thread(target=make, daemon=True).start()
+
+
+def tray_stop():
+    """ call before window.close() - otherwise a dead icon sits in the tray until the mouse passes over it """
+    if Tray.icon:
+        Tray.icon.close()
+        Tray.icon = None
+
+
+def tray_menu(window):
+    """ the window's right-click menu at the mouse.  Windows only closes a tray menu on a click elsewhere if its program is in front """
+    x, y = window.TKroot.winfo_pointerxy()
+    ctypes.windll.user32.SetForegroundWindow(window.TKroot.winfo_id())
+    window.TKRightClickMenu.tk_popup(x, y)
+
+
+def window_hidden(window):
+    return window.TKroot.state() == 'withdrawn'
+
+
+def window_show(window):
+    window.un_hide()
+    window.bring_to_front()
+    window.force_focus()
+
+
+def tray_event(window, event, values):
+    """ handles the tray's own events; True when it did.  Click toggles the window, right-click opens the menu """
+    if event == K_TRAY:
+        if values[K_TRAY] == sg.EVENT_SYSTEM_TRAY_ICON_ACTIVATED:
+            window_show(window) if window_hidden(window) else window.hide()
+        elif values[K_TRAY] == K_EXIT:                                                               # pystray's gray menu - only if the right-click hook failed
+            window.write_event_value(K_EXIT, None)
+        return True
+    if event == K_TRAY_MENU:
+        tray_menu(window)
+        return True
+    return False
+
+
+def style_menus(window):
+    """ tk draws menus Windows-gray; recolor every right-click menu (PySimpleGUI makes one per element) and its sub-menus: flat, theme colors """
+    def style(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Menu):
+                child.configure(bg=sg.theme_background_color(), fg=sg.theme_text_color(), activebackground=C_MENU_SEL, activeforeground='#ffffff',
+                                disabledforeground='#8a93a3', bd=0, activeborderwidth=1, relief='flat', font=FONT_MENU)
+            style(child)
+    style(window.TKroot)
+# --- end TRAY ---
+
+
+def make_menu():
+    """ the Inbox's right-click menu - the tray icon's right-click opens the same one """
+    tick = lambda on: '✓ ' if on else '    '
+    tray = [f'{tick(Tray.use)}Minimize to tray when closed::{K_MIN_TO_TRAY}'] if SystemTray else []
+    return ['', ['    Scan Now::Scan Now', '---', '    Change Watched Folder...::Change Watched Folder...', '    Open Watched Folder::Open Watched Folder',
+                 '    Show Log::Show Log', '---', *tray, '---', '    Edit Me::Edit Me', '    Version::Version', f'    Exit::{K_EXIT}']]
+
+
+def apply_menu(window):
+    menu = make_menu()
+    for element in window.element_list():
+        element.set_right_click_menu(menu, propogate_to_window=True)
+    style_menus(window)
 
 
 def file_info_text(paths):
@@ -352,7 +399,9 @@ def make_window(watch_folder, dests, pending, autohide):
                sg.Button('Undo', key=K_UNDO, button_color=('white', C_UNDO), size=(10, 1), disabled=True, tooltip='Reverse the last Move/Copy (restores overwritten files from the backup folder)'),
                sg.Button(('☑  ' if autohide else '☐  ') + 'Auto-hide after Move/Copy', key=K_AUTOHIDE, button_color=C_TOGGLE_ON if autohide else C_TOGGLE_OFF, border_width=0, tooltip='When lit, the window hides itself as soon as a Move/Copy finishes without errors'),
                sg.Text('', key=K_STATUS, text_color=C_DESTS_TXT, expand_x=True), sg.Text('Esc hides', text_color=C_SKIP_TXT, font=('Segoe UI', 9))]]
-    window = sg.Window(f'Download Mover {__version__} - Inbox', layout, finalize=True, resizable=True, keep_on_top=True, right_click_menu=sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT, right_click_menu_background_color=C_MENU_BG, right_click_menu_text_color=C_MENU_TXT, right_click_menu_selected_colors=('#ffffff', C_DESTS), right_click_menu_font=('Segoe UI', 10), enable_close_attempted_event=True, icon=TRAY_ICON, auto_save_location=True)
+    window = sg.Window(f'Download Mover {__version__} - Inbox', layout, finalize=True, resizable=True, keep_on_top=True, right_click_menu=make_menu(), right_click_menu_background_color=sg.theme_background_color(), right_click_menu_text_color=sg.theme_text_color(),
+                       right_click_menu_selected_colors=('#ffffff', C_MENU_SEL), right_click_menu_font=FONT_MENU, enable_close_attempted_event=True, icon=TRAY_ICON, auto_save_location=True)
+    style_menus(window)
     window.bind('<Escape>', K_ESCAPE)
     window.bind('<Home>', K_HOME)
     window.bind('<End>', K_END)
@@ -522,10 +571,11 @@ def main():
     scan_folder(watch_folder, known)             # prime "known" so files already there at startup are ignored
 
     autohide = sg.user_settings_get_entry('-autohide-', True)
+    Tray.use = bool(SystemTray) and sg.user_settings_get_entry(K_MIN_TO_TRAY, True)
     window = make_window(watch_folder, dests, pending, autohide)
     refresh_files(window, pending)
     refresh_dests(window, dests)
-    tray = SystemTray(TRAY_MENU, single_click_events=True, window=window, tooltip=f'Download Mover {__version__} - watching {watch_folder}', icon=TRAY_ICON) if SystemTray else None
+    tray_start(window, TRAY_ICON, f'Download Mover {__version__} - watching {watch_folder}')
     observer = start_watcher(window, watch_folder)
     if observer is None:
         window.timer_start(POLL_MS, repeating=True)
@@ -533,43 +583,47 @@ def main():
         threading.Thread(target=instance_listener, args=(instance_sock, window, K_QUIT_REQUEST), daemon=True).start()
     else:
         log.warning('could not claim the single-instance port - a previous copy may still be running')
-    if tray:
-        hooked = hook_tray_right_click(tray)
-        log.info(f'tray right-click hook installed: {hooked}')
+    if Tray.use:
         window.hide()                            # live in the tray until something arrives
-        tray.show_message('Download Mover', f'Watching {watch_folder}')
+        for _ in range(30):                      # the icon is made in a thread - give it a moment for the balloon
+            if Tray.icon:
+                Tray.icon.show_message('Download Mover', f'Watching {watch_folder}')
+                break
+            time.sleep(0.1)
 
     def show():
         window.un_hide()
         window.bring_to_front()
         window[K_FILES].set_focus()
 
-    log.info(f'started - watching {watch_folder}, tray={"yes" if tray else "NO (psgtray/pystray not available)"}, watcher={"watchdog" if observer else "timer"}, {len(known)} existing files ignored')
-    window[K_STATUS].update(f'Watcher: {"watchdog" if observer else "timer scan"}   Tray: {"on" if tray else "off"}', text_color=C_SKIP_TXT)
+    log.info(f'started - watching {watch_folder}, tray={"yes" if Tray.use else "NO (psgtray/pystray not available, or turned off)"}, watcher={"watchdog" if observer else "timer"}, {len(known)} existing files ignored')
+    window[K_STATUS].update(f'Watcher: {"watchdog" if observer else "timer scan"}   Tray: {"on" if Tray.use else "off"}', text_color=C_SKIP_TXT)
     timer_seen = False
     while True:
         event, values = window.read()
+        if isinstance(event, str) and '::' in event:                     # right-click menu items come back as 'label::key'
+            event = event.split('::')[-1]
+        if tray_event(window, event, values):                            # tray click shows/hides the Inbox, right-click opens the menu
+            continue
         if event not in (sg.EVENT_TIMER, K_FILES, K_DESTS):
             log.debug(f'event: {event!r}' + (f'  value: {values.get(event)!r}' if isinstance(values, dict) and event in values else ''))
         if event in (sg.WINDOW_CLOSED, 'Exit', K_QUIT_REQUEST):
             if event == K_QUIT_REQUEST:
                 log.info('a new copy was launched - exiting so it can take over')
             break
-        if tray and event == tray.key:
-            event = values[event]                # tray menu item text, or a click event
-            if event == sg.EVENT_SYSTEM_TRAY_ICON_ACTIVATED:      # left click on tray icon -> themed menu
-                event = tray_popup_menu(window)
-        if event is None:
-            continue
-        if event == 'Exit':
-            break
-        elif event in (sg.WINDOW_CLOSE_ATTEMPTED_EVENT, K_ESCAPE):
-            if tray:
+        if event in (sg.WINDOW_CLOSE_ATTEMPTED_EVENT, K_ESCAPE):
+            if Tray.use:
                 window.hide()
             else:
                 break
-        elif event in ('Show Inbox', sg.EVENT_SYSTEM_TRAY_ICON_DOUBLE_CLICKED):
-            show()
+        elif event == K_MIN_TO_TRAY:
+            Tray.use = not Tray.use
+            sg.user_settings_set_entry(K_MIN_TO_TRAY, Tray.use)
+            tray_start(window, TRAY_ICON, f'Download Mover {__version__} - watching {watch_folder}') if Tray.use else tray_stop()
+            if window_hidden(window):
+                show()                                                   # never hidden with no tray icon to bring it back
+            window[K_STATUS].update(f'Minimize to tray: {"on" if Tray.use else "off"}', text_color=C_DESTS_TXT)
+            apply_menu(window)
         elif event == 'Version':
             sg.popup_scrolled(f'Download Mover {__version__}', __file__, sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
         elif event == 'Edit Me':
@@ -599,8 +653,8 @@ def main():
                     pending.append(FileItem(path))
                 refresh_files(window, pending)
                 window[K_STATUS].update(f'New: {os.path.basename(path)}', text_color=C_FILES_TXT)
-                if tray:
-                    tray.show_message('New download', os.path.basename(path))
+                if Tray.icon:
+                    Tray.icon.show_message('New download', os.path.basename(path))
                 show()
         elif event in ('Scan Now', K_SCAN):          # pick up anything new or overwritten that hasn't been offered yet
             added = 0
@@ -652,7 +706,7 @@ def main():
         elif event == K_UNDO:
             undo_last(window, pending, known, undo_stack)
         elif event in (K_MOVE, K_COPY):
-            if do_transfer(window, values, pending, dests, known, undo_stack, move=(event == K_MOVE)) and autohide and tray:
+            if do_transfer(window, values, pending, dests, known, undo_stack, move=(event == K_MOVE)) and autohide and Tray.use:
                 window.hide()                        # smooth flow: popup -> pick files -> Move -> gone
         elif event == K_AUTOHIDE:
             autohide = not autohide
@@ -670,8 +724,8 @@ def main():
                 scan_folder(watch_folder, known)
                 observer = start_watcher(window, watch_folder)
                 window[K_WATCH].update(f'Watching: {watch_folder}')
-                if tray:
-                    tray.set_tooltip(f'Download Mover {__version__} - watching {watch_folder}')
+                if Tray.icon:
+                    Tray.icon.set_tooltip(f'Download Mover {__version__} - watching {watch_folder}'[:127])
         elif event == 'Open Watched Folder':
             open_folder(watch_folder)
         elif event == 'Show Log':
@@ -683,8 +737,7 @@ def main():
 
     if observer:
         observer.stop()
-    if tray:
-        tray.close()
+    tray_stop()
     if instance_sock:
         instance_sock.close()
     window.close()

@@ -9,16 +9,16 @@ pip_refresh.pyw  -  Pip Refresh: keeps your pip packages fresh from GitHub and P
         columns:    PACKAGE     INSTALLED (version on this PC)     PYPI (latest release)     GITHUB (newest version on GitHub)     status
         versions:   amber = newer than the one installed     — = not on PyPI / no GitHub repo set     red ? = couldn't be read (hover the row to see why)
         status:     green check = current   amber arrow = update   blue + = not installed   dots = checking   red ! = no version found on GitHub or PyPI
-        hover a row and the bottom line says what a click will do.   gear (top right) = Settings,  x = close  (Escape too)
+        hover a row and the bottom line says what a click will do.   gear (top right) = Packages,  x = close  (Escape too)
         Versions are checked when it starts, every hour, and from the right-click menu (Check now).
     The picker (click a row):  GitHub's newest at the top, then every PyPI release, newest first, with the date it was uploaded - the installed one and
         PyPI's latest are marked, yanked releases dimmed.  The button says what picking one will do (Install / Upgrade / Downgrade / Reinstall) and the
         pip command is shown under the list.  Enter or a double-click installs, Escape closes.  It checks its package again as it opens.
-    Settings:  the package list, laid out like PSG Dock's settings - + Add, - Delete, Clear all, check All / None, drag the grip to reorder,
+    Packages:  the package list, laid out like PSG Dock's Programs window - + Add, - Delete, Clear all, check All / None, drag the grip to reorder,
         OK / Apply / Cancel.  Each entry is a pip package name, its GitHub repo (owner/repo) and the branch.  Paste a GitHub link into the repo
         box and it is split into repo + branch for you; with psgdnd installed you can also drop a link from your browser onto an entry or the list.
         Leave the repo empty for a package that is only on PyPI.
-    Right-click:  Check now | Settings... | Keep on top | Theme (16 dark + 16 light) | Brightness... | Size | Opacity | Edit Me / Version / Exit   (remembered)
+    Right-click:  Check now | Packages... | Keep on top | Theme (16 dark + 16 light) | Brightness... | Size | Opacity | Edit Me / Version / Exit   (remembered)
         Brightness... opens a slider under the card: any theme darker (down to -80%) or lighter (+50%), the card changing as you drag.
 
     Where the versions come from:  installed = importlib.metadata (pip's direct_url.json says where it came from);  GitHub = the version= line of
@@ -29,9 +29,11 @@ pip_refresh.pyw  -  Pip Refresh: keeps your pip packages fresh from GitHub and P
         GitHub's build of 6.1 -> PyPI's 6.1) adds --force-reinstall --no-deps, so only that package is replaced.
     --demo on the command line shows made-up versions and installs nothing (for trying it out).
 
-    Requires:  pip install PySimpleGUI pillow          optional:  psgdnd  (drop GitHub links onto the Settings window)
+    Requires:  pip install PySimpleGUI pillow          optional:  psgdnd  (drop GitHub links onto the Packages window)
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-03  v2.0.11  Claude: the window that edits the package list is called Packages now - right-click > Packages..., the gear's label and the
+                    window's title (Settings was the wrong name for it)
 2026-11-02  v2.0.10  Claude: GitHub column: when setup.py takes its VERSION from another file (psgplayground: playground.py), Pip Refresh reads that file
 2026-11-02  v2.0.9  Claude: Linux: the Settings window can no longer jump away while an entry is dragged (grab-anywhere is off during the drag)
 2026-11-02  v2.0.8  Claude: fixed 'A version check crashed' (KeyError in importlib.invalidate_caches) - the check threads now take turns calling it
@@ -74,11 +76,11 @@ import PySimpleGUI as sg
 from PIL import Image, ImageDraw, ImageFont
 
 try:
-    import psgdnd                                                  # optional - drop GitHub links onto the Settings window
+    import psgdnd                                                  # optional - drop GitHub links onto the Packages window
 except Exception:
     psgdnd = None
 
-VERSION = '2.0.10'
+VERSION = '2.0.11'
 APP_NAME = 'Pip Refresh'
 SETTINGS_FILE = 'pip_refresh.json'
 OLD_APP_NAME, OLD_SETTINGS_FILE = 'Pip Fresh', 'pip_fresh.json'          # its name for the morning of 1-Nov-2026
@@ -107,7 +109,7 @@ K_CLICK = '-CLICK-'                   # a click (not a drag) on a part of the ca
 K_VERSION = '-VERSION-'               # a version-check thread finished one package           value: (generation, package key, versions() dict)
 K_THREAD_ERROR = '-THREAD ERROR-'     # a thread crashed                                       value: the traceback text
 K_CHECK = '-CHECK-'                   # check all versions now (right-click menu and the hourly timer)
-K_SETTINGS = '-SETTINGS-'             # open the Settings window (right-click menu)
+K_PACKAGES_WINDOW = '-PACKAGES WINDOW-'    # open the Packages window (right-click menu, the gear)
 K_TOP = '-TOP-'                       # keep on top toggle, also its settings-file entry
 K_THEME = '-THEME-'                   # settings-file entry, and the prefix of the theme menu keys
 KT_THEME = lambda name: f'{K_THEME}{name}'
@@ -118,7 +120,7 @@ KT_OPACITY = lambda pct: f'{K_OPACITY}{pct}'
 K_PACKAGES = '-PACKAGES-'             # settings-file entry: the package list, [{'name', 'repo', 'branch'}, ...]
 K_EXIT = 'Exit'
 
-# ---------- Keys: the Settings window ----------
+# ---------- Keys: the Packages window ----------
 K_LIST = '-LIST-'                     # the scrolling column of entries
 K_ENTRY = '-ENTRY-'
 KT_ENTRY = lambda num: (K_ENTRY, num)     # an entry's frame
@@ -214,7 +216,7 @@ ROW_TOP = HEAD_H + COLS_H + 2
 GEAR_X, CLOSE_X, BTN_Y, BTN_R = CARD_W - 47, CARD_W - 20, 21, 11
 COL_LOCAL_R, COL_PYPI_R, COL_GITHUB_R, COL_STATE = CARD_W - 202, CARD_W - 124, CARD_W - 46, CARD_W - 25    # right edges of INSTALLED, PYPI, GITHUB; status disc
 
-# Settings window (PySimpleGUI elements in the Toybox dark theme)
+# Packages window (PySimpleGUI elements in the Toybox dark theme)
 TOYBOX_DARK = {'BACKGROUND': '#141821', 'TEXT': '#d6dbe5', 'INPUT': '#1e2430', 'TEXT_INPUT': '#e6eaf2', 'SCROLL': '#1e2430', 'BUTTON': ('#ffffff', '#2a62a8'),
                'PROGRESS': ('#1e9bff', '#1e2430'), 'BORDER': 1, 'SLIDER_DEPTH': 0, 'PROGRESS_DEPTH': 0}
 C_STRIP, C_STRIP_TEXT, C_UI_DIM, C_UI_FAINT = '#1b2130', '#e6eaf0', '#8a93a3', '#5c6676'
@@ -286,7 +288,7 @@ def local_version(name):
 def github_version(repo, branch):
     """(version, None) from the version= line of setup.py or pyproject.toml on that branch (or of the file setup.py reads it from), or (None, the reason it couldn't be read)"""
     if not repo:
-        return None, 'no GitHub repo set - open Settings'
+        return None, 'no GitHub repo set - open Packages'
     reason = 'no setup.py or pyproject.toml found - check the repo and branch'
     for filename in ('setup.py', 'pyproject.toml'):
         url = f'https://raw.githubusercontent.com/{repo}/{branch or "main"}/{filename}'
@@ -378,7 +380,7 @@ def problems(p, st):
     if st['pypi_reason'] not in (None, 'not on PyPI'):
         found.append(f'PyPI: {st["pypi_reason"]}')
     if not p['repo'] and st['pypi_reason'] == 'not on PyPI':
-        found.append('not on PyPI and no GitHub repo - open Settings')
+        found.append('not on PyPI and no GitHub repo - open Packages')
     return found
 
 
@@ -491,7 +493,7 @@ def summary():
 def hint(part):
     """What a click will do - shown in the bottom line while the mouse is over that part"""
     if part == 'gear':
-        return 'Settings - add, remove and order packages'
+        return 'Packages - add, remove and order them'
     if part == 'close':
         return f'Close {APP_NAME}'
     if isinstance(part, tuple) and part[1] < len(G.packages):
@@ -643,7 +645,7 @@ def make_menu():
     """Right-click menu with check marks on the current choices"""
     tick = lambda on: '✓ ' if on else '    '                   # every label starts with a tick or the same width of spaces, so they line up
     theme = lambda n: f'{tick(n == G.theme)}{n}::{KT_THEME(n)}'
-    return ['', [f'    Check now::{K_CHECK}', f'    Settings...::{K_SETTINGS}', '---', f'{tick(G.on_top)}Keep on top::{K_TOP}',
+    return ['', [f'    Check now::{K_CHECK}', f'    Packages...::{K_PACKAGES_WINDOW}', '---', f'{tick(G.on_top)}Keep on top::{K_TOP}',
                  '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
                  f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
                  '    Size', [f'{tick(n == G.size_name)}{n}::{KT_SIZE(n)}' for n in SIZES],
@@ -1066,7 +1068,7 @@ def main():
             if part == 'close':
                 break
             if part == 'gear':
-                menu_key = K_SETTINGS                                  # handled just below
+                menu_key = K_PACKAGES_WINDOW                           # handled just below
             elif isinstance(part, tuple) and part[1] < len(G.packages):
                 install(window, G.packages[part[1]])
         elif event == K_VERSION:
@@ -1105,10 +1107,10 @@ def main():
             sg.popup_scrolled(__file__, f'{APP_NAME} v{VERSION}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10), icon=ICON)
         elif menu_key == 'Edit Me':
             sg.execute_editor(__file__)
-        if menu_key == K_SETTINGS:
+        if menu_key == K_PACKAGES_WINDOW:
             G.hover = None
             redraw(window)
-            if settings_window(*beside(window)):                       # saved: reload the list and check it
+            if packages_window(*beside(window)):                       # saved: reload the list and check it
                 G.packages = load_packages()
                 start_check(window)
     window.close()
@@ -1233,7 +1235,7 @@ def pick_window(p, location=(None, None), anchor=None):
             i = next((i for i, r in enumerate(rows) if keep and (r[0], r[1]) == keep), None)
             select(i if i is not None else next((i for i, r in enumerate(rows) if same(r[1], top)), 0))
         else:
-            window[K_PICK_CMD].update('checking…' if st['pending'] else 'Not on PyPI and no GitHub repo - set one in Settings',
+            window[K_PICK_CMD].update('checking…' if st['pending'] else 'Not on PyPI and no GitHub repo - set one in Packages',
                                       text_color=C_UI_DIM if st['pending'] else state_color('error', THEMES['Toybox']))
 
     slot = {}
@@ -1272,7 +1274,7 @@ def pick_window(p, location=(None, None), anchor=None):
 
 
 # ======================================================================================================================================================
-#   SETTINGS WINDOW - the package list, laid out like PSG Dock's settings
+#   PACKAGES WINDOW - the package list, laid out like PSG Dock's Programs window
 # ======================================================================================================================================================
 class Entry:
     def __init__(self, num):
@@ -1280,7 +1282,7 @@ class Entry:
         self.name, self.repo, self.branch = '', '', 'main'
 
 
-class S:                              # Settings window state
+class S:                              # Packages window state
     entries = {}                      # num -> Entry, in list order.  Reordering moves the CONTENTS between entries, the entries keep their numbers
     next_num = 0
     dirty = False
@@ -1586,7 +1588,7 @@ def title_strip(title, close_key, note=f'v{VERSION}'):
 
 
 def confirm(window, question, title='Confirm'):
-    """Yes / No that is sure to appear ON TOP of the keep-on-top settings window"""
+    """Yes / No that is sure to appear ON TOP of the keep-on-top Packages window"""
     window.keep_on_top_clear()
     x, y = window.current_location()
     answer = sg.popup_yes_no(question, title=title, keep_on_top=True, modal=True, location=(x + 120, y + 120), font=('Segoe UI', 11), icon=ICON)
@@ -1615,7 +1617,7 @@ def save_entries(window):
     sg.popup_quick_message(f'Saved {len(packages)} package{"s" * (len(packages) != 1)}', font=('Segoe UI', 16), text_color='white', background_color='#2e7d32', keep_on_top=True)
 
 
-def settings_window(location=(None, None), anchor=None):
+def packages_window(location=(None, None), anchor=None):
     """The package-list window.  Returns True if anything was saved"""
     S.entries, S.next_num, S.dirty, S.drag = {}, 0, False, None
     packages = load_packages() or [{'name': '', 'repo': '', 'branch': 'main'}]           # an empty list starts with one blank entry to fill in
@@ -1634,13 +1636,13 @@ def settings_window(location=(None, None), anchor=None):
     hint_text = 'Drag ☰ to reorder.   Paste a GitHub link into a repo box' + (' or drop one onto the list.' if psgdnd else '.')
     status_bar = [sg.Text('', k=K_STATUS, font=('Segoe UI', 10)), sg.Push(),                   # file name only - the full path is in its tooltip, so the bar stays narrow
                   sg.Text(os.path.basename(sg.user_settings_filename()), font=('Segoe UI', 9), text_color=C_UI_FAINT, tooltip=sg.user_settings_filename()), sg.Sizegrip()]
-    body = [title_strip(f'{APP_NAME} Settings', K_STRIP_CLOSE),
+    body = [title_strip(f'{APP_NAME} Packages', K_STRIP_CLOSE),
             [sg.Column([toolbar], expand_x=True, p=(8, (8, 2)))],
             [sg.Text(hint_text, font=('Segoe UI', 9), text_color=C_UI_DIM, p=(12, (2, 4)))],
             [sg.Column(entries, k=K_LIST, size=(None, LIST_HEIGHT), scrollable=True, vertical_scroll_only=True, expand_x=True, expand_y=True, p=(6, 2))],
             [sg.Column([status_bar], expand_x=True, p=(8, (2, 4)))]]
     layout = [[sg.Frame('', body, border_width_no_relief=1, border_color=C_ENTRY_BORDER, p=0, expand_x=True, expand_y=True)]]
-    window = sg.Window(f'{APP_NAME} Settings', layout, no_titlebar=True, grab_anywhere=True, keep_on_top=True, finalize=True, margins=(0, 0), icon=ICON, resizable=True,
+    window = sg.Window(f'{APP_NAME} Packages', layout, no_titlebar=True, grab_anywhere=True, keep_on_top=True, finalize=True, margins=(0, 0), icon=ICON, resizable=True,
                        location=location, location_anchor=anchor, right_click_menu=sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT, right_click_menu_background_color=C_MENU_BG,
                        right_click_menu_text_color=C_MENU_TEXT, right_click_menu_selected_colors=('#ffffff', C_MENU_SEL), right_click_menu_font=FONT_MENU)
     style_menus(window.TKRightClickMenu)
@@ -1762,7 +1764,7 @@ def settings_window(location=(None, None), anchor=None):
     return saved
 
 
-# Settings window images - 25 x 25 trash can (amber, red on hover), from PSG Dock
+# Packages window images - 25 x 25 trash can (amber, red on hover), from PSG Dock
 TRASH_RED = b'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAMAAADzN3VRAAAASFBMVEUAAAD/AAD/AADrAAD/AAD/AADcAAD/AADtAAD3AADYAAD/AAD/AADwAADuAADuAAD6AADrAAD/AADOAAD/AACmAACtAAD/AADCW8QwAAAAF3RSTlMA/fnH2GWN3bGkhVru1Mq6uZOISjcaGe/TegUAAACDSURBVHiczZHtCsMgDEWTOKvWfrfbff83HYngHF3/bbCDYLjHqCjRb9huyvYeLiGEIFBEy6WawUJWrBqqOUZLuUgej9d2DmWxtcI1BzkIkp8x+wQ5mUw9esofjKcOHfm/NPny1useEff1ZK5eZ2JhHWWaGpNqh5Iac4/2oYX4aMy3eALVGAyXRSQ2kQAAAABJRU5ErkJggg=='
 TRASH = b'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAMAAADzN3VRAAAAXVBMVEUAAADJoibJoifJoSbJoibIoiXKoCXJoibKoCbOpijIoibJoSfJoibJoibJoibIoSbWrSrIoSbJoSfNpijHoSXIoCjEnCfMoyjTqSnYrSrQqCjPpijmuSzJoifesytghzcEAAAAGHRSTlMA+cf92I1lhVjQzaOVy/Lf2LKvq0ozGhkawlE6AAAAnklEQVR4nM2RSQ6DMAxFbRLIwDy1xia5/zERSAUK6q6V+qR44SfFyTfAbzCN1rox783cld5XJCxUeV+6fDd1FKagVgKxxHo3oxPc2mtBceNxXUIqMIkS4qAoOQ1KCKmwbWxtQXg1kwUzG7DT3WSQzilkf2nsp1dTMXSxG+4/VUFItnNJh1HhGiqiQi7PC4rCLyQe6wF49Pqgf57Mt1gAAwEOREh/iwwAAAAASUVORK5CYII='
 
