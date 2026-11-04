@@ -43,7 +43,7 @@ The Widget Template has all of it, ready for a widget of your own.
 
 Paths are inside the `psgplayground` package - in this repo, or in site-packages once you've installed it.
 
-<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync e6c28f4ba5d3) -->
+<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 618417d1af09) -->
 
 ### Widgets
 
@@ -82,7 +82,7 @@ Programs that live in the system tray, out of the way until you need them - righ
 |---|---|---|
 | <img src="psgplayground/icons/download_mover_icon.png" width="40" height="40"><br>**Download Mover** | Tray watcher for your Downloads folder - a new file pops up an Inbox, pick where it goes, Move or Copy, Undo.<br>`Tray/download_mover.pyw`<br><a href="psgplayground/screenshots/download_mover.png"><img src="psgplayground/screenshots/download_mover.png" width="240" height="142"></a> | psgtray, pystray, pillow (optional: watchdog) |
 | <img src="psgplayground/icons/psg_local_tray_icon.png" width="40" height="40"><br>**PSG Local Tray** | Tray switch: do programs on this Python import your local PySimpleGUI repo or the pip-installed copy? L / P at a glance.<br>`Tray/psg_local_tray.pyw`<br><a href="psgplayground/screenshots/psg_local_tray.png"><img src="psgplayground/screenshots/psg_local_tray.png" width="175" height="150"></a> | psgtray, pillow |
-| <img src="psgplayground/icons/psghotkey_256.png" width="40" height="40"><br>**psghotkey**<br>**Windows** | Global hotkeys that type text or launch programs, from the tray. Lives in its own repo - pip install psghotkey.<br>`pip install psghotkey`<br><a href="psgplayground/screenshots/psghotkey.png"><img src="psgplayground/screenshots/psghotkey.png" width="240" height="137"></a> | - |
+| <img src="psgplayground/icons/psghotkey_256.png" width="40" height="40"><br>**psghotkey**<br>**Windows** | Global hotkeys that type text or launch programs, from the tray. Lives in its own repo - pip install psghotkey.<br>`pip install psghotkey`<br><a href="psgplayground/screenshots/psghotkey.png"><img src="psgplayground/screenshots/psghotkey.png" width="225" height="150"></a> | - |
 
 ### Programming
 
