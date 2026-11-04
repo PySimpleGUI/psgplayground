@@ -37,6 +37,11 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.27  03-Nov-2026     Claude: Panel - drag a program to a new place in the dock (another section or column too), or drag a heading
+                            to move its whole section. A copy follows the mouse, a blue line shows where it lands, it is saved at once;
+                            let go outside the dock and nothing moves. A floating dock now moves by its title strip or an empty spot -
+                            dragging a program moves the program. Also fixed: 2.2.25's safety net for a dock already gone when it saves
+                            where it was used tk, which isn't defined here (sg.tk now).
     2.2.26  03-Nov-2026     Claude: Panel - right-click > Columns goes up to 8 (it stopped at 3). Auto uses as many columns as it takes
                             to keep the Panel wider than it is tall - a long list was growing tall in 3 columns. Never more columns
                             than fit across the screen; a Panel on a side edge still gets one tall column when it fits.
@@ -141,7 +146,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.26'
+version = '2.2.27'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -207,6 +212,7 @@ class G:
     location, legacy_style, default_pt = None, 'Panel', None                                  # this style's floating spot; the style 2.2.19 showed; where the last dock was
     full_size, sliding = None, False                    # the whole dock's size (the window is only its handle while auto-hidden); sliding in / out
     scrub = None                                        # dragging across S M L
+    drag_item = None                                    # Panel: a program / section being dragged to a new place (its list positions, the copy that follows the mouse...)
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
     stack_open, stack_closed, drop_stack = None, None, None                                   # Bar Stacks: the one flown out, the last closed (num, time), a drop aimed at one
 
@@ -253,6 +259,7 @@ K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY = '-E OPEN-', '-E FOLDER-', '-E EDIT-',
 K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE = '-E RENAME-', '-E REMOVE-', '-E SHARPEN-', '-E ADD HERE-'
 K_E_BAR = '-E IN BAR-'                          # a program's / heading's menu: Show in the Bar
 K_MOVED = '-MOVED-'                             # the floating dock was dragged to a new place
+K_REORDER = '-REORDER-'                         # Panel: a program / section dragged to a new place, value = (start, end, list position)
 K_TEXT = '-TEXT SIZE-'                          # right-click > Text size (settings entry, and the prefix of the menu keys)
 KT_TEXT = lambda name: f'{K_TEXT}{name}'
 K_SECTIONS = '-SECTION COLORS-'                 # right-click > Colored sections
@@ -2161,13 +2168,20 @@ def render_card():
         if ver:
             d.text(((x + w - 10) * k, (y + h / 2 + 0.5) * k), ver, font=small_font, fill=t['dim'], anchor='rm')
     G.drop_rows = rows
+    if G.drag_item:                                                     # a program / section being dragged to a new place: faded where it was
+        veil = Image.new('RGBA', im.size, (0, 0, 0, 0))
+        vd = ImageDraw.Draw(veil)
+        for pos, kind, x, y, w, h in (r for column in rows for r in column):
+            if G.drag_item['start'] <= pos < G.drag_item['end']:
+                vd.rectangle((x * k, y * k, (x + w) * k, (y + h) * k), fill=rgba(t['card'], 190))
+        im.alpha_composite(veil)
     if G.drop_line:                                                     # programs being dragged over: a line where they'll land
         x0, x1, y = G.drop_line
         d.line((x0 * k, y * k, x1 * k, y * k), fill=C_CHECKED, width=max(2, round(2.5 * s)))
         d.ellipse(((x0 - 3) * k, (y - 3) * k, (x0 + 3) * k, (y + 3) * k), fill=C_CHECKED)
     # ---- bottom line: the path of the program under the mouse, or a summary
     d.line((14 * k, foot_y * k, (W - 14) * k, foot_y * k), fill=t['track'], width=max(1, round(k)))
-    text = hint(('size', '') if G.scrub is not None else G.hover)
+    text = G.drag_item['hint'] if G.drag_item else hint(('size', '') if G.scrub is not None else G.hover)
     d.text((W / 2 * k, (foot_y + FOOT_H / 2 - 1) * k), fit(d, text, small_font, (W - 28) * k, keep_end=True), font=small_font, fill=t['text'] if G.hover or G.scrub else t['dim'], anchor='mm')
     im = im.resize((round(W * s), round(H * s)), Image.LANCZOS)
     off = round(PANEL_SHADOW * s) if G.glass else 0                     # Glass: room all round for a soft shadow
@@ -2979,7 +2993,7 @@ def remember_location(window, at=None):
         return
     try:
         G.location = tuple(at) if at else (window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty())
-    except (tk.TclError, AttributeError):                              # the window is already gone: keep the spot saved last
+    except (sg.tk.TclError, AttributeError):                           # the window is already gone: keep the spot saved last
         return
     save_style_setting('LOCATION', list(G.location))
     w, h = G.win_size or (0, 0)
@@ -3111,7 +3125,7 @@ def autohide_tick(window):
         w, h = G.full_size
         margin = round(30 * G.dpi)
         inside = x0 - margin <= px < x0 + w + margin and y0 - margin <= py < y0 + h + margin
-        if inside or G.drop_index is not None or G.stack_open is not None or G.scrub is not None:
+        if inside or G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None:
             G.out_since = None
         else:
             G.out_since = G.out_since or now
@@ -3173,7 +3187,8 @@ def set_size(window, size, save=True):
 def bind_mouse(window):
     """ Hover, clicks, right-clicks, the S M L control - and dragging a floating dock (done here rather than with grab_anywhere, so a drag
         is never taken for a click: the dock only starts moving once the mouse has gone DOCK_DRAG pixels, and a press that moved the dock
-        never starts a program).  The S M L control: a click picks a size, a drag across it sets any size """
+        never starts a program).  The S M L control: a click picks a size, a drag across it sets any size.  Panel: a drag that starts on a
+        program or a heading moves that entry (a heading: its whole section) - the dock moves by its title strip or an empty spot """
     widget = window[K_IMAGE].Widget
 
     def motion(e):
@@ -3207,9 +3222,16 @@ def bind_mouse(window):
                     window.TKroot.after_idle(lambda: scrub_apply(window))
                 G.scrub['pending'] = min(SIZE_MAX, max(SIZE_MIN, G.scrub['start'] + delta / G.dpi * 0.004))
             return
-        if G.place != 'Floating':
+        if G.drag_item is not None:                                     # a program or section being moved within the Panel
+            drag_entry(window, e.x_root, e.y_root)
             return
         if not p['moving'] and math.hypot(dx, dy) >= DOCK_DRAG:
+            if G.style == 'Panel' and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'head') and start_entry_drag(window, p):
+                widget.configure(cursor='fleur')                       # pressed on a program or a heading: that moves, not the dock
+                drag_entry(window, e.x_root, e.y_root)
+                return
+            if G.place != 'Floating':
+                return
             p['moving'] = True
             widget.configure(cursor='fleur')
         if p['moving']:
@@ -3228,6 +3250,10 @@ def bind_mouse(window):
                 set_size(window, near if abs(near - G.size) < 0.04 else G.size)       # close to S, M or L: it snaps there
             return
         if p is None:
+            return
+        if G.drag_item is not None:                                     # a program or section let go: it lands on the line (outside the dock: no change)
+            finish_entry_drag(window)
+            widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
             return
         if p['moving']:                                                 # the dock was dragged - never a launch
             widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
@@ -3290,6 +3316,161 @@ def drop_over(window, x_root, y_root):
         if (index, line) != (G.drop_index, G.drop_line):
             G.drop_index, G.drop_line = index, line
             redraw(window)
+
+
+def drop_line_at(index):
+    """ Panel: the line for list position index (x0, x1, y in design pixels) - at the top of the entry there, or under the last one """
+    rows = [r for column in G.drop_rows for r in column]
+    for pos, kind, x, y, w, h in rows:
+        if pos == index:
+            return x + 4, x + w - 4, y
+    if not rows:
+        return None
+    pos, kind, x, y, w, h = max(rows, key=lambda r: r[0])
+    return x + 4, x + w - 4, y + h
+
+
+def drag_target(pos):
+    """ A program / section dragged in the Panel: the list position it lands on for drop position pos - None where it wouldn't move.  A program
+        goes anywhere; a heading brings its programs, so a section lands between sections (before a heading, or at the end) """
+    drag = G.drag_item
+    start, end = drag['start'], drag['end']
+    if pos is None or start <= pos <= end:
+        return None
+    if drag['kind'] == KIND_APP:
+        return pos
+    order = list(Block.active_blocks.values())
+    edges = [i for i, b in enumerate(order) if b.kind == KIND_HEADING and not start <= i <= end] + ([len(order)] if end < len(order) else [])
+    return min(edges, key=lambda i: (abs(i - pos), i), default=None)
+
+
+def render_ghost(drag):
+    """ The copy of the dragged entry that follows the mouse: its row, outlined - a heading also says how many programs come with it """
+    s, t, ts = G.scale, T(), text_scale()
+    k = s * 2
+    w, h = drag['size']
+    im = Image.new('RGBA', (round(w * k), round(h * k)), rgba(t['card']))
+    d = ImageDraw.Draw(im)
+    b = Block.active_blocks[drag['num']]
+    if drag['kind'] == KIND_HEADING:
+        colors, owner = sections()
+        n = drag['end'] - drag['start'] - 1
+        count, small, head_font = (f'+ {n} program{"s" * (n != 1)}' if n else ''), font(False, round(12 * ts * k)), font(True, round(16 * ts * k))
+        count_w = d.textlength(count, font=small) + 12 * k if count else 0
+        d.text((8 * k, h * 0.5 * k), fit(d, b.name, head_font, (w - 16) * k - count_w), font=head_font, fill=colors.get(b.block_num, t['heading']), anchor='lm')
+        if count:
+            d.text(((w - 10) * k, h * 0.5 * k), count, font=small, fill=t['dim'], anchor='rm')
+    else:
+        icon = icon_image(b.iconb64, round(ICON_PX * k))
+        ix, iy = 9 * k, (h - ICON_PX) / 2 * k
+        if icon:
+            im.alpha_composite(icon, (round(ix + (ICON_PX * k - icon.width) / 2), round(iy + (ICON_PX * k - icon.height) / 2)))
+        name_font = font(False, round(14 * ts * k))
+        d.text((43 * k, h / 2 * k), fit(d, b.name or '(no name)', name_font, (w - 53) * k), font=name_font, fill=t['text'], anchor='lm')
+    d.rectangle((0, 0, im.width - 1, im.height - 1), outline=C_CHECKED, width=max(2, round(1.5 * k)))
+    return im.resize((round(w * s), round(h * s)), Image.LANCZOS)
+
+
+def start_entry_drag(window, p):
+    """ A press on a program or a heading in the Panel became a drag: that entry (a heading: its whole section) is faded in place and a copy of
+        it follows the mouse.  False if its row isn't on the card """
+    kind, num = p['part']
+    order = list(Block.active_blocks)
+    if num not in order:
+        return False
+    start = order.index(num)
+    end = start + 1 + (len(section_members(num, bar_only=False)) if kind == 'head' else 0)
+    row = next((r for column in G.drop_rows for r in column if r[0] == start), None)                    # (list position, kind, x, y, w, h) in design pixels
+    if row is None:
+        return False
+    b = Block.active_blocks[num]
+    G.drag_item = drag = {'num': num, 'kind': KIND_HEADING if kind == 'head' else KIND_APP, 'start': start, 'end': end, 'size': (row[4], row[5]), 'index': None,
+                          'at': (round(16 * G.dpi), round(10 * G.dpi)), 'ghost': None}     # the copy sits just right of and below the mouse: the line stays in sight
+    n = end - start - 1
+    what = f'the {b.name} section' + (f' and its {n} program{"s" * (n != 1)}' if n else '') if kind == 'head' else (b.name or 'this program')
+    drag['hint'] = f'Moving {what}   ·   let go where the blue line is   ·   outside the dock: no change'
+    try:
+        photo = ImageTk.PhotoImage(render_ghost(drag))
+        ghost = sg.tk.Toplevel(window.TKroot)
+        ghost.overrideredirect(True)
+        ghost.attributes('-topmost', True)
+        try:
+            ghost.attributes('-alpha', 0.85)
+        except sg.tk.TclError:
+            pass
+        label = sg.tk.Label(ghost, image=photo, bd=0, highlightthickness=0)
+        label.photo = photo
+        label.pack()
+        drag['ghost'], drag['ghost_w'] = ghost, photo.width()
+        place_ghost(drag, p['x'], p['y'])
+    except Exception:                                                   # no copy then - the line still shows where it goes
+        drag['ghost'] = None
+    redraw(window)
+    return True
+
+
+def place_ghost(drag, x_root, y_root):
+    """ The dragged entry's copy: just right of and below the mouse - left of it near the screen's right edge, so it stays in sight """
+    ghost = drag['ghost']
+    if ghost is None:
+        return
+    gx = x_root + drag['at'][0]
+    if gx + drag['ghost_w'] > G.mon[2]:
+        gx = x_root - drag['at'][0] - drag['ghost_w']
+    try:
+        ghost.geometry(f'+{round(gx)}+{round(y_root + drag["at"][1])}')
+    except sg.tk.TclError:
+        drag['ghost'] = None
+
+
+def drag_entry(window, x_root, y_root):
+    """ The dragged entry's copy follows the mouse; the blue line moves to where it would land (none outside the dock, or where it wouldn't move) """
+    drag = G.drag_item
+    place_ghost(drag, x_root, y_root)
+    x, y = x_root - window.TKroot.winfo_rootx(), y_root - window.TKroot.winfo_rooty()
+    w, h = G.win_size or (0, 0)
+    off = G.panel_off
+    index = None
+    if off <= x < w - off and off <= y < h - off:
+        index = drag_target(panel_drop((x - off) / G.scale, (y - off) / G.scale)[0])
+    if index != drag['index']:
+        drag['index'] = index
+        G.drop_line = drop_line_at(index) if index is not None else None
+        redraw(window)
+
+
+def finish_entry_drag(window):
+    """ The dragged entry was let go: the event loop moves it to the line (K_REORDER).  No line (outside the dock, or no move): nothing changes """
+    drag, G.drag_item = G.drag_item, None
+    G.drop_line = None
+    if drag['ghost'] is not None:
+        try:
+            drag['ghost'].destroy()
+        except sg.tk.TclError:
+            pass
+    if drag['index'] is not None:
+        window.write_event_value(K_REORDER, (drag['start'], drag['end'], drag['index']))
+    else:
+        redraw(window)
+
+
+def move_entries(window, start, end, index):
+    """ List positions start .. end-1 (a program, or a heading with its programs) move to list position index - saved at once, with a short glow """
+    order = list(Block.active_blocks.values())
+    if not 0 <= start < end <= len(order) or start <= index <= end:
+        redraw(window)
+        return
+    moving, rest = order[start:end], order[:start] + order[end:]
+    at = index - (end - start) if index > end else index
+    rest[at:at] = moving
+    Block.active_blocks = {b.block_num: b for b in rest}
+    save_entries()
+    now = time.time()
+    for b in moving:
+        G.flash[b.block_num] = now + 0.8
+    G.hover = None
+    relayout(window)
+    window.TKroot.after(900, lambda: redraw(window))
 
 
 def setup_drop(window):
@@ -4175,6 +4356,8 @@ def main():
             redraw(window)
         elif event == K_MOVED:                                          # the floating dock was dragged somewhere new
             remember_location(window, values[K_MOVED])
+        elif event == K_REORDER:                                        # a program or section dragged to a new place in the Panel
+            move_entries(window, *values[K_REORDER])
         elif event == K_CLICK:
             part = values[K_CLICK]
             if part == 'close':

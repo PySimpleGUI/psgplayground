@@ -32,6 +32,7 @@ pip_refresh.pyw  -  Pip Refresh: keeps your pip packages fresh from GitHub and P
     Requires:  pip install PySimpleGUI pillow          optional:  psgdnd  (drop GitHub links onto the Packages window)
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-03  v2.0.12  Claude: the Packages window moves by its title strip only, like PSG Dock's Programs window - dragging anywhere else in it doesn't move it
 2026-11-03  v2.0.11  Claude: the window that edits the package list is called Packages now - right-click > Packages..., the gear's label and the
                     window's title (Settings was the wrong name for it)
 2026-11-02  v2.0.10  Claude: GitHub column: when setup.py takes its VERSION from another file (psgplayground: playground.py), Pip Refresh reads that file
@@ -80,7 +81,7 @@ try:
 except Exception:
     psgdnd = None
 
-VERSION = '2.0.11'
+VERSION = '2.0.12'
 APP_NAME = 'Pip Refresh'
 SETTINGS_FILE = 'pip_refresh.json'
 OLD_APP_NAME, OLD_SETTINGS_FILE = 'Pip Fresh', 'pip_fresh.json'          # its name for the morning of 1-Nov-2026
@@ -147,6 +148,7 @@ K_OK = '-OK-'
 K_APPLY = '-APPLY-'
 K_CANCEL = '-CANCEL-'
 K_STRIP_CLOSE = '-STRIP CLOSE-'
+K_STRIP = '-STRIP-'                   # the Packages window's title strip - the window is dragged by it (and only by it)
 K_STATUS = '-STATUS-'
 K_PAGE_UP, K_PAGE_DOWN, K_HOME, K_END = '-PAGE UP-', '-PAGE DOWN-', '-HOME-', '-END-'
 K_DRAG_PRESS = '-DRAG PRESS-'         # from the grip's mouse bindings   value: (entry num, x_root, y_root)
@@ -1487,7 +1489,6 @@ def drag_lift(window, drag, y_root):
     gap = tk.Frame(parent, width=w, height=h, bg=C_SLOT, highlightthickness=2, highlightbackground=C_SLOT_OUTLINE, highlightcolor=C_SLOT_OUTLINE)     # where it will land
     gap.pack_propagate(False)
     gap.pack(before=src_row, fill='x', **drag['pads'])
-    window.grab_any_where_off()                                                 # the window stays put while an entry is dragged (back on at the drop)
     src_row.pack_forget()
     drag['gap'], drag['index'] = gap, None
     e = S.entries[drag['src']]
@@ -1563,7 +1564,6 @@ def drag_release(window, drag):
         else:
             drag['row'].pack(**drag['pack_info'])
     finally:                                                                    # whatever happens, the floating copy and the slot go away
-        window.grab_any_where_on()
         for key in ('top', 'gap'):
             try:
                 drag[key].destroy()
@@ -1577,14 +1577,41 @@ def drag_release(window, drag):
 
 
 # ---------- the window ----------
-def title_strip(title, close_key, note=f'v{VERSION}'):
+def title_strip(title, close_key, note=f'v{VERSION}', key=None):
     """Toybox-style strip across the top:  [icon] title  v1.0 ............ x   (drag the window by it).  note = the small text after the title"""
     row = [sg.Image(data=ICON, subsample=2, background_color=C_STRIP, p=((10, 6), 6)),
            sg.Text(title, font=('Segoe UI', 13, 'bold'), text_color=C_STRIP_TEXT, background_color=C_STRIP, p=(0, 6)),
            sg.Text(note, font=('Segoe UI', 9), text_color=C_UI_DIM, background_color=C_STRIP, p=((6, 0), (10, 4))),
            sg.Push(background_color=C_STRIP),
            sg.Text('  ✕  ', key=close_key, font=('Segoe UI', 12), text_color=C_UI_DIM, background_color=C_STRIP, enable_events=True, p=0, tooltip='Close (Escape)')]
-    return [sg.Column([row], background_color=C_STRIP, expand_x=True, p=0)]
+    return [sg.Column([row], key=key, background_color=C_STRIP, expand_x=True, p=0)]
+
+
+def drag_by_strip(window, strip, skip=None):
+    """Move a window by dragging its title strip (any of it but `skip`, the close x) - the rest of the window stays put, as in PSG Dock's Programs window"""
+    start = {}
+
+    def press(e):
+        start['p'] = (e.x_root, e.y_root, window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty())
+
+    def motion(e):
+        p = start.get('p')
+        if p:
+            window.TKroot.geometry(f'+{round(p[2] + e.x_root - p[0])}+{round(p[3] + e.y_root - p[1])}')
+
+    def release(e):
+        start.pop('p', None)
+
+    def bind(w):
+        if w is skip:
+            return
+        w.bind('<ButtonPress-1>', press, add='+')
+        w.bind('<B1-Motion>', motion, add='+')
+        w.bind('<ButtonRelease-1>', release, add='+')
+        for child in w.winfo_children():
+            bind(child)
+
+    bind(strip)
 
 
 def confirm(window, question, title='Confirm'):
@@ -1636,13 +1663,13 @@ def packages_window(location=(None, None), anchor=None):
     hint_text = 'Drag ☰ to reorder.   Paste a GitHub link into a repo box' + (' or drop one onto the list.' if psgdnd else '.')
     status_bar = [sg.Text('', k=K_STATUS, font=('Segoe UI', 10)), sg.Push(),                   # file name only - the full path is in its tooltip, so the bar stays narrow
                   sg.Text(os.path.basename(sg.user_settings_filename()), font=('Segoe UI', 9), text_color=C_UI_FAINT, tooltip=sg.user_settings_filename()), sg.Sizegrip()]
-    body = [title_strip(f'{APP_NAME} Packages', K_STRIP_CLOSE),
+    body = [title_strip(f'{APP_NAME} Packages', K_STRIP_CLOSE, key=K_STRIP),
             [sg.Column([toolbar], expand_x=True, p=(8, (8, 2)))],
             [sg.Text(hint_text, font=('Segoe UI', 9), text_color=C_UI_DIM, p=(12, (2, 4)))],
             [sg.Column(entries, k=K_LIST, size=(None, LIST_HEIGHT), scrollable=True, vertical_scroll_only=True, expand_x=True, expand_y=True, p=(6, 2))],
             [sg.Column([status_bar], expand_x=True, p=(8, (2, 4)))]]
     layout = [[sg.Frame('', body, border_width_no_relief=1, border_color=C_ENTRY_BORDER, p=0, expand_x=True, expand_y=True)]]
-    window = sg.Window(f'{APP_NAME} Packages', layout, no_titlebar=True, grab_anywhere=True, keep_on_top=True, finalize=True, margins=(0, 0), icon=ICON, resizable=True,
+    window = sg.Window(f'{APP_NAME} Packages', layout, no_titlebar=True, grab_anywhere=False, keep_on_top=True, finalize=True, margins=(0, 0), icon=ICON, resizable=True,
                        location=location, location_anchor=anchor, right_click_menu=sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT, right_click_menu_background_color=C_MENU_BG,
                        right_click_menu_text_color=C_MENU_TEXT, right_click_menu_selected_colors=('#ffffff', C_MENU_SEL), right_click_menu_font=FONT_MENU)
     style_menus(window.TKRightClickMenu)
@@ -1651,6 +1678,7 @@ def packages_window(location=(None, None), anchor=None):
     close = window[K_STRIP_CLOSE].Widget
     close.bind('<Enter>', lambda e: close.configure(bg=C_CLOSE, fg='#ffffff'))
     close.bind('<Leave>', lambda e: close.configure(bg=C_STRIP, fg=C_UI_DIM))
+    drag_by_strip(window, window[K_STRIP].Widget, skip=close)                         # moved by its title strip only - clicks and drags in the list never move it
     if psgdnd:
         try:
             psgdnd.register_element_dnd(window[K_LIST], window, psgdnd.DROP_TYPE_ALL)       # a link dropped between entries adds a new one
