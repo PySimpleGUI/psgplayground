@@ -38,6 +38,44 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.39  05-Nov-2026     Claude: right-click > Handle colour > Custom... - any colour for the hidden dock's handle (or its name tag), from the
+                            colour picker. The picker starts at the colour you picked there last, and the menu's chip shows it (a rainbow
+                            until you pick one). Each dock keeps its own.
+    2.2.38  04-Nov-2026     Claude: a side bar's bubble no longer cuts a program's name to a few letters (it shortened the name to fit beside the
+                            section's name, then left the section out for lack of room). Bar: right-click > Section name in the bubble -
+                            turn it off to see just the program's name (with Section names under the bar you can see the sections anyway).
+    2.2.37  04-Nov-2026     Claude: fixed - the Panel's switch button changed the size instead of switching to the Bar (since T was added, the
+                            L part of the size control reached over it). Right-click > Handle colour: the hidden dock's handle (or name tag)
+                            in a colour of its own - each dock its own, so several on one side are easy to tell apart.
+    2.2.36  04-Nov-2026     Claude: the hide button is on every docked dock now: with Auto-hide off it tucks the dock away by hand and its
+                            handle stays (above other windows) until you click it - then the dock stays out. Right-click > Fly out (with
+                            Auto-hide on): at once, after a moment (0.3 s, as before), half a second or a second.
+    2.2.35  04-Nov-2026     Claude: a T (Tiny, 65%) on the size control - T S M L on the Panel and the Bar.
+    2.2.34  04-Nov-2026     Claude: the Panel's hide button moved to the bottom line, alone in the corner away from its edge (lower left on a
+                            Panel docked on the right) - easy to find, and no longer among the buttons where you look for the close x.
+    2.2.33  04-Nov-2026     Claude: where a dock goes is all dragging now - the Position menu is gone. Push a Panel into an edge (or bring the
+                            mouse to one) and it docks there, with the blue highlight, like the Bar; pull a docked Panel or Bar off its edge
+                            and let go and it floats there (a Bar pulled off a side keeps running up and down). Auto-hide is one click in
+                            the right-click menu; Floating vertically too, for a floating Bar. A hide button (an arrow toward the edge) on a
+                            docked, auto-hidden Panel's title strip and at the end of the Bar tucks it away at once. Name on the handle: the
+                            hidden dock's handle becomes a tag with its name - handy with several docks on one side.
+    2.2.32  04-Nov-2026     Claude: drag a Bar to another edge: near an edge (any monitor's) a blue highlight shows where it will dock - let go
+                            and it is docked there, at that spot along the edge, turned across or up and down to fit. A docked Bar pulled
+                            away from its edge (or its hidden handle pulled away) does the same; let go away from every edge and it goes back.
+                            A floating Bar dragged to the very edge docks there too (anywhere else it stays floating).
+    2.2.31  04-Nov-2026     Claude: Bar - Position > Floating vertically: a floating bar that runs up and down, opening toward the middle of
+                            the screen. A docked bar slides along its edge when you drag it (anywhere on it) - the spot is kept. A docked
+                            Panel slides along its edge by its title strip.
+    2.2.30  04-Nov-2026     Claude: drag an auto-hidden dock's handle along its edge (up and down on a side, along the top or bottom) - the
+                            dock flies out there, and the spot is kept for that dock and style, so two docks can share one side. The dock now
+                            flies out after the mouse rests on the handle a moment (a click opens it at once); Position > an edge centres it.
+    2.2.29  04-Nov-2026     Claude: several docks, each with its own programs and settings - start one with  psgdock.pyw --dock "Claude chats"
+                            (the dock started without a name keeps its files, nothing changes for it). Right-click > Docks: open another
+                            dock, New dock..., Rename this dock..., Desktop shortcut for this dock. Each shows its name (the Panel's title
+                            strip - a narrow Panel widens for it - the window title, the gear's bubble on the Bar); one dock never runs twice
+                            (starting it again says it's already open). Links as entries: a web page, a Claude chat (https://claude.ai/...
+                            opens in the Claude app), claude://, mailto: ... - right-click > Add a link... (a heading's: Add a link here...),
+                            or type one in the Programs window's path; the icon is the app that opens it.
     2.2.28  03-Nov-2026     Claude: Programs window - dragging an entry near the list's top or bottom scrolls much faster: faster the
                             closer to the edge, faster still past it (move the mouse beyond the list), and it speeds up while you hold
                             it there; the mouse wheel scrolls too while dragging. The dock says where to rearrange: the Panel's bottom
@@ -152,10 +190,12 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.28'
+version = '2.2.39'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
+MAIN_SETTINGS_FILENAME = WINDOW_SETTINGS_FILENAME               # the dock started without a name keeps these two files.  A named dock (--dock "Claude chats") has its own:
+DOCK_PREFIX = 'psgdock_dock_'                                   #   psgdock_dock_claude_chats.json and psgdock_dock_claude_chats_entries.json - set by use_dock()
 
 
 def migrate_settings():
@@ -222,6 +262,18 @@ class G:
     drag_item = None                                    # Panel: a program / section being dragged to a new place (its list positions, the copy that follows the mouse...)
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
     stack_open, stack_closed, drop_stack = None, None, None                                   # Bar Stacks: the one flown out, the last closed (num, time), a drop aimed at one
+    dock_slug, dock_title, mutex = '', APP_NAME, None   # which dock this is: '' = the one started without a name;  its name as shown;  the handle that says it's running
+    dock_ready = False                                  # dock_title is this dock's own name now (read from its settings)
+    link_icons = {}                                     # a link's scheme -> the icon of the app that opens it (made once)
+    along = None                                        # docked: where along its edge the dock's middle is (0 .. 1 of the edge) - None = centred.  Saved per style
+    float_vertical, float_side = False, 'Left'          # Bar: Floating vertically;  which way it opens (its bubble, stacks) - away from the nearer side of the screen
+    handle_since = None                                 # auto-hidden: since when the mouse rests on the handle (-1: it was just dragged - wait until the mouse leaves it)
+    edge_target, preview, preview_size = None, None, None                                     # a dock dragged near an edge: where it would dock, the highlight showing it
+    handle_name = False                                 # right-click > Name on the handle: an auto-hidden dock's handle is a tag with its name
+    bubble_section = True                               # Bar: right-click > Section name in the bubble
+    flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
+    handle_color = None                                 # right-click > Handle colour: '#rrggbb', or None = the theme's
+    handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
 
 
 
@@ -252,7 +304,6 @@ K_CLICK = '-CLICK-'                             # a click (not a drag of the doc
 K_STYLE = '-STYLE-'                             # right-click > Style: Panel or Bar (settings entry, and the prefix of the menu keys)
 KT_STYLE = lambda name: f'{K_STYLE}{name}'
 K_PLACE = '-PLACE-'                             # right-click > Position: Floating, Bottom, Top, Left, Right
-KT_PLACE = lambda name: f'{K_PLACE}{name}'
 K_AUTOHIDE = '-AUTOHIDE-'
 K_MAGNIFY = '-MAGNIFY-'
 KT_MAGNIFY = lambda name: f'{K_MAGNIFY}{name}'
@@ -262,6 +313,14 @@ K_ADD = '-ADD PROGRAMS-'
 K_SHARPEN_ALL = '-SHARPEN ALL-'
 K_DROP = '-DROP-'                               # files dropped on the dock, value = (files, x_root, y_root)
 K_REBUILD = '-REBUILD-'                         # Glass couldn't show the picture: make the window again without it
+K_DOCK = '-DOCK AT-'                            # a dock dragged to an edge and let go there, value = (edge, its monitor, where along the edge, the floating spot it came from)
+K_FLOAT = '-FLOAT AT-'                          # a docked dock pulled off its edge and let go away from every edge, value = (where it was on the screen, up and down?)
+K_FLOAT_VERTICAL = '-FLOAT VERTICAL-'           # right-click > Floating vertically (a floating Bar)
+K_HANDLE_NAME = '-HANDLE NAME-'                 # right-click > Name on the handle (settings entry too)
+K_BUBBLE_SECTION = '-BUBBLE SECTION-'           # right-click > Section name in the bubble (Bar): a program's bubble names its section too (settings entry too)
+K_FLYOUT = '-FLY OUT-'                          # right-click > Fly out: how soon an auto-hidden dock comes out (settings entry, and the prefix of the menu keys)
+K_HANDLE_COLOR = '-HANDLE COLOR-'               # right-click > Handle colour (settings entry: '#rrggbb' or None = the theme's;  the prefix of the menu keys + the colour's name)
+K_HANDLE_CUSTOM = '-HANDLE CUSTOM-'             # right-click > Handle colour > Custom... (settings entry too: the colour last picked there)
 K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY = '-E OPEN-', '-E FOLDER-', '-E EDIT-', '-E COPY-'                  # a program's / heading's right-click menu
 K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE = '-E RENAME-', '-E REMOVE-', '-E SHARPEN-', '-E ADD HERE-'
 K_E_BAR = '-E IN BAR-'                          # a program's / heading's menu: Show in the Bar
@@ -279,6 +338,13 @@ K_UNHIDE = '-UNHIDE-'                           # right-click > Hidden from the 
 KT_UNHIDE = lambda num: f'{K_UNHIDE}{num}'
 K_PROGRAMS_SPOT = '-PROGRAMS LOCATION-'         # settings entry: where the Programs window was left
 K_STRIP = '-TITLE STRIP-'                       # the title strip of the Programs window (and the question cards) - drag the window by it
+K_DOCK_NAME = '-DOCK NAME-'                     # settings entry: this dock's name as shown (title strip, window title, the gear's bubble)
+K_OPEN_DOCK = '-OPEN DOCK-'                     # right-click > Docks > a dock: the prefix of the keys, + its file name part ('' = the dock started without a name)
+K_NEW_DOCK = '-NEW DOCK-'                       # right-click > Docks > New dock...
+K_RENAME_DOCK = '-RENAME DOCK-'                 # right-click > Docks > Rename this dock...
+K_DOCK_SHORTCUT = '-DOCK SHORTCUT-'             # right-click > Docks > Desktop shortcut for this dock
+K_ADD_LINK = '-ADD LINK-'                       # right-click > Add a link... (a web page, a claude:// chat ...)
+K_E_ADD_LINK = '-E ADD LINK-'                   # a heading's menu: Add a link here...
 
 
 ICON_SIZE = (30,30)
@@ -337,7 +403,7 @@ FONT_NAMES = {True: ('segoeuib.ttf', 'DejaVuSans-Bold.ttf'), False: ('segoeui.tt
 TRANSPARENT = '#010203'                         # Windows colour key: every pixel this colour is see-through and click-through (the rounded corners)
 RADIUS, PAD, HEAD_H, FOOT_H = 18, 10, 42, 30    # dock geometry in design pixels (96 dpi, Medium size) - multiplied by the scale when drawn
 COL_W, COL_GAP, ROW_H, ICON_PX = 232, 6, 34, 26
-BTN_Y, BTN_R = 21, 11                           # gear and x: center height and click radius
+BTN_Y, BTN_R, BTN_GAP = 21, 11, 27              # gear and x: center height, click radius, from one button to the next
 
 
 def T():
@@ -380,15 +446,24 @@ def menu_label(text):
 def make_menu():
     """ The dock's right-click menu, with check marks on the current choices """
     tick = lambda on: '✓ ' if on else '    '                          # every label starts with a tick or the same width of spaces, so they line up
-    places = [f'{tick(p == G.place)}{p}::{KT_PLACE(p)}' for p in PLACES]
-    places += ['---', f'{tick(G.autohide)}Auto-hide::{K_AUTOHIDE}' if G.place != 'Floating' else '!    Auto-hide  (docked to an edge)']
+    place = [f'{tick(G.autohide)}Auto-hide::{K_AUTOHIDE}' if G.place != 'Floating' else '!    Auto-hide  (drag the dock to an edge first)',
+             f'{tick(G.handle_name)}Name on the handle::{K_HANDLE_NAME}',             # where it goes: drag it - to an edge to dock it, off one to float it
+             '    Handle colour', [f'{tick(c == G.handle_color)}{n}::{K_HANDLE_COLOR}{n}' for n, c in HANDLE_COLORS.items()] +
+                                 ['---', f'{tick(G.handle_color is not None and G.handle_color not in HANDLE_COLORS.values())}{HANDLE_CUSTOM}::{K_HANDLE_CUSTOM}']]
+    if G.autohide and G.place != 'Floating':
+        place[1:1] = ['    Fly out', [f'{tick(abs(G.flyout - v) < 0.01)}{n}::{K_FLYOUT}{v}' for n, v in FLYOUTS.items()]]
+    if G.style == 'Bar' and G.place == 'Floating':
+        place.append(f'{tick(G.float_vertical)}Floating vertically::{K_FLOAT_VERTICAL}')
     sizes = [f'{tick(abs(G.size - v) < 0.005)}{n}  ({round(v * 100)}%)::{KT_SIZE(n)}' for n, v in SIZES.items()]
     if not any(abs(G.size - v) < 0.005 for v in SIZES.values()):
         sizes += ['---', f'!✓ {round(G.size * 100)}%  (dragged across S M L)']
     other = 'Bar' if G.style == 'Panel' else 'Panel'
-    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', '---',
-             f'    Switch to the {other}::{KT_STYLE(other)}',
-             '    Position', places,
+    docks = [f'{tick(slug == G.dock_slug)}{menu_label(name)}{"  (open)" if slug != G.dock_slug and dock_running(slug) else ""}::{K_OPEN_DOCK}{slug}' for slug, name in list_docks()]
+    docks += ['---', f'    New dock...::{K_NEW_DOCK}', f'    Rename this dock...::{K_RENAME_DOCK}']
+    if sg.running_windows():
+        docks.append(f'    Desktop shortcut for this dock::{K_DOCK_SHORTCUT}')
+    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', f'    Add a link...::{K_ADD_LINK}', '    Docks', docks, '---',
+             f'    Switch to the {other}::{KT_STYLE(other)}'] + place + ['---',
              '    Size', sizes,
              '    Text size', [f'{tick(n == G.text)}{n}::{KT_TEXT(n)}' for n in TEXT_SIZES]]
     if G.style == 'Bar':
@@ -396,7 +471,8 @@ def make_menu():
                   ['---', f'{tick(G.stacks_hover)}Stacks open when the mouse rests on them::{K_STACKS_HOVER}' if G.bar_layout == 'Stacks' else
                    f'!{tick(G.stacks_hover)}Stacks open when the mouse rests on them'],
                   '    Magnify', [f'{tick(m == G.magnify)}{m}::{KT_MAGNIFY(m)}' for m in MAGNIFIES],
-                  f'{tick(G.bar_labels)}Section names under the bar::{K_BAR_LABELS}']
+                  f'{tick(G.bar_labels)}Section names under the bar::{K_BAR_LABELS}',
+                  f'{tick(G.bubble_section)}Section name in the bubble  (with a program\'s name)::{K_BUBBLE_SECTION}']
         hidden = [b for b in Block.active_blocks.values() if not b.bar]
         if hidden:
             items += ['    Hidden from the Bar', [f'    Show {menu_label(b.name or "(no name)")}{"  (section)" if b.kind == KIND_HEADING else ""}::{KT_UNHIDE(b.block_num)}'
@@ -433,19 +509,84 @@ def style_menus(window:sg.Window):
         except tk.TclError:                                             # a menu PySimpleGUI has already replaced and destroyed
             return
         first_light = True
-        for i in range(menu.index('end') + 1 if menu.index('end') is not None else 0):      # Theme menu: a color chip beside each name, light ones in a 2nd column
-            name = menu.entrycget(i, 'label').lstrip('✓ ') if menu.type(i) == 'command' else None
-            if name in THEMES:
+        names = [menu.entrycget(i, 'label').lstrip('✓ ') if menu.type(i) == 'command' else None for i in range(menu.index('end') + 1 if menu.index('end') is not None else 0)]
+        handle_menu = "The theme's" in names                           # the Handle colour menu (its Periwinkle is not the theme)
+        for i, name in enumerate(names):                                # Theme menu: a color chip beside each name, light ones in a 2nd column
+            if name in THEMES and not handle_menu:
                 menu.entryconfigure(i, image=theme_swatch(window, name), compound='left')
                 if first_light and is_light(THEMES[name]['card']):
                     menu.entryconfigure(i, columnbreak=1)
                     first_light = False
+            elif name in HANDLE_COLORS and handle_menu:                 # Handle colour: a chip of each colour
+                menu.entryconfigure(i, image=color_chip(window, HANDLE_COLORS[name] or T()['dim']), compound='left')
+            elif name == HANDLE_CUSTOM and handle_menu:                 # Custom...: the colour picked there last, or a rainbow
+                menu.entryconfigure(i, image=custom_chip(window), compound='left')
         for child in menu.winfo_children():
             if isinstance(child, tk.Menu):
                 style(child)
 
     for top in menus.values():
         style(top)
+
+
+def color_chip(window, color):
+    """ A small rounded chip of one colour beside its name in the Handle colour menu.  Made once and kept """
+    key = ('chip', color)
+    if key not in G.swatches:
+        z = G.dpi * 4
+        im = Image.new('RGBA', (round(34 * z), round(20 * z)), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle((3 * z, 5 * z, 31 * z, 15 * z), radius=5 * z, fill=color, outline=C_SWATCH_EDGE, width=round(z))
+        buf = io.BytesIO()
+        im.resize((round(im.width / 4), round(im.height / 4)), Image.LANCZOS).save(buf, 'PNG')
+        G.swatches[key] = sg.tk.PhotoImage(master=window.TKroot, data=base64.b64encode(buf.getvalue()))
+    return G.swatches[key]
+
+
+def custom_chip(window):
+    """ The chip beside Custom... in the Handle colour menu: the colour last picked there, else a rainbow (any colour).  Made once and kept """
+    if G.handle_custom:
+        return color_chip(window, G.handle_custom)
+    key = ('chip', 'rainbow')
+    if key not in G.swatches:
+        import colorsys
+        z = G.dpi * 4
+        w, h = round(34 * z), round(20 * z)
+        x0, x1 = 3 * z, 31 * z
+        hues = Image.new('RGB', (w, 1))
+        for x in range(w):
+            r, g, b = colorsys.hsv_to_rgb(min(1.0, max(0.0, (x - x0) / (x1 - x0))) * 0.9, 0.7, 1.0)
+            hues.putpixel((x, 0), (round(r * 255), round(g * 255), round(b * 255)))
+        mask = Image.new('L', (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((x0, 5 * z, x1, 15 * z), radius=5 * z, fill=255)
+        im = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+        im.paste(hues.resize((w, h)), (0, 0), mask)
+        ImageDraw.Draw(im).rounded_rectangle((x0, 5 * z, x1, 15 * z), radius=5 * z, outline=C_SWATCH_EDGE, width=round(z))
+        buf = io.BytesIO()
+        im.resize((round(w / 4), round(h / 4)), Image.LANCZOS).save(buf, 'PNG')
+        G.swatches[key] = sg.tk.PhotoImage(master=window.TKroot, data=base64.b64encode(buf.getvalue()))
+    return G.swatches[key]
+
+
+def hex_color(value):
+    """ value as a '#rrggbb' colour (lower case), or None when it isn't one """
+    return value.lower() if isinstance(value, str) and re.fullmatch(r'#[0-9a-fA-F]{6}', value) else None
+
+
+def pick_handle_color(window):
+    """ Right-click > Handle colour > Custom...: any colour, from the colour picker - it starts at the colour last picked there (else the
+        handle's colour now).  The pick becomes this dock's handle colour and its Custom... colour.  False when cancelled """
+    from tkinter import colorchooser
+    start = G.handle_custom or G.handle_color or T()['dim']
+    try:
+        rgb = colorchooser.askcolor(color=start, parent=window.TKroot, title=f'Handle colour - {G.dock_title}')[0]
+    except Exception:
+        rgb = None
+    if not rgb:
+        return False
+    G.handle_color = G.handle_custom = '#{:02x}{:02x}{:02x}'.format(*(max(0, min(255, int(v))) for v in rgb[:3]))
+    sg.user_settings_set_entry(K_HANDLE_COLOR, G.handle_color)
+    sg.user_settings_set_entry(K_HANDLE_CUSTOM, G.handle_custom)
+    return True
 
 
 def theme_swatch(window, name):
@@ -475,6 +616,11 @@ def load_blocks():
                 G.block_number += 1
                 block = Block(block_num=block_num, name=saved_blocks[K_B_NAME(saved_block_num)], path=saved_blocks[K_B_PATH(saved_block_num)], iconb64=saved_blocks[K_B_ICON64(saved_block_num)],
                               kind=saved_blocks.get(K_B_KIND(saved_block_num), KIND_APP), bar=saved_blocks.get(K_B_BARVIS(saved_block_num), True))
+                if is_link(block.path) and not block.iconb64.strip():  # a link typed in without an icon: the icon of the app that opens it
+                    try:
+                        block.iconb64 = image_to_icon_b64(link_icon_image(block.path))
+                    except Exception:
+                        pass
                 Block.active_blocks[block_num] = block
     except Exception as e:
         sg.popup_error_with_traceback('Error loading saved blocks', e)
@@ -487,6 +633,8 @@ def get_version(filename):
         so a version="1.0" inside a string or a function doesn't count) - or, for a pip-installed program's .exe (psgshortcut.exe), its
         package's version.  '' when there is none """
     path = filename.strip().strip('"')
+    if is_link(path):
+        return ''
     if path.lower().endswith(('.py', '.pyw')):
         try:
             with open(path, 'r', encoding='utf-8', errors='replace') as f:
@@ -926,7 +1074,9 @@ def program_icon_image(filename, fallback=True):
     """ Best icon for a program file as a PIL image, or None.
         .py/.pyw -> a base64 PNG embedded in the source, else its icon in the Playground's catalog, else a picture beside it named after it, else
                     the Python interpreter's icon (Windows) or PySimpleGUI's (Linux / Mac have no program icons to ask the system for).
-        .lnk -> the target's icon.   else -> the shell icon """
+        .lnk -> the target's icon.   A link -> the icon of the app that opens it.   else -> the shell icon """
+    if is_link(filename):
+        return link_icon_image(filename)
     ext = os.path.splitext(filename)[1].lower()
     if ext in ('.py', '.pyw'):
         for find in (icon_from_python_source, playground_catalog_icon, icon_file_beside):
@@ -959,16 +1109,19 @@ def icon_for_typed_path(window:sg.Window, block_num, text):
         the name filled in if it's empty and the program's icon pulled out - what a drop does.  An icon you dropped, pasted or saved yourself is
         kept; one pulled from an earlier path is replaced.  Returns True when an icon was put in """
     block = Block.active_blocks[block_num]
-    path = clean_path(text)
-    if os.path.splitext(path)[1].lower() == '.lnk':
+    path = clean_path(text) if not is_link(text.strip()) or text.strip().lower().startswith('file://') else text.strip()
+    link = is_link(path)
+    if link and (len(path) < 10 or path.lower() in ('https://', 'http://', 'claude://')):     # a link still being typed
+        return False
+    if not link and os.path.splitext(path)[1].lower() == '.lnk':
         path = resolve_shortcut(path)
-    if not os.path.isfile(path) or os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS:
+    if not link and (not os.path.isfile(path) or os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS):
         return False
     if path != text:
         window[K_B_PATH(block_num)].update(path)
     block.path = path
     if not block.name.strip():
-        block.name = os.path.splitext(os.path.basename(path))[0].replace('_', ' ')
+        block.name = link_name(path) if link else os.path.splitext(os.path.basename(path))[0].replace('_', ' ')
         window[K_B_NAME(block_num)].update(block.name)
     if (block.iconb64.strip() and block_num not in G.auto_icon) or G.auto_icon.get(block_num) == path:
         return False
@@ -1620,14 +1773,14 @@ def programs_window(near=None):
     status_bar = [sg.T('', k=K_STATUS, font='_ 10'), sg.Push(),                                  # file name only - the full path is in its tooltip, so the bar stays narrow
                   sg.T(os.path.basename(G.launcher_settings.get_filename()), font='_ 9', text_color=T()['dim'], tooltip=f'The list is saved in\n{G.launcher_settings.get_filename()}'), sg.Sizegrip()]
     hint = 'Drag ☰ to reorder - or drag them right on the dock, in the Panel.   Drop a program or a picture onto an entry.'
-    body = [title_strip(f'{APP_NAME} Programs', 'Exit'),                                        # the strip's x sends 'Exit', handled like Cancel
+    body = [title_strip(f'{G.dock_title} Programs', 'Exit'),                                        # the strip's x sends 'Exit', handled like Cancel
             [sg.Column([toolbar], expand_x=True, p=(8, (8, 2)))],
             [sg.Text(hint, font='_ 9', text_color=T()['dim'], p=(12, (2, 4)))],
             [all_columns],
             [sg.Column([status_bar], expand_x=True, p=(8, (2, 4)))]]
     layout = [[sg.Frame('', body, border_width_no_relief=1, border_color=T()['border'], p=0, expand_x=True, expand_y=True)]]
     m_bg, m_fg = T()['menu']
-    window = sg.Window(f'{APP_NAME} Programs  v{version}', layout, no_titlebar=True, grab_anywhere=False, keep_on_top=True, finalize=True, margins=(0, 0), icon=dock_icon_64, resizable=True,
+    window = sg.Window(f'{window_title()} Programs  v{version}', layout, no_titlebar=True, grab_anywhere=False, keep_on_top=True, finalize=True, margins=(0, 0), icon=dock_icon_64, resizable=True,
                        use_min_size=True, alpha_channel=0, enable_close_attempted_event=True, right_click_menu=sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT,
                        right_click_menu_background_color=m_bg,
                        right_click_menu_text_color=m_fg, right_click_menu_selected_colors=('#ffffff', C_SELECT), right_click_menu_font=FONT_MENU)
@@ -1844,7 +1997,7 @@ STYLES = {'Panel': 'Panel  -  names and versions', 'Bar': 'Bar  -  icons, Mac st
 PLACES = ('Floating', 'Bottom', 'Top', 'Left', 'Right')
 MAGNIFIES = {'Off': 1.0, 'Small': 1.45, 'Large': 1.9}
 LAYOUTS = {'Icons': 'Icons  -  every program, sections side by side', 'Stacks': 'Stacks  -  one per section, it flies out into its programs'}
-SIZE_PRESETS = {'S': 0.8, 'M': 1.0, 'L': 1.3}                          # one click on the dock's S M L;  dragging across them: any size SIZE_MIN .. SIZE_MAX
+SIZE_PRESETS = {'T': 0.65, 'S': 0.8, 'M': 1.0, 'L': 1.3}               # one click on the dock's T S M L;  dragging across them: any size SIZE_MIN .. SIZE_MAX
 SIZE_MIN, SIZE_MAX = 0.55, 1.75
 DOCK_DRAG = 5                                                          # pixels the mouse moves before a press drags the floating dock
 TEXT_SIZES = {'Small': 0.88, 'Medium': 1.0, 'Large': 1.2, 'Extra large': 1.45}
@@ -1855,6 +2008,12 @@ BAR_LABEL, BAR_LABEL_SIDE = 54, 260                                    # room fo
 BAR_EDGE, BAR_SIDE = 10, 18                                            # room around the bar for its shadow: on the screen-edge side, at the ends
 PANEL_SHADOW = 18                                                      # Glass: room around the Panel card for its shadow
 AUTOHIDE_POLL_MS, AUTOHIDE_DWELL, AUTOHIDE_DELAY, SLIDE_MS = 90, 0.25, 0.7, 170    # auto-hide: pointer check, rest at the edge before showing, wait before hiding, slide time
+HANDLE_COLORS = {'The theme\'s': None, 'Gold': '#e8a33d', 'Blue': '#1e9bff', 'Green': '#2ecc71', 'Purple': '#c48cff', 'Coral': '#ff7f50', 'Teal': '#2ad4c8',
+                 'Pink': '#ff6b9a', 'Yellow': '#d9c63a', 'Lime': '#a6e22e', 'Periwinkle': '#8c9eff', 'Silver': '#c0c7d1', 'White': '#f4f6fa'}   # right-click > Handle colour
+HANDLE_CUSTOM = 'Custom...'                                            # its last item: any colour, from the colour picker (G.handle_custom)
+FLYOUTS = {'At once': 0.0, 'After a moment  (0.3 s)': 0.3, 'After half a second': 0.5, 'After a second': 1.0}     # right-click > Fly out (G.flyout)
+EDGE_SNAP, EDGE_PULL, EDGE_RAM = 22, 90, 24                           # a dragged dock docks with the mouse this close to an edge, or pushed this far past one;
+                                                                       # a docked one pulled this far off its edge leaves it
 KS = lambda name, style: f'-{name} {style}-'                           # a setting each style keeps for itself:  '-PLACE Bar-', '-SIZE Panel-' ...
 K_STACK_IMAGE = '-STACK IMAGE-'                                        # the fly-out of a stack, and its events (values: the tile under the mouse / clicked)
 K_STACK_HOVER, K_STACK_CLICK, K_STACK_CLOSE = '-STACK HOVER-', '-STACK CLICK-', '-STACK CLOSE-'
@@ -1931,6 +2090,29 @@ def draw_gear(d, cx, cy, r, color, hole):
     d.ellipse((cx - r * 0.33, cy - r * 0.33, cx + r * 0.33, cy + r * 0.33), fill=hole)
 
 
+def hide_shown():
+    """ The hide button shows on every docked dock """
+    return G.place != 'Floating'
+
+
+def hide_now(window):
+    """ The hide button: tuck the dock away now.  Auto-hide on: it flies out again when the mouse rests at its edge.  Auto-hide off: its handle
+        stays (on top of other windows) until you click it - then the dock stays out """
+    if hide_shown() and not G.hidden and G.anim is None:
+        G.hover = None
+        slide(window, False)
+        G.handle_since = -1                                             # not out again until the mouse has left the handle
+
+
+def draw_hide(d, cx, cy, r, color, width):
+    """ The hide button: a chevron pointing at the dock's edge """
+    v = {'Bottom': (0, 1), 'Top': (0, -1), 'Left': (-1, 0), 'Right': (1, 0)}.get(G.place, (0, 1))
+    tip = (cx + v[0] * r * 0.55, cy + v[1] * r * 0.55)
+    side = (v[1] * r, v[0] * r)                                         # across the arrow
+    back = (cx - v[0] * r * 0.55, cy - v[1] * r * 0.55)
+    d.line(((back[0] + side[0], back[1] + side[1]), tip, (back[0] - side[0], back[1] - side[1])), fill=color, width=width, joint='curve')
+
+
 def draw_switch(d, cx, cy, r, color, to_bar):
     """ The style switch: a little Bar (a capsule with three dots) when it switches to the Bar, a little Panel (a card with three lines) when
         it switches to the Panel """
@@ -1946,17 +2128,22 @@ def draw_switch(d, cx, cy, r, color, to_bar):
 
 
 def size_spot(size):
-    """ Where a size sits along the S M L control: 0 = S, 0.5 = M, 1 = L (below 0 / above 1 for sizes past them) """
-    return (size - 0.8) / 0.4 if size <= 1.0 else 0.5 + (size - 1.0) / 0.6
+    """ Where a size sits along the T S M L control: 0 = the first letter, 1 = the last, evenly between (below 0 / above 1 for sizes past them) """
+    vals = list(SIZE_PRESETS.values())
+    n = len(vals) - 1
+    for i in range(n):
+        if size <= vals[i + 1] or i == n - 1:
+            return (i + (size - vals[i]) / (vals[i + 1] - vals[i])) / n
+    return 1.0
 
 
 def size_letter():
-    """ The S / M / L the dock is at - None for a size in between """
+    """ The T / S / M / L the dock is at - None for a size in between """
     return next((letter for letter, value in SIZE_PRESETS.items() if abs(G.size - value) < 0.005), None)
 
 
 def draw_size_control(d, box, horizontal, t, hot):
-    """ The S M L control: a capsule with the three letters, the size in use on a blue disc - or, for a size in between, a small blue dot
+    """ The T S M L control: a capsule with the letters, the size in use on a blue disc - or, for a size in between, a small blue dot
         at its place along the capsule """
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
@@ -1964,9 +2151,10 @@ def draw_size_control(d, box, horizontal, t, hot):
     d.rounded_rectangle(box, radius=thick / 2, fill=mix_hex(t['text'], t['card'], 0.84 if hot else 0.9), outline=mix_hex(t['text'], t['card'], 0.72))
     current = size_letter()
     f = font(True, max(9, round(thick * 0.56)))
+    n = len(SIZE_PRESETS)
     for i, letter in enumerate(SIZE_PRESETS):
-        cx = x0 + w * (i + 0.5) / 3 if horizontal else (x0 + x1) / 2
-        cy = (y0 + y1) / 2 if horizontal else y0 + h * (i + 0.5) / 3
+        cx = x0 + w * (i + 0.5) / n if horizontal else (x0 + x1) / 2
+        cy = (y0 + y1) / 2 if horizontal else y0 + h * (i + 0.5) / n
         if letter == current:
             r = thick * 0.43
             d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=C_SELECT)
@@ -1974,15 +2162,16 @@ def draw_size_control(d, box, horizontal, t, hot):
     if current is None:                                                 # a size between the letters: a dot at its place
         p = min(1.1, max(-0.1, size_spot(G.size)))
         r = max(1.5, thick * 0.1)
-        cx, cy = (x0 + w / 6 + p * w * 2 / 3, y1 - thick * 0.17) if horizontal else (x1 - thick * 0.17, y0 + h / 6 + p * h * 2 / 3)
+        cx, cy = (x0 + w / (2 * n) + p * w * (n - 1) / n, y1 - thick * 0.17) if horizontal else (x1 - thick * 0.17, y0 + h / (2 * n) + p * h * (n - 1) / n)
         d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=C_CHECKED)
 
 
 def size_letter_at(box, horizontal, x, y):
-    """ S, M or L - the third of the size control at x, y """
+    """ T, S, M or L - the part of the size control at x, y """
     x0, y0, x1, y1 = box
+    n = len(SIZE_PRESETS)
     p = (x - x0) / max(1, x1 - x0) if horizontal else (y - y0) / max(1, y1 - y0)
-    return list(SIZE_PRESETS)[min(2, max(0, int(p * 3)))]
+    return list(SIZE_PRESETS)[min(n - 1, max(0, int(p * n)))]
 
 
 def soft_shadow(w, h, radius, blur, alpha=110):
@@ -2025,8 +2214,16 @@ def bar_shadow(length, thick, radius, blur):
 
 
 def vertical():
-    """ True when the dock runs top to bottom: a Bar on the left or right edge """
-    return G.style == 'Bar' and G.place in ('Left', 'Right')
+    """ True when the dock runs top to bottom: a Bar on the left or right edge, or Floating vertically """
+    return G.style == 'Bar' and bar_side() in ('Left', 'Right')
+
+
+def bar_side():
+    """ The Bar's screen-edge side - what its drawing is turned by: its edge when docked;  floating: Bottom (icons grow upward), or Floating vertically
+        Left / Right (it opens toward the middle of the screen) """
+    if G.place != 'Floating':
+        return G.place
+    return G.float_side if G.float_vertical and G.style == 'Bar' else 'Bottom'
 
 
 # ------------------------------------------------------------ Sections ------------------------------------------------------------
@@ -2077,6 +2274,12 @@ def card_layout():
     col_w = round(COL_W * (0.45 + 0.55 * ts))
     G.fit_rows = max(AUTO_ROWS, int(((G.work[3] - G.work[1]) / G.scale - HEAD_H - FOOT_H - 60) // row_h))   # a Panel on a side edge: rows that fit in one column
     columns = panel_columns(list(Block.active_blocks.values()), row_h, head_h, col_w) or [[]]
+    measure, z = ImageDraw.Draw(Image.new('L', (1, 1))), 4                 # room in the title strip for this dock's name (up to 520): narrower columns get wider
+    title_w = measure.textlength(G.dock_title.upper(), font=font(True, round(13 * min(ts, 1.25) * z))) / z + measure.textlength(f'v{version}', font=font(False, 12 * z)) / z
+    need = min(520, round(38 + title_w + 7 + 14 + 184))
+    n = len(columns)
+    if 2 * PAD + n * col_w + (n - 1) * COL_GAP < need:
+        col_w = (need - 2 * PAD - (n - 1) * COL_GAP) / n
     items, bottom = [], HEAD_H + 6
     for c, entries in enumerate(columns):
         x, y = PAD + c * (col_w + COL_GAP), HEAD_H + 6
@@ -2100,11 +2303,13 @@ def hint(part):
     if part == 'gear':
         return 'Programs - add, remove and order them'
     if part == 'close':
-        return f'Close {APP_NAME}'
+        return f'Close {G.dock_title}'
+    if part == 'hide':
+        return 'Hide this dock'                                         # (a narrow Panel's bottom line has little room)
     if part == 'switch':
         return 'Switch to the Bar - the icons in a row, Mac style' if G.style == 'Panel' else 'Switch to the Panel - names and versions'
     if isinstance(part, tuple) and part[0] == 'size':
-        return f'Size {round(G.size * 100)}%   ·   click S, M or L  -  or drag across them for any size'
+        return f'Size {round(G.size * 100)}%   ·   click T, S, M or L  -  or drag across them for any size'
     if isinstance(part, tuple) and part[1] in Block.active_blocks:
         b = Block.active_blocks[part[1]]
         if b.kind == KIND_HEADING:
@@ -2135,14 +2340,16 @@ def render_card():
     if icon:
         im.alpha_composite(icon, (round(13 * k), round((BTN_Y - 9) * k)))
     title_font = font(True, round(13 * min(ts, 1.25) * k))
-    d.text((38 * k, BTN_Y * k), APP_NAME.upper(), font=title_font, fill=t['dim'], anchor='lm')
-    d.text((38 * k + d.textlength(APP_NAME.upper(), font=title_font) + 7 * k, (BTN_Y + 1) * k), f'v{version}', font=font(False, round(12 * k)), fill=mix_hex(t['dim'], t['card'], 0.4), anchor='lm')
-    size_box = (W - 160, BTN_Y - 10, W - 89, BTN_Y + 10)
+    ver_font = font(False, round(12 * k))
+    title = fit(d, G.dock_title.upper(), title_font, max(40 * k, (W - 184 - 38 - 14) * k - d.textlength(f'v{version}', font=ver_font)))     # this dock's name
+    d.text((38 * k, BTN_Y * k), title, font=title_font, fill=t['dim'], anchor='lm')
+    d.text((38 * k + d.textlength(title, font=title_font) + 7 * k, (BTN_Y + 1) * k), f'v{version}', font=ver_font, fill=mix_hex(t['dim'], t['card'], 0.4), anchor='lm')
+    size_box = (W - 184, BTN_Y - 10, W - 89, BTN_Y + 10)                    # T S M L
     hot = (isinstance(G.hover, tuple) and G.hover[0] == 'size') or G.scrub is not None
     draw_size_control(d, tuple(v * k for v in size_box), True, t, hot)
     for i, letter in enumerate(SIZE_PRESETS):
-        third = (size_box[2] - size_box[0]) / 3
-        hits.append((size_box[0] + i * third, size_box[1], size_box[0] + (i + 1) * third, size_box[3], ('size', letter)))
+        part = (size_box[2] - size_box[0]) / len(SIZE_PRESETS)          # (a third each made L's part reach over the switch once T was added)
+        hits.append((size_box[0] + i * part, size_box[1], size_box[0] + (i + 1) * part, size_box[3], ('size', letter)))
     for part, cx in (('switch', W - 74), ('gear', W - 47), ('close', W - 20)):
         hits.append((cx - BTN_R, BTN_Y - BTN_R, cx + BTN_R, BTN_Y + BTN_R, part))
         hot = G.hover == part
@@ -2208,14 +2415,23 @@ def render_card():
         x0, x1, y = G.drop_line
         d.line((x0 * k, y * k, x1 * k, y * k), fill=C_CHECKED, width=max(2, round(2.5 * s)))
         d.ellipse(((x0 - 3) * k, (y - 3) * k, (x0 + 3) * k, (y + 3) * k), fill=C_CHECKED)
-    # ---- bottom line: the path of the program under the mouse, or a summary
+    # ---- bottom line: the path of the program under the mouse, or a summary.  Docked + auto-hide: the hide button in the corner away from the edge
     d.line((14 * k, foot_y * k, (W - 14) * k, foot_y * k), fill=t['track'], width=max(1, round(k)))
+    room = W - 28
+    if hide_shown():                                                    # alone in an empty corner, so it's easy to find (Mike) - not among the title strip's buttons
+        room -= 2 * BTN_GAP                                             # (the line's text stays centred, clear of it)
+        cx, cy = (W - 22 if G.place == 'Left' else 22), foot_y + FOOT_H / 2
+        hits.append((cx - BTN_R, cy - BTN_R, cx + BTN_R, cy + BTN_R, 'hide'))
+        hot = G.hover == 'hide'
+        if hot:
+            d.ellipse(((cx - BTN_R) * k, (cy - BTN_R) * k, (cx + BTN_R) * k, (cy + BTN_R) * k), fill=mix_hex(t['text'], t['card'], 0.82))
+        draw_hide(d, cx * k, cy * k, 6.5 * k, t['text'] if hot else mix_hex(t['text'], t['card'], 0.2), max(1, round(2.2 * k)))
     text = G.drag_item['hint'] if G.drag_item else hint(('size', '') if G.scrub is not None else G.hover)
     if '   ·   ' in text and (G.drag_item or G.hover is None):            # a narrow dock: a shorter line instead of a cut-off one
         p = text.split('   ·   ')                                       # (the summary keeps 'drag to rearrange' longest)
         choices = {4: [p, p[:2] + p[3:], p[1:2] + p[3:], p[1:2]], 3: [p, p[:1] + p[2:], p[:1]]}.get(len(p), [p, p[:1]])
-        text = next(('   ·   '.join(c) for c in choices if d.textlength('   ·   '.join(c), font=small_font) <= (W - 28) * k), '   ·   '.join(choices[-1]))
-    d.text((W / 2 * k, (foot_y + FOOT_H / 2 - 1) * k), fit(d, text, small_font, (W - 28) * k, keep_end=True), font=small_font, fill=t['text'] if G.hover or G.scrub else t['dim'], anchor='mm')
+        text = next(('   ·   '.join(c) for c in choices if d.textlength('   ·   '.join(c), font=small_font) <= room * k), '   ·   '.join(choices[-1]))
+    d.text((W / 2 * k, (foot_y + FOOT_H / 2 - 1) * k), fit(d, text, small_font, room * k, keep_end=True), font=small_font, fill=t['text'] if G.hover or G.scrub else t['dim'], anchor='mm')
     im = im.resize((round(W * s), round(H * s)), Image.LANCZOS)
     off = round(PANEL_SHADOW * s) if G.glass else 0                     # Glass: room all round for a soft shadow
     G.panel_off = off
@@ -2269,7 +2485,7 @@ def bar_items():
     if items and items[-1][0] == 'sep':
         items.pop()
     end = len(order)
-    return items + [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)]
+    return items + [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)] + ([('hide', None, end, None)] if hide_shown() else [])
 
 
 def label_room(items, icon, gap, name_w):
@@ -2315,7 +2531,7 @@ def bar_layout():
         icon, gap, pad = round(BAR_ICON * s), max(2, round(BAR_GAP * s)), max(3, round(BAR_PAD * s))
         items = label_room(base_items, icon, gap, name_w) if name_w and G.bar_layout == 'Icons' else base_items
         size_thick = min(icon, max(round(icon * 0.5), round(21 * G.dpi)))             # the S M L letters stay readable on a small bar
-        size_len = round(size_thick * 3.1)
+        size_len = round(size_thick * (len(SIZE_PRESETS) + 0.1))
         slots = [icon if kind == 'app' else max(icon, name_w.get(b.block_num, 0)) if kind == 'stack' else round(BAR_SEP * s) if kind == 'sep' else
                  b if kind == 'space' else size_len if kind == 'size' else round(icon * BAR_TOOL) for kind, b, pos, sec in items]
         rest = sum(slots) + gap * (len(slots) - 1) + 2 * pad
@@ -2337,22 +2553,24 @@ def bar_layout():
 def bar_box(L, m0, c0, m1, c1):
     """ A box in bar coordinates (m along the bar, c inward from the window's screen-edge side) -> window pixels (x0, y0, x1, y1) """
     W, H = L['W'], L['H']
-    if G.place == 'Top':
+    side = bar_side()
+    if side == 'Top':
         return m0, c0, m1, c1
-    if G.place == 'Left':
+    if side == 'Left':
         return c0, m0, c1, m1
-    if G.place == 'Right':
+    if side == 'Right':
         return W - c1, m0, W - c0, m1
     return m0, H - c1, m1, H - c0                                       # Bottom and Floating: the bar at the bottom, icons growing upward
 
 
 def bar_coords(L, x, y):
     """ Window pixels -> bar coordinates (m along the bar, c inward from the screen-edge side) """
-    if G.place == 'Top':
+    side = bar_side()
+    if side == 'Top':
         return x, y
-    if G.place == 'Left':
+    if side == 'Left':
         return y, x
-    if G.place == 'Right':
+    if side == 'Right':
         return y, L['W'] - x
     return x, L['H'] - y
 
@@ -2388,7 +2606,7 @@ def bar_drop(L, m):
     for i, ((kind, b, pos, sec), c, slot) in enumerate(zip(L['items'], bar_rest_centers(L), L['slots'])):
         if kind == 'stack' and abs(m - c) <= slot * 0.4:
             return section_end(b.block_num), None, b.block_num
-        if kind in ('size', 'switch', 'gear') or m < c:
+        if kind in ('size', 'switch', 'gear', 'hide') or m < c:
             return pos, i, None
     return len(Block.active_blocks), len(L['items']) - 1, None
 
@@ -2575,6 +2793,8 @@ def render_bar():
                 d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=mix_hex(t['text'], t['card'], 0.84))
             if kind == 'gear':
                 draw_gear(d, cx, cy, w * 0.36, color, mix_hex(t['text'], t['card'], 0.84) if hot else rgba(t['card'], 208 if G.glass else 255))
+            elif kind == 'hide':
+                draw_hide(d, cx, cy, w * 0.26, color, max(2, round(w * 0.08)))
             else:
                 draw_switch(d, cx, cy, w * 0.36, color, to_bar=False)
             part, top = kind, base + (zone + w) / 2
@@ -2623,7 +2843,7 @@ def draw_section_labels(im, d, L, runs, colors, t, lo, hi):
         if vertical():                                                  # a side bar: the name on its side, reading along the bar
             tag = Image.new('RGBA', (max(1, round(w) + 4), round(L['label_px'] * 1.5)), (0, 0, 0, 0))
             ImageDraw.Draw(tag).text((2, tag.height / 2), name, font=f, fill=color, anchor='lm')
-            tag = tag.rotate(90 if G.place == 'Left' else -90, expand=True)
+            tag = tag.rotate(90 if bar_side() == 'Left' else -90, expand=True)
             px, py = bar_box(L, x, c, x, c)[:2]
             im.alpha_composite(tag, (round(px - tag.width / 2), round(py)))
         else:
@@ -2647,14 +2867,18 @@ def bar_bubble(im, d, L, part, text=None):
         runs.append((text, small, '#eceff6'))
     elif span is None:
         return
-    elif part == 'gear':
-        runs.append(('Programs  -  add, remove and order them   ·   right-click for settings', small, '#eceff6'))
+    elif part == 'gear':                                                # this dock's name, then what the gear does
+        runs.append((G.dock_title, small, mix_hex(t['heading'], '#ffffff', 0.15)))
+        runs.append(('Programs  -  add, remove and order them   ·   right-click for settings', sub_f, '#9aa3b2'))
     elif part == 'switch':
         runs.append(('Switch to the Panel  -  names and versions', small, '#eceff6'))
+    elif part == 'hide':
+        runs.append(('Hide', small, '#eceff6'))
+        runs.append(('point at the edge to bring it back' if G.autohide else 'click its handle to bring it back', sub_f, '#9aa3b2'))
     elif part == 'size':
         runs.append((f'Size {round(G.size * 100)}%', small, '#eceff6'))
         if G.scrub is None:
-            runs.append(('click S M L  -  or drag across them', sub_f, '#9aa3b2'))
+            runs.append(('click T S M L  -  or drag across them', sub_f, '#9aa3b2'))
     elif isinstance(part, tuple) and part[1] in Block.active_blocks:
         b = Block.active_blocks[part[1]]
         colors, owner = sections()
@@ -2663,7 +2887,7 @@ def bar_bubble(im, d, L, part, text=None):
             if G.show_versions and G.versions.get(b.block_num):
                 runs.append((G.versions[b.block_num], sub_f, '#9aa3b2'))
             section = owner.get(b.block_num)
-            if section is not None:
+            if section is not None and G.bubble_section:                # right-click > Section name in the bubble
                 runs.append((section.name, sub_f, mix_hex(colors[section.block_num], '#ffffff', 0.25)))
         else:                                                           # a section: its name big, in its colour
             count = len(section_members(b.block_num))
@@ -2676,11 +2900,11 @@ def bar_bubble(im, d, L, part, text=None):
     else:
         mc, top = (span[0] + span[1]) / 2, span[3]
     room = (BAR_LABEL_SIDE - 40) * sd * ts if vertical() else 560 * sd * ts
-    first, f0, c0 = runs[0]
+    while len(runs) > 1 and sum(d.textlength(r[0], font=r[1]) for r in runs) + 10 * sd * (len(runs) - 1) > room:
+        runs.pop()                                                      # no room on a side bar: the section's name goes first, then the version -
+    first, f0, c0 = runs[0]                                             # before the name is shortened (it was cut to fit beside a section name that then went)
     rest = sum(d.textlength(r[0], font=r[1]) + 10 * sd for r in runs[1:])
     runs[0] = (fit(d, first, f0, max(40 * sd, room - rest)), f0, c0)
-    while len(runs) > 1 and sum(d.textlength(r[0], font=r[1]) for r in runs) + 10 * sd * (len(runs) - 1) > room:
-        runs.pop()                                                      # no room on a side bar: the section's name goes first, then the version
     tw = sum(d.textlength(r[0], font=r[1]) for r in runs) + 10 * sd * (len(runs) - 1)
     tallest = max(getattr(r[1], 'size', 13 * sd) for r in runs)
     pw, ph = tw + 24 * sd, tallest * 1.85
@@ -2695,12 +2919,12 @@ def bar_bubble(im, d, L, part, text=None):
     fill = (20, 24, 33, 236) if G.glass else (20, 24, 33, 255)
     d.rounded_rectangle(box, radius=round(min(ph / 2, 10 * sd)), fill=fill, outline=(255, 255, 255, 40) if G.glass else '#3a4458')
     if span is not None:                                                # the little pointer, toward the icon
-        tip = bar_box(L, mc - 5 * sd, top + 3 * sd, mc + 5 * sd, top + gap + 1)
-        if G.place == 'Top':
+        tip, side = bar_box(L, mc - 5 * sd, top + 3 * sd, mc + 5 * sd, top + gap + 1), bar_side()
+        if side == 'Top':
             d.polygon(((tip[0], tip[3]), (tip[2], tip[3]), ((tip[0] + tip[2]) / 2, tip[1])), fill=fill)
-        elif G.place == 'Left':
+        elif side == 'Left':
             d.polygon(((tip[2], tip[1]), (tip[2], tip[3]), (tip[0], (tip[1] + tip[3]) / 2)), fill=fill)
-        elif G.place == 'Right':
+        elif side == 'Right':
             d.polygon(((tip[0], tip[1]), (tip[0], tip[3]), (tip[2], (tip[1] + tip[3]) / 2)), fill=fill)
         else:
             d.polygon(((tip[0], tip[1]), (tip[2], tip[1]), ((tip[0] + tip[2]) / 2, tip[3])), fill=fill)
@@ -2904,6 +3128,11 @@ def present(window, im, handle=False):
     if not show_picture(window, K_IMAGE, G.layered if G.glass else None, im, G.opacity, G.keep):
         window.write_event_value(K_REBUILD, 'glass failed')
         return
+    widget = window[K_IMAGE].Widget                                     # the handle slides along its edge: say so with the pointer
+    if handle:
+        widget.configure(cursor='sb_v_double_arrow' if G.place in ('Left', 'Right') else 'sb_h_double_arrow')
+    elif str(widget.cget('cursor')).endswith('double_arrow'):
+        widget.configure(cursor='')
     if resized and not handle and not G.sliding and not G.hidden and G.place != 'Floating':
         place_window(window)
 
@@ -3036,13 +3265,20 @@ def remember_location(window, at=None):
         relayout(window)
 
 
-def docked_position():
-    """ Docked: where the dock shows - centred on its edge of the monitor's work area, so the taskbar stays clear """
-    w, h = G.full_size
-    left, top, right, bottom = G.work
+def docked_position(place=None, work=None, size=None, along=-1):
+    """ Docked: where the dock shows on its edge of the monitor's work area (so the taskbar stays clear) - centred, or where it was slid to:
+        along = its middle as a share of the edge (G.along; None = centred), never past the edge's ends.  The arguments: another edge / monitor /
+        size (where a dragged Bar would go) """
+    place, work = place or G.place, work or G.work
+    w, h = size or G.full_size
+    along = G.along if along == -1 else along
+    left, top, right, bottom = work
     gap = round(2 * G.dpi)
-    return {'Bottom': ((left + right - w) // 2, bottom - h - gap), 'Top': ((left + right - w) // 2, top + gap),
-            'Left': (left + gap, (top + bottom - h) // 2), 'Right': (right - w - gap, (top + bottom - h) // 2)}[G.place]
+    if place in ('Bottom', 'Top'):
+        x = (left + right - w) // 2 if along is None else round(left + along * (right - left) - w / 2)
+        return max(left, min(x, right - w)), (bottom - h - gap if place == 'Bottom' else top + gap)
+    y = (top + bottom - h) // 2 if along is None else round(top + along * (bottom - top) - h / 2)
+    return (left + gap if place == 'Left' else right - w - gap), max(top, min(y, bottom - h))
 
 
 def place_window(window):
@@ -3061,12 +3297,28 @@ def hidden_position():
 
 
 def render_handle():
-    """ What an auto-hidden dock leaves at its edge: a small pill - point at it (or rest the mouse at the edge) and the dock flies out """
+    """ What an auto-hidden dock leaves at its edge: a small pill - point at it (or rest the mouse at the edge) and the dock flies out.
+        Name on the handle: a tag with the dock's name instead, reading along the edge """
     t, sd = T(), G.dpi
+    if G.handle_name:
+        f, m = font(True, round(12.5 * sd * text_scale())), round(3 * sd)
+        tw = ImageDraw.Draw(Image.new('L', (1, 1))).textlength(G.dock_title, font=f)
+        w, h = round(max(84 * sd, tw + 26 * sd)) + 2 * m, round(f.size * 1.75) + 2 * m
+        im = Image.new('RGBA', (w * 2, h * 2), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = G.handle_color                                              # Handle colour: the tag in that colour, its name dark or light to read
+        d.rounded_rectangle((m * 2, m * 2, w * 2 - m * 2 - 1, h * 2 - m * 2 - 1), radius=h - 2 * m, fill=rgba(c or t['card'], 235 if G.glass else 255),
+                            outline=rgba(mix_hex(c, '#000000', 0.35) if c else t['border'], 255), width=2)
+        im = im.resize((w, h), Image.LANCZOS)
+        text = ('#14161c' if is_light(c) else '#ffffff') if c else readable(t['heading'], t['card'], 4.5, '#000000' if t.get('light') else '#ffffff')
+        ImageDraw.Draw(im).text((w / 2, h / 2), G.dock_title, font=f, fill=text, anchor='mm')
+        if G.place in ('Left', 'Right'):
+            im = im.rotate(90 if G.place == 'Left' else -90, expand=True)
+        return im
     length, thick, m = round(84 * sd), max(4, round(6 * sd)), round(5 * sd)
     w, h = (thick + 2 * m, length + 2 * m) if G.place in ('Left', 'Right') else (length + 2 * m, thick + 2 * m)
     im = Image.new('RGBA', (w * 2, h * 2), (0, 0, 0, 0))
-    ImageDraw.Draw(im).rounded_rectangle((m * 2, m * 2, w * 2 - m * 2 - 1, h * 2 - m * 2 - 1), radius=thick, fill=rgba(t['dim'], 200 if G.glass else 255),
+    ImageDraw.Draw(im).rounded_rectangle((m * 2, m * 2, w * 2 - m * 2 - 1, h * 2 - m * 2 - 1), radius=thick, fill=rgba(G.handle_color or t['dim'], 220 if G.glass else 255),
                                          outline=rgba(t['card'], 255), width=2)
     return im.resize((w, h), Image.LANCZOS)
 
@@ -3116,6 +3368,10 @@ def slide(window, show):
             G.hidden, G.pointer, G.hover = True, None, None
             present(window, render_handle(), handle=True)
             move_to(window, *handle_position())
+            if not G.autohide:                                          # hidden by hand: the handle stays in sight above other windows
+                dock_above(window, True)
+        elif not G.autohide:
+            dock_above(window, False)
 
     step()
 
@@ -3141,24 +3397,29 @@ def autohide_tick(window):
     except Exception:
         return
     now = time.time()
-    if G.hidden and G.anim is None:
+    if G.hidden and G.anim is None and G.press is None:                 # (the handle held: it's being dragged)
         w, h = G.win_size
-        if wx <= px < wx + w and wy <= py < wy + h:                     # on the handle
+        if wx <= px < wx + w and wy <= py < wy + h:                     # on the handle: out after a short rest - a press first drags the handle
             G.edge_since = None
-            slide(window, True)
+            if G.handle_since is None:
+                G.handle_since = now
+            if G.handle_since >= 0 and now - G.handle_since >= G.flyout:          # (At once: on the first look)
+                G.handle_since = None
+                slide(window, True)
         elif at_edge(px, py):
+            G.handle_since = None
             G.edge_since = G.edge_since or now
-            if now - G.edge_since >= AUTOHIDE_DWELL:
+            if now - G.edge_since >= max(AUTOHIDE_DWELL, G.flyout):
                 G.edge_since = None
                 slide(window, True)
         else:
-            G.edge_since = None
+            G.edge_since, G.handle_since = None, None
     elif G.anim is None and not G.hidden:
         x0, y0 = G.shown_pos
         w, h = G.full_size
         margin = round(30 * G.dpi)
         inside = x0 - margin <= px < x0 + w + margin and y0 - margin <= py < y0 + h + margin
-        if inside or G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None:
+        if inside or G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None or G.press is not None:
             G.out_since = None
         else:
             G.out_since = G.out_since or now
@@ -3166,6 +3427,242 @@ def autohide_tick(window):
                 G.out_since = None
                 slide(window, False)
     window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
+
+
+# ------------------------------------------------------------ Moving a docked dock: along its edge, or (a Bar) to another edge ------------------------------------------------------------
+
+def dock_drag(window, p, x_root, y_root):
+    """ A docked dock dragged - a Bar by any spot of it, a Panel by its title strip or an empty spot, an auto-hidden one by its handle.  Along its
+        edge it slides (not past the edge's ends).  Pulled off its edge it follows the mouse instead - let go there and it floats - and an edge it
+        would dock on lights up """
+    left, top, right, bottom = G.work
+    upright = G.place in ('Left', 'Right')
+    inward = {'Bottom': p['y'] - y_root, 'Top': y_root - p['y'], 'Left': x_root - p['x'], 'Right': p['x'] - x_root}[G.place]     # pulled off its edge this far
+    if p['pulled'] or inward > EDGE_PULL * G.dpi:
+        if not p['pulled']:
+            p['pulled'] = True
+            window[K_IMAGE].Widget.configure(cursor='fleur')
+        move_to(window, p['wx'] + x_root - p['x'], p['wy'] + y_root - p['y'])
+        edge_drag_update(window, x_root, y_root)
+        return
+    fw, fh = G.full_size
+    sx, sy = p['shown'] or docked_position()
+    start, end, size = (top, bottom, fh) if upright else (left, right, fw)
+    middle = (sy + fh / 2 + y_root - p['y']) if upright else (sx + fw / 2 + x_root - p['x'])
+    middle = min(max(middle, start + size / 2), end - size / 2)
+    G.along = (middle - start) / max(1, end - start)
+    G.shown_pos = docked_position()
+    move_to(window, *(handle_position() if G.hidden else G.shown_pos))
+
+
+def finish_dock_drag(window, p, x_root, y_root):
+    """ A drag of the dock let go.  At an edge (it lit up): docked there (K_DOCK - the window is made again).  A docked dock pulled off its edge and
+        let go away from every edge: floating there (K_FLOAT).  Slid along its edge: that spot is kept.  A floating dock: where it is now (K_MOVED) """
+    target, G.edge_target = G.edge_target, None
+    if G.preview is not None:
+        show_edge_preview(window, None)
+        dock_above(window, False)
+    if G.place == 'Floating' or p['pulled']:
+        if target is not None:
+            window.write_event_value(K_DOCK, (target['place'], target['mon'], target['along'], (p['wx'], p['wy'])))
+            return
+        if G.place != 'Floating':
+            window.write_event_value(K_FLOAT, (body_rect(window), G.place in ('Left', 'Right')))
+            return
+    if G.place == 'Floating':
+        window.write_event_value(K_MOVED, (p['wx'] + x_root - p['x'], p['wy'] + y_root - p['y']))
+        return
+    save_style_setting('ALONG', round(G.along, 4) if G.along is not None else None)
+    if G.hidden:
+        G.handle_since = -1                                             # the handle was just put somewhere: no flying out until the mouse leaves it
+
+
+def bar_footprint(place, work):
+    """ A Bar docked on place (an edge of the monitor with this work area): (its window's size, the bar's box at rest in that window) """
+    key = ('footprint', place, work, G.scale, G.text, G.bar_labels, G.magnify, G.bar_layout, G.sections, tuple((b.block_num, b.bar) for b in Block.active_blocks.values()))
+    if key not in G.icon_cache:
+        saved = G.place, G.work
+        try:
+            G.place, G.work = place, work
+            L = bar_layout()
+            m0 = (L['main'] - L['rest']) / 2
+            G.icon_cache[key] = (L['W'], L['H']), bar_box(L, m0, L['edge'], m0 + L['rest'], L['edge'] + L['thick'])
+        finally:
+            G.place, G.work = saved
+    return G.icon_cache[key]
+
+
+def body_rect(window):
+    """ The visible dock on the screen (x0, y0, x1, y1): the bar itself, the Panel's card - not the see-through room around them - or the handle """
+    x, y = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
+    w, h = G.win_size or (window.TKroot.winfo_width(), window.TKroot.winfo_height())
+    if G.hidden:
+        return x, y, x + w, y + h
+    if G.style == 'Bar' and G.bar_geo:
+        L = G.bar_geo
+        b = bar_box(L, G.bar_extent[0], L['edge'], G.bar_extent[1], L['edge'] + L['thick'])
+        return x + b[0], y + b[1], x + b[2], y + b[3]
+    off = G.panel_off
+    return x + off, y + off, x + w - off, y + h - off
+
+
+def panel_footprint(place, work):
+    """ The Panel docked on place (an edge of the monitor with this work area): (its window's size, the card's box in that window) """
+    key = ('panel footprint', place, work, G.scale, G.text, G.columns, G.glass, G.show_versions, G.dock_title, G.autohide,
+           tuple((b.block_num, b.kind, b.name) for b in Block.active_blocks.values()))
+    if key not in G.icon_cache:
+        saved = G.place, G.work, G.fit_rows
+        try:
+            G.place, G.work = place, work
+            W, H = card_layout()[:2]
+        finally:
+            G.place, G.work, G.fit_rows = saved
+        off = round(PANEL_SHADOW * G.scale) if G.glass else 0
+        w, h = round(W * G.scale) + 2 * off, round(H * G.scale) + 2 * off
+        G.icon_cache[key] = (w, h), (off, off, w - off, h - off)
+    return G.icon_cache[key]
+
+
+def edge_target(window, x_root, y_root):
+    """ A dock being dragged with the mouse here: the edge it would dock on - the nearest edge of the monitor under the mouse when the mouse is within
+        EDGE_SNAP of it (or past it, on the taskbar), else an edge the dock is pushed EDGE_RAM past - and where along it.
+        {'place', 'mon', 'along', 'rect' (the dock there, on the screen)} or None """
+    mon, work = monitor_area(x_root, y_root)
+    away = {'Left': x_root - work[0], 'Right': work[2] - 1 - x_root, 'Top': y_root - work[1], 'Bottom': work[3] - 1 - y_root}
+    place = min(away, key=away.get)
+    if away[place] > EDGE_SNAP * G.dpi:                                 # the mouse isn't at an edge: is the dock rammed into one?
+        b = body_rect(window)
+        over = {'Left': work[0] - b[0], 'Right': b[2] - work[2], 'Top': work[1] - b[1], 'Bottom': b[3] - work[3]}
+        place = max(over, key=over.get)
+        if over[place] < EDGE_RAM * G.dpi:
+            return None
+    along = (x_root - work[0]) / max(1, work[2] - work[0]) if place in ('Top', 'Bottom') else (y_root - work[1]) / max(1, work[3] - work[1])
+    size, box = bar_footprint(place, work) if G.style == 'Bar' else panel_footprint(place, work)
+    x, y = docked_position(place, work, size, min(1.0, max(0.0, along)))
+    left, top, right, bottom = work
+    along = ((x + size[0] / 2 - left) / max(1, right - left)) if place in ('Top', 'Bottom') else ((y + size[1] / 2 - top) / max(1, bottom - top))    # (kept off the ends)
+    return {'place': place, 'mon': mon, 'along': round(along, 4), 'rect': (x + box[0], y + box[1], x + box[2], y + box[3])}
+
+
+def edge_drag_update(window, x_root, y_root):
+    """ A dock being dragged: light up where it would dock (nothing away from the edges) """
+    G.edge_target = edge_target(window, x_root, y_root)
+    show_edge_preview(window, G.edge_target['rect'] if G.edge_target else None)
+
+
+def show_edge_preview(window, rect):
+    """ The highlight where a dragged dock would dock - a see-through blue bar with a bright outline, at rect (screen pixels).  None: hide it """
+    tk = sg.tk
+    pv = G.preview
+    if rect is None:
+        if pv is not None:
+            try:
+                pv.withdraw()
+            except tk.TclError:
+                G.preview = None
+        return
+    pad = round(5 * G.dpi)
+    x0, y0, x1, y1 = (round(v) for v in rect)
+    x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+    w, h = max(8, x1 - x0), max(8, y1 - y0)
+    try:
+        if pv is None or not pv.winfo_exists():
+            pv = G.preview = tk.Toplevel(window.TKroot)
+            pv.overrideredirect(True)
+            pv.attributes('-topmost', True)
+            pv.configure(bg=TRANSPARENT)
+            try:
+                pv.attributes('-alpha', 0.6)
+                if sg.running_windows():
+                    pv.attributes('-transparentcolor', TRANSPARENT)
+            except tk.TclError:
+                pass
+            pv.label = tk.Label(pv, bd=0, highlightthickness=0, bg=TRANSPARENT)
+            pv.label.pack()
+            G.preview_size = None
+        if G.preview_size != (w, h):                                    # drawn without smoothing: the colour key would fringe soft edges
+            im = Image.new('RGB', (w, h), TRANSPARENT)
+            r, line = min(round(16 * G.dpi), w // 2, h // 2), max(2, round(3 * G.dpi))
+            d = ImageDraw.Draw(im)
+            d.rounded_rectangle((0, 0, w - 1, h - 1), radius=r, fill=C_CHECKED)
+            d.rounded_rectangle((line, line, w - 1 - line, h - 1 - line), radius=max(1, r - line), fill=mix_hex(C_CHECKED, '#0b1f3a', 0.45))
+            pv.photo = ImageTk.PhotoImage(im)
+            pv.label.configure(image=pv.photo)
+            G.preview_size = (w, h)
+        pv.geometry(f'{w}x{h}+{x0}+{y0}')
+        if pv.state() != 'normal':
+            pv.deiconify()
+            pv.lift()
+            dock_above(window, True)                                    # the dragged dock stays on top of its highlight
+    except tk.TclError:
+        G.preview = None
+
+
+def dock_above(window, on):
+    """ While a Bar is dragged over its highlight (which stays on top of everything): the dock on top of it.  on=False: back to how it was.
+        Windows' own call, so the Glass surface is left alone """
+    if not sg.running_windows():
+        return
+    try:
+        import ctypes
+        hwnd = int(window.TKroot.wm_frame(), 16)
+        keep = G.on_top or (G.autohide and G.place != 'Floating')
+        insert = -1 if on or keep else -2                               # HWND_TOPMOST / HWND_NOTOPMOST
+        ctypes.windll.user32.SetWindowPos(hwnd, insert, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)    # no size, no move, no activate
+    except Exception:
+        pass
+
+
+def float_at(window, body, upright):
+    """ A docked dock pulled off its edge and let go away from every edge: floating where it was let go - a Bar off a side edge runs up and down.
+        body = where the visible dock was on the screen: the floating one is put there """
+    G.place = 'Floating'
+    save_style_setting('PLACE', 'Floating')
+    if G.style == 'Bar':
+        G.float_vertical = upright
+        save_style_setting('VERTICAL', upright)
+    G.location = (body[0], body[1])
+    window = rebuild(window)
+    nb = body_rect(window)                                              # the new window's dock: onto where the dragged one was
+    x, y, w, h = window_rect(window)
+    x, y = onto_screen(x + body[0] - nb[0], y + body[1] - nb[1], w, h)
+    move_to(window, x, y, firmly=True)
+    remember_location(window, (x, y))
+    float_side_check(window)
+    return window
+
+
+def dock_at(window, place, mon, along, float_spot):
+    """ A dock let go at an edge: docked there, on that monitor, where it was let go along the edge.  A floating one keeps its floating spot (where
+        the drag started) """
+    if G.place == 'Floating':
+        G.location = tuple(float_spot)
+        save_style_setting('LOCATION', list(G.location))
+    G.place, G.along = place, along
+    G.monitor_pt = ((mon[0] + mon[2]) // 2, (mon[1] + mon[3]) // 2)
+    for name, value in (('PLACE', place), ('MONITOR', list(G.monitor_pt)), ('ALONG', along)):
+        save_style_setting(name, value)
+    return rebuild(window)
+
+
+def float_side_check(window):
+    """ A Floating vertically bar opens (its bubble, its stacks) toward the middle of the screen: moved past the middle, it turns around - the bar
+        itself stays where it was let go """
+    if G.style != 'Bar' or G.place != 'Floating' or not G.float_vertical or not G.bar_geo:
+        return
+    x, y, w, h = window_rect(window)
+    L = G.bar_geo
+    bar_x = x + (L['edge'] if G.float_side == 'Left' else w - L['edge'] - L['thick'])        # the bar's left side on the screen
+    side = 'Right' if bar_x + L['thick'] / 2 > (G.mon[0] + G.mon[2]) / 2 else 'Left'
+    if side == G.float_side:
+        return
+    G.float_side = side
+    G.bar_geo, G.mag, G.last_signature = None, [], None
+    redraw(window)
+    L = G.bar_geo or bar_layout()
+    nx = bar_x - (L['edge'] if side == 'Left' else G.win_size[0] - L['edge'] - L['thick'])
+    move_to(window, nx, y)
+    remember_location(window, (nx, y))
 
 
 # ------------------------------------------------------------ Mouse, menus, the size control, drops ------------------------------------------------------------
@@ -3177,7 +3674,7 @@ def part_at(x, y):
     if G.style == 'Bar':
         return bar_part_at(x, y)
     for x0, y0, x1, y1, part in G.hits:
-        if part in ('gear', 'close', 'switch'):
+        if part in ('gear', 'close', 'switch', 'hide'):
             if math.hypot(x - (x0 + x1) / 2, y - (y0 + y1) / 2) <= BTN_R * G.scale:
                 return part
         elif x0 <= x <= x1 and y0 <= y <= y1:
@@ -3193,10 +3690,13 @@ def part_menu(part):
     b = Block.active_blocks[part[1]]
     tick = lambda on: '✓ ' if on else '    '
     title = '!' + menu_label(b.name or '(no name)')
-    dock = ['---', '    PSG Dock', make_menu()[1]]
+    dock = ['---', f'    {menu_label(G.dock_title)}', make_menu()[1]]
     if b.kind == KIND_HEADING:
-        return ['', [title, '---', f'    Add a program here...::{K_E_ADD_HERE}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}',
-                     f'    Remove this heading::{K_E_REMOVE}'] + dock]
+        return ['', [title, '---', f'    Add a program here...::{K_E_ADD_HERE}', f'    Add a link here...::{K_E_ADD_LINK}', f'    Rename...::{K_E_RENAME}',
+                     f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}', f'    Remove this heading::{K_E_REMOVE}'] + dock]
+    if is_link(b.path):                                                 # a link: no folder, source or sharper icon
+        return ['', [title, '---', f'    Open::{K_E_OPEN}', f'    Copy the link::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}',
+                     f'    Remove from the dock::{K_E_REMOVE}'] + dock]
     items = [title, '---', f'    Open::{K_E_OPEN}', f'    Open its folder::{K_E_FOLDER}']
     if b.path.lower().endswith(('.py', '.pyw')):
         items.append(f'    Edit the source::{K_E_EDIT}')
@@ -3237,7 +3737,8 @@ def bind_mouse(window):
 
     def press(e):
         part = part_at(e.x, e.y)
-        G.press = {'x': e.x_root, 'y': e.y_root, 'part': part, 'wx': window.TKroot.winfo_rootx(), 'wy': window.TKroot.winfo_rooty(), 'moving': False}
+        G.press = {'x': e.x_root, 'y': e.y_root, 'part': part, 'wx': window.TKroot.winfo_rootx(), 'wy': window.TKroot.winfo_rooty(), 'moving': False,
+                   'handle': G.hidden, 'along': G.along, 'shown': G.shown_pos, 'pulled': False}             # (docked: where it was, to go back to)
         if isinstance(part, tuple) and part[0] == 'size':
             G.scrub = {'x': e.x_root, 'y': e.y_root, 'start': G.size, 'moved': False, 'letter': part[1], 'pending': None}
 
@@ -3263,15 +3764,19 @@ def bind_mouse(window):
                 widget.configure(cursor='fleur')                       # pressed on a program or a heading: that moves, not the dock
                 drag_entry(window, e.x_root, e.y_root)
                 return
-            if G.place != 'Floating':
-                if G.style == 'Bar' and not G.tip_shown and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'stack'):
-                    G.tip_shown = True                                  # the Bar doesn't rearrange - say where it's done (once)
-                    window.write_event_value(K_TIP, 'To rearrange your programs, use the Panel:\nclick the switch, then drag them where you want.\nThe Bar shows the same order.')
-                return
+            if G.place != 'Floating' and G.style == 'Bar' and not G.tip_shown and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'stack'):
+                G.tip_shown = True                                      # the Bar doesn't rearrange - say where it's done (once)
+                window.write_event_value(K_TIP, 'Dragging slides the bar along its edge - pull it off the edge to float it, or into another edge to dock it there.\n'
+                                                'To rearrange your programs, use the Panel:\nclick the switch, then drag them where you want. The Bar shows the same order.')
             p['moving'] = True
-            widget.configure(cursor='fleur')
+            if not p['handle']:
+                widget.configure(cursor='fleur')
         if p['moving']:
-            move_to(window, p['wx'] + dx, p['wy'] + dy)
+            if G.place == 'Floating':
+                move_to(window, p['wx'] + dx, p['wy'] + dy)
+                edge_drag_update(window, e.x_root, e.y_root)            # near an edge, or pushed into one: it lights up where it would dock
+            else:
+                dock_drag(window, p, e.x_root, e.y_root)
 
     def release(e):
         p, G.press = G.press, None
@@ -3283,7 +3788,7 @@ def bind_mouse(window):
                 if scrub['pending'] is not None:
                     G.size = scrub['pending']
                 near = min(SIZE_PRESETS.values(), key=lambda v: abs(v - G.size))
-                set_size(window, near if abs(near - G.size) < 0.04 else G.size)       # close to S, M or L: it snaps there
+                set_size(window, near if abs(near - G.size) < 0.04 else G.size)       # close to T, S, M or L: it snaps there
             return
         if p is None:
             return
@@ -3292,8 +3797,11 @@ def bind_mouse(window):
             widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
             return
         if p['moving']:                                                 # the dock was dragged - never a launch
-            widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
-            window.write_event_value(K_MOVED, (p['wx'] + e.x_root - p['x'], p['wy'] + e.y_root - p['y']))
+            if not G.hidden:
+                widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
+            finish_dock_drag(window, p, e.x_root, e.y_root)
+        elif p['handle'] and G.hidden:                                  # a click on the handle: out at once
+            slide(window, True)
         elif math.hypot(e.x_root - p['x'], e.y_root - p['y']) < DOCK_DRAG and p['part'] is not None and part_at(e.x, e.y) == p['part']:
             window.write_event_value(K_CLICK, p['part'])
 
@@ -3639,8 +4147,12 @@ def entry_from_file(filename):
 
 
 def add_programs(window, files, index=None):
-    """ New entries for files, inserted at list position index (None = at the end), saved at once and shown with a bounce / glow """
-    new = [entry_from_file(f) for f in files if f and f.strip()]
+    """ New entries for files, inserted at list position index (None = at the end) """
+    insert_entries(window, [entry_from_file(f) for f in files if f and f.strip()], index)
+
+
+def insert_entries(window, new, index=None):
+    """ New entries (programs, links) put in at list position index (None = at the end), saved at once and shown with a bounce / glow """
     if not new:
         return
     order = list(Block.active_blocks.values())
@@ -3732,7 +4244,7 @@ def entry_action(window, key):
     elif key == K_E_COPY:
         window.TKroot.clipboard_clear()
         window.TKroot.clipboard_append(b.path)
-        notice('Path copied', seconds=1)
+        notice('Link copied' if is_link(b.path) else 'Path copied', seconds=1)
     elif key == K_E_RENAME:
         name = ask_near(G.menu_at or pointer(), 'Rename', 'New name for this heading' if b.kind == KIND_HEADING else 'New name', default=b.name, yes='Rename')
         if name is not None and name.strip():
@@ -3755,6 +4267,8 @@ def entry_action(window, key):
         files = ask_for_programs(window)
         if files:
             add_programs(window, files, list(Block.active_blocks).index(b.block_num) + 1)
+    elif key == K_E_ADD_LINK:
+        ask_for_link(window, section_end(b.block_num))
 
 
 def relayout(window, before=None):
@@ -3866,7 +4380,7 @@ def open_stack(window, heading_num, by_hover=False):
     colors, owner = sections()
     color = colors.get(heading_num, T()['heading'])
     L = G.bar_geo
-    side = {'Top': 'top', 'Left': 'left', 'Right': 'right'}.get(G.place, 'bottom')
+    side = {'Top': 'top', 'Left': 'left', 'Right': 'right'}.get(bar_side(), 'bottom')
     rx, ry = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
     mc = (span[0] + span[1]) / 2
     tip = bar_box(L, mc, span[3] + 4 * G.dpi, mc + 1, span[3] + 5 * G.dpi)                           # just past the stack, inward
@@ -3999,7 +4513,7 @@ def make_psg_launcher():
     bg = TRANSPARENT if sg.running_windows() else T()['card']
     m_bg, m_fg = T()['menu']
     layout = [[sg.Image(key=K_IMAGE, background_color=bg, pad=(0, 0))]]
-    window = sg.Window(APP_NAME, layout, icon=dock_icon_64, no_titlebar=True, grab_anywhere=False, keep_on_top=G.on_top or (G.autohide and not floating), margins=(0, 0),
+    window = sg.Window(window_title(), layout, icon=dock_icon_64, no_titlebar=True, grab_anywhere=False, keep_on_top=G.on_top or (G.autohide and not floating), margins=(0, 0),
                        element_padding=(0, 0), background_color=bg, transparent_color=TRANSPARENT if key_color else None, alpha_channel=0, use_default_focus=False,
                        location=tuple(G.location) if floating and G.location else (None, None), finalize=True, right_click_menu=make_menu(),
                        right_click_menu_background_color=m_bg, right_click_menu_text_color=m_fg, right_click_menu_selected_colors=('#ffffff', C_SELECT),
@@ -4010,12 +4524,14 @@ def make_psg_launcher():
     G.hidden, G.sliding, G.anim, G.hover, G.pointer, G.tracking, G.press, G.scrub = False, False, None, None, None, False, None, None
     G.mag, G.bar_geo, G.last_signature, G.win_size, G.full_size, G.keep, G.layered, G.bounce = [], None, None, None, None, {}, None, {}
     G.drop_index, G.drop_item, G.drop_line, G.drop_open, G.drop_stack, G.stack_open, G.rest = None, None, None, 0.0, None, None, None
+    G.handle_since, G.edge_target, G.preview, G.preview_size = None, None, None, None
     here = G.default_pt or (window.TKroot.winfo_rootx() + 50, window.TKroot.winfo_rooty() + 50)    # the other style's dock was here, else where tk put this one
     if not floating and G.monitor_pt is None:
         G.monitor_pt = here
         save_style_setting('MONITOR', list(here))
     point = G.monitor_pt if not floating else ((G.location[0] + 50, G.location[1] + 50) if G.location else here)
     G.mon, G.work = monitor_area(*point)
+    G.float_side = 'Right' if floating and G.location and G.location[0] + 60 * G.dpi > (G.mon[0] + G.mon[2]) / 2 else 'Left'
     if G.glass:
         G.layered = glass_setup(window)
         if G.layered is None:                                           # Glass isn't possible here: the plain look, on the colour key
@@ -4059,8 +4575,11 @@ def switch_style(window, style):
 
 
 def launch(launch_file):
-    """ Start a program from the dock """
+    """ Start a program from the dock - or open a link """
     if not launch_file:
+        return
+    if is_link(launch_file):
+        open_link(launch_file)
         return
     if launch_file.lower().endswith(('.py', '.pyw')):
         sg.execute_py_file(launch_file, cwd=os.path.dirname(launch_file))
@@ -4072,6 +4591,334 @@ def launch(launch_file):
     else:
         cmd = launch_file.split()
         sg.execute_command_subprocess(cmd[0], *cmd[1:], cwd=os.path.dirname(__file__))
+
+
+# ------------------------------------------------------------ Links: entries that open a web page, a Claude chat, mailto: ... ------------------------------------------------------------
+
+LINK_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+:')                     # a scheme - https:, claude:, mailto:, ms-settings: ... - two letters or more, so C:\ stays a path
+
+
+def is_link(path):
+    """ True when an entry opens a link (a web page, a claude:// chat, mailto: ...) rather than a program, a file or a folder """
+    return bool(path) and bool(LINK_RE.match(path.strip()))
+
+
+def link_handler(scheme):
+    """ Windows: the program that opens links of this scheme (http / https: the default browser) - '' if there is none, or not on Windows """
+    if not sg.running_windows() or not scheme:
+        return ''
+    try:                                                                # Windows' own answer - the default browser for https, the Claude app for claude
+        import ctypes
+        from ctypes import wintypes
+        shlwapi = ctypes.windll.shlwapi
+        shlwapi.AssocQueryStringW.argtypes = [ctypes.c_uint, ctypes.c_uint, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if shlwapi.AssocQueryStringW(0x1000, 2, scheme, 'open', buf, ctypes.byref(size)) == 0 and buf.value:     # a protocol (0x1000), its program (2)
+            return buf.value
+    except Exception:
+        pass
+    try:                                                                # a protocol an app registered for itself (claude:)
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf'{scheme}\shell\open\command') as key:
+            command = winreg.QueryValueEx(key, '')[0]
+        m = re.match(r'\s*"([^"]+)"|\s*(\S+)', command)
+        return (m.group(1) or m.group(2)) if m else ''
+    except OSError:
+        return ''
+
+
+def link_target(url):
+    """ What a link entry really opens: a claude.ai page opens in the Claude app (as claude://claude.ai/...) when the app is installed - else in the browser """
+    url = url.strip()
+    if re.match(r'https?://claude\.ai/', url, re.I) and link_handler('claude'):
+        return 'claude://' + url.split('://', 1)[1]
+    return url
+
+
+def open_link(url):
+    target = link_target(url)
+    if sg.running_windows():
+        os.startfile(target)
+    else:
+        import webbrowser
+        webbrowser.open(target)
+
+
+def link_name(url):
+    """ A first name for a new link: Claude chat for claude.ai, else the site """
+    p = urllib.parse.urlparse(url.strip())
+    if p.scheme.lower() == 'claude' or p.netloc.lower().endswith('claude.ai'):
+        return 'Claude chat'
+    return (p.netloc or p.path.split('/')[0]).replace('www.', '') or url
+
+
+def drawn_link_icon(px=ICON_STORE):
+    """ A link's icon when the app that opens it has none: two chain links on a blue tile.  Drawn 4x and shrunk """
+    z = 4
+    S = px * z
+    im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(im).rounded_rectangle((S * 0.06, S * 0.06, S * 0.94, S * 0.94), radius=S * 0.22, fill=C_SELECT)
+    chain = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    d, w = ImageDraw.Draw(chain), round(S * 0.075)
+    d.rounded_rectangle((S * 0.16, S * 0.38, S * 0.57, S * 0.62), radius=S * 0.12, outline='#ffffff', width=w)
+    d.rounded_rectangle((S * 0.43, S * 0.38, S * 0.84, S * 0.62), radius=S * 0.12, outline='#ffffff', width=w)
+    im.alpha_composite(chain.rotate(45, resample=Image.BICUBIC, center=(S / 2, S / 2)))
+    return im.resize((px, px), Image.LANCZOS)
+
+
+def link_icon_image(url):
+    """ A link's icon: the icon of the app that opens it (the Claude app, the browser ...), else drawn.  One per scheme, made once """
+    scheme = link_target(url).split(':', 1)[0].lower()
+    if scheme not in G.link_icons:
+        exe, img = link_handler(scheme), None
+        if exe and os.path.isfile(exe):
+            try:
+                img = shell_icon_image(exe)
+            except Exception:
+                img = None
+        G.link_icons[scheme] = img if img is not None else drawn_link_icon()
+    return G.link_icons[scheme]
+
+
+def ask_for_link(window, index=None):
+    """ Right-click > Add a link... (a heading's: Add a link here...): the link - the clipboard's, when it holds one - then its name.  Added at list
+        position index (None = at the end) """
+    at = G.menu_at or pointer()
+    try:
+        clip = window.TKroot.clipboard_get().strip()
+    except Exception:
+        clip = ''
+    url = ask_near(at, 'Add a link', 'The link:  a web page (https://...),  a Claude chat (https://claude.ai/... - it opens in the Claude app),\n'
+                   'claude://...,  mailto:...', default=clip if is_link(clip) and '\n' not in clip and len(clip) < 2000 else 'https://', yes='Next')
+    url = (url or '').strip()
+    if not is_link(url) or url.lower() in ('https://', 'http://'):
+        return
+    name = ask_near(at, 'Add a link', 'Its name on the dock', default=link_name(url), yes='Add')
+    if name is None:
+        return
+    try:
+        img = link_icon_image(url)
+    except Exception:
+        img = None
+    b = Block(block_num=G.block_number, name=name.strip() or link_name(url), path=url, iconb64=image_to_icon_b64(img) if img is not None else '')
+    G.block_number += 1
+    insert_entries(window, [b], index)
+
+
+# ------------------------------------------------------------ Several docks: each named dock has its own list and settings ------------------------------------------------------------
+
+def dock_slug(name):
+    """ A dock's name made into the part of its file names:  'Claude chats' -> claude_chats """
+    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')[:40] or 'dock'
+    return slug + '_dock' if slug.endswith('entries') else slug        # never mistaken for an entries file
+
+
+def dock_files(slug):
+    """ (settings file, entries file) of a dock - '' = the dock started without a name, which keeps the files it always had """
+    return (MAIN_SETTINGS_FILENAME, 'psgdock_entries.json') if not slug else (f'{DOCK_PREFIX}{slug}.json', f'{DOCK_PREFIX}{slug}_entries.json')
+
+
+def settings_folder():
+    return os.path.dirname(sg.UserSettings(MAIN_SETTINGS_FILENAME).get_filename())
+
+
+def dock_arg():
+    """ The name after --dock on the command line (or --dock=name), None without one """
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == '--dock' and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith('--dock='):
+            return a.split('=', 1)[1]
+    return None
+
+
+def list_docks():
+    """ Every dock there is: [(file name part, name)] - the one started without a name first, then the named ones by name.  Only reads their files """
+    folder = settings_folder()
+
+    def name_in(path, default):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f).get(K_DOCK_NAME) or default
+        except (OSError, ValueError, AttributeError):
+            return default
+
+    named = []
+    try:
+        for fn in os.listdir(folder):
+            if fn.startswith(DOCK_PREFIX) and fn.endswith('.json') and not fn.endswith('_entries.json'):
+                slug = fn[len(DOCK_PREFIX):-len('.json')]
+                named.append((slug, G.dock_title if slug == G.dock_slug and G.dock_ready else name_in(os.path.join(folder, fn), slug.replace('_', ' '))))
+    except OSError:
+        pass
+    main_name = G.dock_title if not G.dock_slug and G.dock_ready else name_in(os.path.join(folder, MAIN_SETTINGS_FILENAME), APP_NAME)
+    return [('', main_name)] + sorted(named, key=lambda d: d[1].casefold())
+
+
+def find_dock(name):
+    """ The dock called name (or made with that name) - its file name part, '' for the main dock, None if there's none """
+    name = name.strip()
+    for slug, shown in list_docks():
+        if shown.casefold() == name.casefold() or (slug and slug == dock_slug(name)):
+            return slug
+    return '' if name.casefold() == APP_NAME.casefold() else None
+
+
+def use_dock(name):
+    """ --dock NAME: which dock this is - an existing one is found by its name (or the name it was made with), a new name is a new dock.
+        Points the two settings files at its own.  Returns (file name part, name) """
+    global ENTRIES_FILENAME, WINDOW_SETTINGS_FILENAME
+    slug = ''
+    if name and name.strip():
+        name = name.strip()
+        found = find_dock(name)
+        slug = found if found is not None else dock_slug(name)
+    WINDOW_SETTINGS_FILENAME, ENTRIES_FILENAME = dock_files(slug)
+    G.dock_slug = slug
+    return slug, name
+
+
+def dock_mutex_name(slug):
+    return f'Local\\PSGDock-{slug or "main"}'
+
+
+def claim_dock(slug):
+    """ Windows: a named mutex says this dock is running.  False when it already is - two copies of one dock would write the same files """
+    if not sg.running_windows():
+        return True
+    import ctypes
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    k32.CreateMutexW.restype = ctypes.c_void_p
+    k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    G.mutex = k32.CreateMutexW(None, 0, dock_mutex_name(slug))
+    return ctypes.get_last_error() != 183                               # ERROR_ALREADY_EXISTS
+
+
+def dock_running(slug):
+    """ Is that dock open (in this program or another copy of it)? """
+    if slug == G.dock_slug:
+        return True
+    if not sg.running_windows():
+        return False
+    import ctypes
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    k32.OpenMutexW.restype = ctypes.c_void_p
+    k32.OpenMutexW.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_wchar_p]
+    handle = k32.OpenMutexW(0x00100000, 0, dock_mutex_name(slug))      # SYNCHRONIZE
+    if handle:
+        k32.CloseHandle(ctypes.c_void_p(handle))
+    return bool(handle)
+
+
+def start_new_dock(name):
+    """ A dock's first run: its name, the main dock's look (theme, brightness, text size, Glass ...) - only read from the main dock's file - and a
+        floating Panel by the mouse.  Its list starts empty """
+    try:
+        with open(os.path.join(settings_folder(), MAIN_SETTINGS_FILENAME), 'r', encoding='utf-8') as f:
+            main = json.load(f)
+    except (OSError, ValueError):
+        main = {}
+    look = (K_THEME, K_BRIGHT, K_OPACITY, K_TEXT, K_GLASS, K_SECTIONS, K_VERSIONS, K_MAGNIFY, K_LAYOUT, K_BAR_LABELS, K_STACKS_HOVER, K_KEEP_ON_TOP)
+    for key in look + (KS('SIZE', 'Panel'), KS('SIZE', 'Bar')):
+        if key in main:
+            sg.user_settings_set_entry(key, main[key])
+    sg.user_settings_set_entry(K_DOCK_NAME, name)
+    sg.user_settings_set_entry(K_STYLE, 'Panel')
+    sg.user_settings_set_entry(KS('PLACE', 'Panel'), 'Floating')
+    if sg.running_windows():
+        try:
+            import ctypes
+            from ctypes import wintypes
+            pt = wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            sg.user_settings_set_entry(KS('LOCATION', 'Panel'), [pt.x - 160, pt.y - 60])     # (moved onto the screen when it shows)
+        except Exception:
+            pass
+
+
+def window_title():
+    """ The dock window's title (taskbar, Alt-Tab): PSG Dock - its name """
+    return APP_NAME if G.dock_title == APP_NAME else f'{APP_NAME} - {G.dock_title}'
+
+
+def start_dock(slug_or_name):
+    """ Start another dock - this same program, with --dock """
+    exe = sys.executable
+    if exe.lower().endswith('python.exe') and os.path.isfile(exe[:-len('python.exe')] + 'pythonw.exe'):
+        exe = exe[:-len('python.exe')] + 'pythonw.exe'
+    script = os.path.abspath(__file__)
+    subprocess.Popen([exe, script] + (['--dock', slug_or_name] if slug_or_name else []), cwd=os.path.dirname(script))
+
+
+def open_dock(slug):
+    """ Right-click > Docks > a dock: start it (a dock that's already open says so) """
+    name = dict(list_docks()).get(slug, slug)
+    if slug == G.dock_slug:
+        notice(f'This is {name}', C_SELECT)
+    elif dock_running(slug):
+        notice(f'{name} is already open', C_SELECT)
+    else:
+        start_dock(slug)
+        notice(f'Opening {name}', C_SELECT)
+
+
+def new_dock(window):
+    """ Right-click > Docks > New dock...: ask its name, then start it - its own list (empty) and settings, this dock's look """
+    name = ask_near(G.menu_at or pointer(), 'New dock', 'A name for the new dock (for example: Claude chats)\nIt starts empty, with this dock\'s look', default='', yes='Make it')
+    name = (name or '').strip()
+    if not name:
+        return
+    slug = find_dock(name)
+    if slug is not None:
+        open_dock(slug)
+        return
+    start_dock(name)
+    notice(f'Opening {name}  -  drop programs on it, or right-click > Add a link...', C_SELECT, 4)
+
+
+def rename_dock(window):
+    """ Right-click > Docks > Rename this dock...: the name it shows - its files keep their names, so shortcuts made earlier still find it """
+    name = ask_near(G.menu_at or pointer(), 'Rename this dock', 'New name for this dock', default=G.dock_title, yes='Rename')
+    name = (name or '').strip()
+    if not name or name == G.dock_title:
+        return
+    other = find_dock(name)
+    if other is not None and other != G.dock_slug:
+        notice(f'There is already a dock called {name}', '#b71c1c', 3)
+        return
+    G.dock_title = name
+    sg.user_settings_set_entry(K_DOCK_NAME, name)
+    window.TKroot.title(window_title())
+    relayout(window)
+    set_right_click_menu(window, make_menu())
+
+
+def make_dock_shortcut(folder=None):
+    """ Right-click > Docks > Desktop shortcut for this dock: a shortcut (on the desktop, or in folder) that starts this dock.  Returns its path, or None """
+    script = os.path.abspath(__file__)
+    exe = sys.executable
+    if exe.lower().endswith('python.exe') and os.path.isfile(exe[:-len('python.exe')] + 'pythonw.exe'):
+        exe = exe[:-len('python.exe')] + 'pythonw.exe'
+    icon = os.path.join(os.path.dirname(script), 'psgdock.ico')
+    lnk = re.sub(r'[<>:"/\\|?*]', '_', G.dock_title) + '.lnk'
+    env = dict(os.environ, PSGDOCK_LNK=lnk, PSGDOCK_FOLDER=folder or '', PSGDOCK_EXE=exe, PSGDOCK_DIR=os.path.dirname(script), PSGDOCK_ICON=icon if os.path.isfile(icon) else exe,
+               PSGDOCK_ARGS=f'"{script}"' + (f' --dock "{G.dock_title}"' if G.dock_slug else ''))
+    ps = ("$f = if ($env:PSGDOCK_FOLDER) { $env:PSGDOCK_FOLDER } else { [Environment]::GetFolderPath('Desktop') }; $p = Join-Path $f $env:PSGDOCK_LNK; "
+          "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($p); $s.TargetPath = $env:PSGDOCK_EXE; $s.Arguments = $env:PSGDOCK_ARGS; "
+          "$s.WorkingDirectory = $env:PSGDOCK_DIR; $s.IconLocation = $env:PSGDOCK_ICON; $s.Save(); Write-Output $p")
+    try:
+        out = subprocess.run(['powershell', '-NoProfile', '-Command', ps], env=env, capture_output=True, text=True, timeout=30,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        path = out.stdout.strip().splitlines()[-1] if out.returncode == 0 and out.stdout.strip() else None
+    except Exception:
+        path = None
+    if path and os.path.isfile(path):
+        notice(f'Made {os.path.basename(path)} on the desktop' if not folder else f'Made {path}', seconds=3)
+        return path
+    notice('Could not make the shortcut', '#b71c1c', 3)
+    return None
 
 
 def save_style_setting(name, value):
@@ -4097,6 +4944,9 @@ def load_style_settings():
     if not isinstance(size, (int, float)) or isinstance(size, bool):
         size = SIZES.get(sg.user_settings_get_entry(K_SIZE, 'Medium'), 1.0)
     G.size = min(SIZE_MAX, max(SIZE_MIN, float(size)))
+    along = get('ALONG')
+    G.along = float(along) if isinstance(along, (int, float)) and not isinstance(along, bool) and 0 <= along <= 1 else None
+    G.float_vertical = st == 'Bar' and bool(get('VERTICAL'))
     location = get('LOCATION')
     if location is None and st == 'Panel':
         location = sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME, None)          # where 2.2.19 and older kept the floating dock
@@ -4130,6 +4980,13 @@ def load_view_settings():
     G.sections = bool(sg.user_settings_get_entry(K_SECTIONS, True))
     G.show_versions = bool(sg.user_settings_get_entry(K_VERSIONS, True))
     G.bar_labels = bool(sg.user_settings_get_entry(K_BAR_LABELS, False))
+    G.handle_name = bool(sg.user_settings_get_entry(K_HANDLE_NAME, False))
+    G.bubble_section = bool(sg.user_settings_get_entry(K_BUBBLE_SECTION, True))
+    G.flyout = sg.user_settings_get_entry(K_FLYOUT, 0.3)
+    G.flyout = G.flyout if G.flyout in FLYOUTS.values() else 0.3
+    G.handle_color = sg.user_settings_get_entry(K_HANDLE_COLOR, None)
+    G.handle_color = G.handle_color if G.handle_color in HANDLE_COLORS.values() else hex_color(G.handle_color)      # a preset, or a Custom... colour
+    G.handle_custom = hex_color(sg.user_settings_get_entry(K_HANDLE_CUSTOM, None))
     G.bar_layout = sg.user_settings_get_entry(K_LAYOUT, 'Icons')
     G.bar_layout = G.bar_layout if G.bar_layout in LAYOUTS else 'Icons'
     G.stacks_hover = bool(sg.user_settings_get_entry(K_STACKS_HOVER, True))
@@ -4378,8 +5235,19 @@ def brightness_panel(card, keep_going):
 
 def main():
     sg.set_options(border_width=0, dpi_awareness=True)
+    slug, name = use_dock(dock_arg())                                   # --dock "Claude chats": that dock's own files
+    if not claim_dock(slug):                                            # already running: two copies would write the same files
+        shown = dict(list_docks()).get(slug) or name or APP_NAME
+        sg.popup_quick_message(f'{shown} is already open', font='_ 12', text_color='white', background_color=C_SELECT, auto_close_duration=2, non_blocking=False, keep_on_top=True)
+        return
+    new = bool(slug) and not os.path.exists(os.path.join(settings_folder(), WINDOW_SETTINGS_FILENAME))
     sg.user_settings_filename(WINDOW_SETTINGS_FILENAME)
-    migrate_settings()
+    if not slug:
+        migrate_settings()
+    if new:
+        start_new_dock(name)
+    G.dock_title = sg.user_settings_get_entry(K_DOCK_NAME, None) or name or APP_NAME
+    G.dock_ready = True
     G.launcher_settings = sg.UserSettings(ENTRIES_FILENAME)
     load_view_settings()
     apply_theme()
@@ -4399,6 +5267,11 @@ def main():
             redraw(window)
         elif event == K_MOVED:                                          # the floating dock was dragged somewhere new
             remember_location(window, values[K_MOVED])
+            float_side_check(window)
+        elif event == K_DOCK:                                           # a dock dragged to an edge: docked there
+            window = dock_at(window, *values[K_DOCK])
+        elif event == K_FLOAT:                                          # pulled off its edge: floating where it was let go
+            window = float_at(window, *values[K_FLOAT])
         elif event == K_REORDER:                                        # a program or section dragged to a new place in the Panel
             move_entries(window, *values[K_REORDER])
         elif event == K_TIP:                                            # a tip next to the dock (a docked Bar: on its inward side, not over it)
@@ -4407,7 +5280,9 @@ def main():
             part = values[K_CLICK]
             if part == 'close':
                 break
-            if part == 'gear':
+            if part == 'hide':                                          # tuck it away now (auto-hide)
+                hide_now(window)
+            elif part == 'gear':
                 menu_key = K_PROGRAMS                                   # handled at the bottom
             elif part == 'switch':
                 window = switch_style(window, 'Bar' if G.style == 'Panel' else 'Panel')
@@ -4445,6 +5320,16 @@ def main():
             apply_theme()                                               # the Programs window and popups follow the brightness too
             relayout(window)
             set_right_click_menu(window, make_menu())
+        elif menu_key == K_ADD_LINK:
+            ask_for_link(window)
+        elif isinstance(menu_key, str) and menu_key.startswith(K_OPEN_DOCK):  # Docks > a dock
+            open_dock(menu_key[len(K_OPEN_DOCK):])
+        elif menu_key == K_NEW_DOCK:
+            new_dock(window)
+        elif menu_key == K_RENAME_DOCK:
+            rename_dock(window)
+        elif menu_key == K_DOCK_SHORTCUT:
+            make_dock_shortcut()
         elif menu_key == 'Version':
             sg.popup_scrolled(f'{__file__}\n{APP_NAME} version {version}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10), icon=dock_icon_64)
         elif menu_key == 'Edit Me':
@@ -4460,7 +5345,7 @@ def main():
                         'replaced, and only by the program\'s own\nicon - a picture you dropped on an entry stays unless\nthe program has a bigger icon of its own.',
                         yes='Fetch them'):
                 sharpen_icons(window)
-        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR):
+        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK):
             entry_action(window, menu_key)
         elif isinstance(menu_key, str) and menu_key.startswith(K_UNHIDE):  # Hidden from the Bar > Show ...
             num = int(menu_key[len(K_UNHIDE):])
@@ -4521,17 +5406,33 @@ def main():
         elif isinstance(menu_key, str) and menu_key.startswith(K_STYLE):
             if menu_key[len(K_STYLE):] != G.style:
                 window = switch_style(window, menu_key[len(K_STYLE):])
-        elif isinstance(menu_key, str) and menu_key.startswith(K_PLACE):
-            new_place = menu_key[len(K_PLACE):]
-            if G.place == 'Floating':
-                remember_location(window)
-                if new_place != 'Floating':                             # docking: on the monitor the floating dock is on now
-                    x, y, w, h = window_rect(window)
-                    G.monitor_pt = (x + w // 2, y + h // 2)
-                    save_style_setting('MONITOR', list(G.monitor_pt))
-            G.place = new_place
-            save_style_setting('PLACE', G.place)
+        elif menu_key == K_FLOAT_VERTICAL:                              # a floating Bar: across <-> up and down
+            remember_location(window)
+            G.float_vertical = not G.float_vertical
+            save_style_setting('VERTICAL', G.float_vertical)
             window = rebuild(window)
+        elif isinstance(menu_key, str) and menu_key.startswith(K_FLYOUT):   # Fly out > how soon
+            G.flyout = float(menu_key[len(K_FLYOUT):])
+            sg.user_settings_set_entry(K_FLYOUT, G.flyout)
+            set_right_click_menu(window, make_menu())
+        elif isinstance(menu_key, str) and menu_key.startswith(K_HANDLE_COLOR):     # Handle colour > a colour
+            G.handle_color = HANDLE_COLORS.get(menu_key[len(K_HANDLE_COLOR):])
+            sg.user_settings_set_entry(K_HANDLE_COLOR, G.handle_color)
+            redraw(window)
+            set_right_click_menu(window, make_menu())
+        elif menu_key == K_HANDLE_CUSTOM:                               # Handle colour > Custom...: the colour picker
+            if pick_handle_color(window):
+                redraw(window)
+                set_right_click_menu(window, make_menu())
+        elif menu_key == K_BUBBLE_SECTION:
+            G.bubble_section = not G.bubble_section
+            sg.user_settings_set_entry(K_BUBBLE_SECTION, G.bubble_section)
+            set_right_click_menu(window, make_menu())
+        elif menu_key == K_HANDLE_NAME:
+            G.handle_name = not G.handle_name
+            sg.user_settings_set_entry(K_HANDLE_NAME, G.handle_name)
+            redraw(window)
+            set_right_click_menu(window, make_menu())
         elif menu_key == K_AUTOHIDE:
             G.autohide = not G.autohide
             save_style_setting('AUTOHIDE', G.autohide)

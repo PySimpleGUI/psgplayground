@@ -8,9 +8,11 @@ claude_chat_search.pyw - Full-text search of all your Claude chats, using Claude
     Searches every message, every tool step (commands, file paths, program output) and every attached file - across all Projects.
 
     Search:  every word must appear somewhere in the chat, in any order.   "quoted words" must appear exactly as typed.
-    Keys:    Enter = search / open chat    Up Down PgUp PgDn Home End = move through results    Ctrl+F = search box    F5 = reload    Esc = exit
+    Keys:    Enter = search / open the chat in the Claude app    Up Down PgUp PgDn Home End = move through results    Ctrl+F = search box    F5 = reload    Esc = exit
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-04  v1.5  Open in app button: the chat opens in the Claude desktop app (a claude:// link); Enter / double-click on a result do the same
+2026-11-04  v1.5  Open chat is now Open in browser
 2026-10-31  v1.4  Finished exports are moved out of Downloads into an archive folder (one dated subfolder each; the newest 3 kept) and loaded from there
 2026-10-31  v1.4  Archive… button picks that folder - put it in Dropbox and the other PCs can search the same export
 2026-10-31  v1.3  "New export…" button: opens claude.ai's Privacy settings page in the browser and shows the 3 steps to get a fresh export
@@ -33,11 +35,12 @@ import zipfile
 
 import PySimpleGUI as sg
 
-VERSION = '1.4'                     # bump with every change, alongside the CHANGE LOG
+VERSION = '1.5'                     # bump with every change, alongside the CHANGE LOG
 APP_NAME = 'Claude Chat Search'
 SETTINGS_FILE = 'claude_chat_search.json'
 DEFAULT_SOURCE = os.path.join(os.path.expanduser('~'), 'Downloads')
 CHAT_URL = 'https://claude.ai/chat/{}'
+APP_URL = 'claude://claude.ai/chat/{}'          # the same chat in the Claude desktop app
 PROJECT_URL = 'https://claude.ai/project/{}'
 EXPORT_PAGE = 'https://claude.ai/settings/privacy'
 KEEP_EXPORTS = 3                    # archived exports kept; older ones are deleted when a new one is archived
@@ -83,6 +86,7 @@ K_PANE = '-PANE-'
 K_RESULTS_OPEN = K_RESULTS + '+OPEN'          # Enter or double-click on a result
 K_PREVIEW = '-PREVIEW-'
 K_OPEN = '-OPEN-'
+K_OPEN_APP = '-OPEN APP-'
 K_COPY_LINK = '-COPY LINK-'
 K_COPY_TITLE = '-COPY TITLE-'
 K_SOURCE = '-SOURCE-'
@@ -789,7 +793,8 @@ def make_window():
                sg.Push()] + legend,
               [sg.Pane([top_pane, bottom_pane], orientation='vertical', show_handle=True, handle_size=10, relief=sg.RELIEF_FLAT, key=K_PANE, expand_x=True, expand_y=True,
                        pad=(0, 4))],
-              [sg.Button('Open chat', key=K_OPEN), sg.Button('Copy link', key=K_COPY_LINK), sg.Button('Copy title', key=K_COPY_TITLE), sg.Push(),
+              [sg.Button('Open in app', key=K_OPEN_APP, tooltip=' The chat in the Claude desktop app (Enter / double-click a result) '),
+               sg.Button('Open in browser', key=K_OPEN), sg.Button('Copy link', key=K_COPY_LINK), sg.Button('Copy title', key=K_COPY_TITLE), sg.Push(),
                sg.Text('Export'), sg.Input(s('-source-', DEFAULT_SOURCE), key=K_SOURCE, size=(40, 1), enable_events=True, font=FONT_SMALL),
                sg.FolderBrowse('Folder…', target=K_SOURCE), sg.FileBrowse('File…', target=K_SOURCE, file_types=(('Claude export (ZIP or manifest)', '*.zip *.json'),)),
                sg.Button('New export…', key=K_NEW_EXPORT, tooltip=' Ask claude.ai for a fresh export of all your chats (opens the Privacy settings page) '),
@@ -954,6 +959,19 @@ def selected_chat(window, state):
     return state.results[row][0] if 0 <= row < len(state.results) else None
 
 
+def open_in_app(uuid):
+    """The chat in the Claude desktop app: claude:// links belong to the app.  False when nothing opened it"""
+    link = APP_URL.format(uuid)
+    try:
+        if sg.running_windows():
+            os.startfile(link)
+        else:
+            webbrowser.open(link)
+        return True
+    except OSError:
+        return False
+
+
 def main():
     sg.user_settings_filename(filename=SETTINGS_FILE)
     window = make_window()
@@ -1015,7 +1033,7 @@ def main():
             if chat is not None and chat is not state.shown_chat:
                 state.shown_chat, state.selected_uuid = chat, chat.uuid
                 state.preview.show(chat, state.rx, state.tools)
-        elif event in (K_RESULTS_OPEN, K_OPEN, K_COPY_LINK, K_COPY_TITLE):
+        elif event in (K_RESULTS_OPEN, K_OPEN_APP, K_OPEN, K_COPY_LINK, K_COPY_TITLE):
             chat = selected_chat(window, state)
             if chat is None:
                 window[K_STATUS].update('Pick a chat first')
@@ -1025,6 +1043,9 @@ def main():
             elif event == K_COPY_TITLE:
                 sg.clipboard_set(chat.title)
                 window[K_STATUS].update('Title copied:  ' + chat.title)
+            elif event in (K_RESULTS_OPEN, K_OPEN_APP):
+                window[K_STATUS].update('Opening in the Claude app:  ' + chat.title if open_in_app(chat.uuid) else
+                                        "The Claude app didn't open - is it installed?  Open in browser works without it")
             else:
                 webbrowser.open(chat.url)
         elif event == K_FOCUS_SEARCH:
