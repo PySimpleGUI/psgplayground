@@ -38,6 +38,11 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.40  05-Nov-2026     Claude: right-click a heading > Colour - Automatic (the palette's colour for its place, as before), one of the 11
+                            section colours, or Custom... (the colour picker, any colour). It colours the heading and its programs' rail,
+                            and on the Bar its section name and stack. Each dock keeps its own, by the heading's name - Rename keeps it
+                            (in the Programs window too, one rename at a time). Picking a colour turns Colored sections on. A custom
+                            colour too dark (or too light) to read on the card is moved just far enough to read.
     2.2.39  05-Nov-2026     Claude: right-click > Handle colour > Custom... - any colour for the hidden dock's handle (or its name tag), from the
                             colour picker. The picker starts at the colour you picked there last, and the menu's chip shows it (a rainbow
                             until you pick one). Each dock keeps its own.
@@ -190,7 +195,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.39'
+version = '2.2.40'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -274,6 +279,8 @@ class G:
     flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
     handle_color = None                                 # right-click > Handle colour: '#rrggbb', or None = the theme's
     handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
+    head_colors = {}                                    # a heading's right-click > Colour: {heading name: '#rrggbb'} - not in it = Automatic (the palette's)
+    heads_at_load = []                                  # the Programs window: the heading names it opened with (a renamed heading keeps its Colour)
 
 
 
@@ -321,9 +328,11 @@ K_BUBBLE_SECTION = '-BUBBLE SECTION-'           # right-click > Section name in 
 K_FLYOUT = '-FLY OUT-'                          # right-click > Fly out: how soon an auto-hidden dock comes out (settings entry, and the prefix of the menu keys)
 K_HANDLE_COLOR = '-HANDLE COLOR-'               # right-click > Handle colour (settings entry: '#rrggbb' or None = the theme's;  the prefix of the menu keys + the colour's name)
 K_HANDLE_CUSTOM = '-HANDLE CUSTOM-'             # right-click > Handle colour > Custom... (settings entry too: the colour last picked there)
+K_HEAD_COLORS = '-HEADING COLORS-'              # settings entry: {heading name: '#rrggbb'} from a heading's right-click > Colour (each dock its own)
 K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY = '-E OPEN-', '-E FOLDER-', '-E EDIT-', '-E COPY-'                  # a program's / heading's right-click menu
 K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE = '-E RENAME-', '-E REMOVE-', '-E SHARPEN-', '-E ADD HERE-'
 K_E_BAR = '-E IN BAR-'                          # a program's / heading's menu: Show in the Bar
+K_E_COLOR = '-E COLOR-'                         # a heading's menu: Colour > ... (the prefix of the menu keys + Automatic, a palette colour's name or Custom...)
 K_MOVED = '-MOVED-'                             # the floating dock was dragged to a new place
 K_REORDER = '-REORDER-'                         # Panel: a program / section dragged to a new place, value = (start, end, list position)
 K_TIP = '-TIP-'                                 # a short tip to show beside the mouse, value = its text
@@ -511,8 +520,9 @@ def style_menus(window:sg.Window):
         first_light = True
         names = [menu.entrycget(i, 'label').lstrip('✓ ') if menu.type(i) == 'command' else None for i in range(menu.index('end') + 1 if menu.index('end') is not None else 0)]
         handle_menu = "The theme's" in names                           # the Handle colour menu (its Periwinkle is not the theme)
+        head_menu = HEAD_AUTO in names                                  # a heading's Colour menu (nor is its Periwinkle)
         for i, name in enumerate(names):                                # Theme menu: a color chip beside each name, light ones in a 2nd column
-            if name in THEMES and not handle_menu:
+            if name in THEMES and not handle_menu and not head_menu:
                 menu.entryconfigure(i, image=theme_swatch(window, name), compound='left')
                 if first_light and is_light(THEMES[name]['card']):
                     menu.entryconfigure(i, columnbreak=1)
@@ -521,6 +531,8 @@ def style_menus(window:sg.Window):
                 menu.entryconfigure(i, image=color_chip(window, HANDLE_COLORS[name] or T()['dim']), compound='left')
             elif name == HANDLE_CUSTOM and handle_menu:                 # Custom...: the colour picked there last, or a rainbow
                 menu.entryconfigure(i, image=custom_chip(window), compound='left')
+            elif head_menu and (name in (HEAD_AUTO, HANDLE_CUSTOM) or name in SECTION_NAMES):      # a heading's Colour: each choice as the dock shows it
+                menu.entryconfigure(i, image=heading_chip(window, name), compound='left')
         for child in menu.winfo_children():
             if isinstance(child, tk.Menu):
                 style(child)
@@ -542,10 +554,8 @@ def color_chip(window, color):
     return G.swatches[key]
 
 
-def custom_chip(window):
-    """ The chip beside Custom... in the Handle colour menu: the colour last picked there, else a rainbow (any colour).  Made once and kept """
-    if G.handle_custom:
-        return color_chip(window, G.handle_custom)
+def rainbow_chip(window):
+    """ A rainbow chip (any colour) - beside a Custom... that has no colour picked yet.  Made once and kept """
     key = ('chip', 'rainbow')
     if key not in G.swatches:
         import colorsys
@@ -565,6 +575,25 @@ def custom_chip(window):
         im.resize((round(w / 4), round(h / 4)), Image.LANCZOS).save(buf, 'PNG')
         G.swatches[key] = sg.tk.PhotoImage(master=window.TKroot, data=base64.b64encode(buf.getvalue()))
     return G.swatches[key]
+
+
+def custom_chip(window):
+    """ The chip beside Custom... in the Handle colour menu: the colour last picked there, else a rainbow (any colour) """
+    return color_chip(window, G.handle_custom) if G.handle_custom else rainbow_chip(window)
+
+
+def heading_chip(window, name):
+    """ The chip beside a choice in a heading's Colour menu (the heading right-clicked: G.menu_target), in the colour the dock would show it:
+        Automatic = the palette's colour for its place, a palette colour by name, Custom... = its own colour, or a rainbow if it has none """
+    b = Block.active_blocks.get(G.menu_target)
+    chosen = G.head_colors.get(b.name) if b is not None else None
+    if name == HANDLE_CUSTOM:
+        return color_chip(window, section_color(chosen)) if chosen and chosen not in SECTION_PALETTE else rainbow_chip(window)
+    if name == HEAD_AUTO:
+        heads = [o.block_num for o in Block.active_blocks.values() if o.kind == KIND_HEADING]
+        n = heads.index(b.block_num) if b is not None and b.block_num in heads else 0
+        return color_chip(window, section_color(SECTION_PALETTE[n % len(SECTION_PALETTE)]))
+    return color_chip(window, section_color(SECTION_PALETTE[SECTION_NAMES.index(name)]))
 
 
 def hex_color(value):
@@ -1549,9 +1578,18 @@ def load_blocks_into_window(window:sg.Window):
                 set_block_border(window, block_num)
     except Exception as e:
         sg.popup_error_with_traceback('Error loading saved blocks - erasing saved data', e)
+    G.heads_at_load = [b.name for b in Block.active_blocks.values() if b.kind == KIND_HEADING]     # so save_blocks can carry a renamed heading's Colour
     window.refresh()
     window[K_ALL_COLS].contents_changed()
     window.refresh()
+
+
+def carry_heading_colors(before, after):
+    """ The Programs window renamed a heading: its Colour goes with it - only when it is clear which (one heading name gone, one new one) """
+    gone, new = [n for n in before if n not in after], [n for n in after if n not in before]
+    if len(gone) == 1 and len(new) == 1 and gone[0] in G.head_colors:
+        G.head_colors[new[0]] = G.head_colors.pop(gone[0])
+        sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
 
 
 def save_blocks(window:sg.Window):
@@ -1563,6 +1601,9 @@ def save_blocks(window:sg.Window):
             G.launcher_settings.set(K_B_PATH(key), window[K_B_PATH(key)].get().strip('"'))
             G.launcher_settings.set(K_B_KIND(key), Block.active_blocks[key].kind)
             G.launcher_settings.set(K_B_BARVIS(key), Block.active_blocks[key].bar)
+    after = [window[K_B_NAME(k)].get().strip('"') for k, b in Block.active_blocks.items() if b.kind == KIND_HEADING and K_B_BLOCK(k) in window.key_dict.keys()]
+    carry_heading_colors(G.heads_at_load, after)
+    G.heads_at_load = after
     headings = sum(1 for b in Block.active_blocks.values() if b.kind == KIND_HEADING)
     sg.popup_quick_message(f'Saved {len(Block.active_blocks) - headings} applications and {headings} headings', font='_ 20', text_color='white', background_color='dark green')
 
@@ -2003,6 +2044,8 @@ DOCK_DRAG = 5                                                          # pixels 
 TEXT_SIZES = {'Small': 0.88, 'Medium': 1.0, 'Large': 1.2, 'Extra large': 1.45}
 SECTION_PALETTE = ('#e8a33d', '#1e9bff', '#2ecc71', '#c48cff', '#ff7f50', '#2ad4c8', '#ff6b9a', '#d9c63a', '#a6e22e', '#8c9eff', '#c0c7d1')
 #                  gold,      blue,      green,     purple,    coral,     teal,      pink,      yellow,    lime,      periwinkle, silver
+SECTION_NAMES = ('Gold', 'Blue', 'Green', 'Purple', 'Coral', 'Teal', 'Pink', 'Yellow', 'Lime', 'Periwinkle', 'Silver')     # SECTION_PALETTE's colours by name
+HEAD_AUTO = 'Automatic'                                                # a heading's Colour menu: the palette's colour for its place (no colour of its own)
 BAR_ICON, BAR_GAP, BAR_PAD, BAR_SEP, BAR_TOOL = 48, 8, 9, 17, 0.62     # Bar style, design pixels at 96 dpi / Medium size.  The switch and the gear are 62% of an icon
 BAR_LABEL, BAR_LABEL_SIDE = 54, 260                                    # room for the name bubble: above / below a horizontal bar, beside a vertical one (x text size)
 BAR_EDGE, BAR_SIDE = 10, 18                                            # room around the bar for its shadow: on the screen-edge side, at the ends
@@ -2228,15 +2271,23 @@ def bar_side():
 
 # ------------------------------------------------------------ Sections ------------------------------------------------------------
 
+def section_color(color):
+    """ How the dock shows a heading's colour on this theme: a palette colour as it is - a darker shade on a light card;  a Custom... colour
+        as picked, only moved far enough to read on the card (3:1) """
+    t = T()
+    light = t.get('light', False)
+    if color in SECTION_PALETTE:
+        return mix_hex(color, '#000000', 0.32) if light else color
+    return readable(color, t['card'], 3.0, '#000000' if light else '#ffffff')
+
+
 def sections():
     """ Each heading's colour, and the heading every entry sits under:  ({heading block_num: colour}, {block_num: heading block or None}).
-        Colored sections off: all headings gold """
+        A heading's own Colour (its right-click menu), else the palette's for its place.  Colored sections off: all headings gold """
     colors, owner, current, n = {}, {}, None, 0
-    light = T().get('light', False)
     for b in Block.active_blocks.values():
         if b.kind == KIND_HEADING:
-            color = SECTION_PALETTE[n % len(SECTION_PALETTE)] if G.sections else T()['heading']
-            colors[b.block_num] = mix_hex(color, '#000000', 0.32) if G.sections and light else color      # a darker shade reads on a light card
+            colors[b.block_num] = section_color(G.head_colors.get(b.name) or SECTION_PALETTE[n % len(SECTION_PALETTE)]) if G.sections else T()['heading']
             current, n = b, n + 1
         owner[b.block_num] = current
     return colors, owner
@@ -3692,8 +3743,11 @@ def part_menu(part):
     title = '!' + menu_label(b.name or '(no name)')
     dock = ['---', f'    {menu_label(G.dock_title)}', make_menu()[1]]
     if b.kind == KIND_HEADING:
+        chosen = G.head_colors.get(b.name)
+        colours = ([f'{tick(chosen is None)}{HEAD_AUTO}::{K_E_COLOR}{HEAD_AUTO}'] + [f'{tick(chosen == c)}{n}::{K_E_COLOR}{n}' for n, c in zip(SECTION_NAMES, SECTION_PALETTE)] +
+                   ['---', f'{tick(chosen is not None and chosen not in SECTION_PALETTE)}{HANDLE_CUSTOM}::{K_E_COLOR}{HANDLE_CUSTOM}'])
         return ['', [title, '---', f'    Add a program here...::{K_E_ADD_HERE}', f'    Add a link here...::{K_E_ADD_LINK}', f'    Rename...::{K_E_RENAME}',
-                     f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}', f'    Remove this heading::{K_E_REMOVE}'] + dock]
+                     '    Colour', colours, f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}', f'    Remove this heading::{K_E_REMOVE}'] + dock]
     if is_link(b.path):                                                 # a link: no folder, source or sharper icon
         return ['', [title, '---', f'    Open::{K_E_OPEN}', f'    Copy the link::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}',
                      f'    Remove from the dock::{K_E_REMOVE}'] + dock]
@@ -4248,6 +4302,11 @@ def entry_action(window, key):
     elif key == K_E_RENAME:
         name = ask_near(G.menu_at or pointer(), 'Rename', 'New name for this heading' if b.kind == KIND_HEADING else 'New name', default=b.name, yes='Rename')
         if name is not None and name.strip():
+            if b.kind == KIND_HEADING and b.name in G.head_colors:     # its Colour goes with it (another heading of the old name keeps it too)
+                G.head_colors[name.strip()] = G.head_colors[b.name]
+                if not any(o.kind == KIND_HEADING and o.name == b.name for o in Block.active_blocks.values() if o is not b):
+                    del G.head_colors[b.name]
+                sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
             b.name = name.strip()
             save_entries()
             relayout(window)
@@ -4259,6 +4318,9 @@ def entry_action(window, key):
         what = 'the heading' if b.kind == KIND_HEADING else ''
         if ask_near(G.menu_at or pointer(), 'Remove', f'Remove {what} {b.name} from the dock?'.replace('  ', ' '), yes='Remove', danger=True):
             del Block.active_blocks[b.block_num]
+            if b.kind == KIND_HEADING and b.name in G.head_colors and not any(o.kind == KIND_HEADING and o.name == b.name for o in Block.active_blocks.values()):
+                del G.head_colors[b.name]                               # its Colour goes too
+                sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
             save_entries()
             relayout(window)
     elif key == K_E_SHARPEN:
@@ -4269,6 +4331,36 @@ def entry_action(window, key):
             add_programs(window, files, list(Block.active_blocks).index(b.block_num) + 1)
     elif key == K_E_ADD_LINK:
         ask_for_link(window, section_end(b.block_num))
+
+
+def heading_color(window, choice):
+    """ A heading's right-click > Colour: Automatic (the palette's colour for its place), a palette colour by name, or Custom... (the colour
+        picker, starting at the heading's colour now).  Kept per dock by the heading's name (G.head_colors, K_HEAD_COLORS).  Picking a colour
+        turns Colored sections on - it wouldn't show otherwise """
+    b = Block.active_blocks.get(G.menu_target)
+    if b is None or b.kind != KIND_HEADING:
+        return
+    if choice == HANDLE_CUSTOM:
+        from tkinter import colorchooser
+        try:
+            rgb = colorchooser.askcolor(color=sections()[0].get(b.block_num) or T()['heading'], parent=window.TKroot, title=f'Colour of {b.name}')[0]
+        except Exception:
+            rgb = None
+        if not rgb:
+            return
+        color = '#{:02x}{:02x}{:02x}'.format(*(max(0, min(255, int(v))) for v in rgb[:3]))
+    else:
+        color = dict(zip(SECTION_NAMES, SECTION_PALETTE)).get(choice)    # None = Automatic
+    if color:
+        G.head_colors[b.name] = color
+    else:
+        G.head_colors.pop(b.name, None)
+    sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
+    if color and not G.sections:
+        G.sections = True
+        sg.user_settings_set_entry(K_SECTIONS, True)
+        notice('Colored sections is on now - the colours show with it', seconds=2.5)
+    relayout(window)
 
 
 def relayout(window, before=None):
@@ -4987,6 +5079,8 @@ def load_view_settings():
     G.handle_color = sg.user_settings_get_entry(K_HANDLE_COLOR, None)
     G.handle_color = G.handle_color if G.handle_color in HANDLE_COLORS.values() else hex_color(G.handle_color)      # a preset, or a Custom... colour
     G.handle_custom = hex_color(sg.user_settings_get_entry(K_HANDLE_CUSTOM, None))
+    G.head_colors = sg.user_settings_get_entry(K_HEAD_COLORS, {})
+    G.head_colors = {n: hex_color(c) for n, c in G.head_colors.items() if isinstance(n, str) and hex_color(c)} if isinstance(G.head_colors, dict) else {}
     G.bar_layout = sg.user_settings_get_entry(K_LAYOUT, 'Icons')
     G.bar_layout = G.bar_layout if G.bar_layout in LAYOUTS else 'Icons'
     G.stacks_hover = bool(sg.user_settings_get_entry(K_STACKS_HOVER, True))
@@ -5347,6 +5441,8 @@ def main():
                 sharpen_icons(window)
         elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK):
             entry_action(window, menu_key)
+        elif isinstance(menu_key, str) and menu_key.startswith(K_E_COLOR):     # a heading's Colour > a choice
+            heading_color(window, menu_key[len(K_E_COLOR):])
         elif isinstance(menu_key, str) and menu_key.startswith(K_UNHIDE):  # Hidden from the Bar > Show ...
             num = int(menu_key[len(K_UNHIDE):])
             if num in Block.active_blocks:
