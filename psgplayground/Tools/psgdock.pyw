@@ -38,6 +38,16 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.42  06-Nov-2026     Claude: Ctrl+A in the search box selects what's typed (highlighted, as in a real text box): then a letter or a paste
+                            replaces it, Backspace or Delete clears it, Ctrl+C copies it, Ctrl+X cuts it; a click in the box or an arrow
+                            key lets go of it. The Panel's box and the Bar's search fly-out both.
+    2.2.41  06-Nov-2026     Claude: search. The Panel has a search box under its title strip (the magnifier beside T S M L shows or hides
+                            it): type, and only the programs whose names match show, as you type - a heading that matches brings its whole
+                            section, and first letters work too (pdm finds Piano Dynamics Monitor). The matching letters are marked; the
+                            arrows move the blue pick, Enter opens it, Esc clears. Right-click > Search: Hide what doesn't match (the card
+                            keeps its size) or Dim it. The Bar has a search button: its matches fly out like a stack (every program while
+                            nothing is typed), and with Dim the bar's other icons fade. Click the dock and type to search. Each dock keeps
+                            its own setting; a dock with 12 or more programs starts with search on.
     2.2.40  05-Nov-2026     Claude: right-click a heading > Colour - Automatic (the palette's colour for its place, as before), one of the 11
                             section colours, or Custom... (the colour picker, any colour). It colours the heading and its programs' rail,
                             and on the Bar its section name and stack. Each dock keeps its own, by the heading's name - Rename keeps it
@@ -195,7 +205,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.40'
+version = '2.2.42'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -281,6 +291,12 @@ class G:
     handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
     head_colors = {}                                    # a heading's right-click > Colour: {heading name: '#rrggbb'} - not in it = Automatic (the palette's)
     heads_at_load = []                                  # the Programs window: the heading names it opened with (a renamed heading keeps its Colour)
+    search, search_sel = '', 0                          # the search: what's typed (not saved), and which match is the pick - the one Enter opens
+    search_pref, search_mode = None, 'Hide'             # right-click > Search: on / off (None = on for a dock with SEARCH_AUTO programs or more);  Hide or Dim
+    focus = False                                       # the dock has the keyboard (its search box shows the caret)
+    search_spots = []                                   # Panel: where each match is drawn [(block_num, x, y)] - the Left / Right arrows go to the column beside
+    redraw_due = False                                  # redraw_soon(): a redraw waits for tk to be idle (a burst of typing makes one picture)
+    search_all = False                                  # Ctrl+A: what's in the Panel's search box is selected (drawn highlighted)
 
 
 
@@ -354,6 +370,10 @@ K_RENAME_DOCK = '-RENAME DOCK-'                 # right-click > Docks > Rename t
 K_DOCK_SHORTCUT = '-DOCK SHORTCUT-'             # right-click > Docks > Desktop shortcut for this dock
 K_ADD_LINK = '-ADD LINK-'                       # right-click > Add a link... (a web page, a claude:// chat ...)
 K_E_ADD_LINK = '-E ADD LINK-'                   # a heading's menu: Add a link here...
+K_SEARCH = '-SEARCH-'                           # right-click > Search > Search box / Search button (settings entry too: True / False - not there = by itself)
+K_SEARCH_MODE = '-SEARCH MODE-'                 # right-click > Search > Hide / Dim (settings entry, and the prefix of the menu keys)
+K_FIND_OPEN = '-FIND OPEN-'                     # a letter typed while the Bar has the keyboard: its search flies out with it, value = the letter
+K_FIND_KEY = '-FIND KEY-'                       # a key in the Bar's search fly-out, value = (keysym, char, state)
 
 
 ICON_SIZE = (30,30)
@@ -471,7 +491,9 @@ def make_menu():
     docks += ['---', f'    New dock...::{K_NEW_DOCK}', f'    Rename this dock...::{K_RENAME_DOCK}']
     if sg.running_windows():
         docks.append(f'    Desktop shortcut for this dock::{K_DOCK_SHORTCUT}')
-    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', f'    Add a link...::{K_ADD_LINK}', '    Docks', docks, '---',
+    search = ([f'{tick(search_on())}Search {"button" if G.style == "Bar" else "box"}::{K_SEARCH}', '---'] +
+              [f'{tick(m == G.search_mode)}{label}::{K_SEARCH_MODE}{m}' for m, label in SEARCH_MODES.items()])
+    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', f'    Add a link...::{K_ADD_LINK}', '    Docks', docks, '    Search', search, '---',
              f'    Switch to the {other}::{KT_STYLE(other)}'] + place + ['---',
              '    Size', sizes,
              '    Text size', [f'{tick(n == G.text)}{n}::{KT_TEXT(n)}' for n in TEXT_SIZES]]
@@ -2015,7 +2037,7 @@ def panel_columns(entries, row_h, head_h, col_w):
     tall = (G.work[3] - G.work[1]) / G.scale - 40
     for n in range(1, most + 1):
         columns = dock_columns(entries, n)
-        height = HEAD_H + 12 + FOOT_H + max((column_height(c, row_h, head_h) for c in columns), default=row_h)
+        height = HEAD_H + 12 + search_row_h() + FOOT_H + max((column_height(c, row_h, head_h) for c in columns), default=row_h)
         width = max(2 * PAD + len(columns) * col_w + (len(columns) - 1) * COL_GAP, 340)
         if height <= min(width, tall):
             break
@@ -2064,6 +2086,9 @@ K_ASK_INPUT, K_ASK_OK, K_ASK_NO, K_ASK_X = '-ASK INPUT-', '-ASK OK-', '-ASK NO-'
 K_STACK_OPEN = '-STACK OPEN-'                                          # Open stacks on hover: the mouse rested on a stack, value = its heading's block_num
 K_STACKS_HOVER = '-STACKS ON HOVER-'                                   # right-click > Layout > Open stacks on hover (settings entry too)
 STACK_REST = 0.4                                                       # seconds the mouse rests on a stack before it opens by itself
+SEARCH_AUTO = 12                                                       # a dock with this many programs or more starts with its search on (right-click > Search)
+SEARCH_MODES = {'Hide': "Hide the programs that don't match", 'Dim': "Dim the programs that don't match"}     # right-click > Search
+C_MARK = '#e8a33d'                                                     # the search: a soft amber mark behind the letters that match
 
 
 def font(bold, px):
@@ -2154,6 +2179,15 @@ def draw_hide(d, cx, cy, r, color, width):
     side = (v[1] * r, v[0] * r)                                         # across the arrow
     back = (cx - v[0] * r * 0.55, cy - v[1] * r * 0.55)
     d.line(((back[0] + side[0], back[1] + side[1]), tip, (back[0] - side[0], back[1] - side[1])), fill=color, width=width, joint='curve')
+
+
+def draw_magnifier(d, cx, cy, r, color, width):
+    """ The search button: a lens, its handle down to the right """
+    lr = r * 0.6
+    lx, ly = cx - r * 0.2, cy - r * 0.2
+    d.ellipse((lx - lr, ly - lr, lx + lr, ly + lr), outline=color, width=width)
+    a = lr * 0.72
+    d.line((lx + a, ly + a, cx + r * 0.8, cy + r * 0.8), fill=color, width=max(1, round(width * 1.25)))
 
 
 def draw_switch(d, cx, cy, r, color, to_bar):
@@ -2315,25 +2349,313 @@ def section_end(heading_num):
     return i
 
 
+# ------------------------------------------------------------ Search ------------------------------------------------------------
+
+def program_count():
+    """ How many programs (not headings) the dock has """
+    return sum(1 for b in Block.active_blocks.values() if b.kind != KIND_HEADING)
+
+
+def search_on():
+    """ Right-click > Search > Search box (Panel) / Search button (Bar): as set for this dock - not set: on once it has SEARCH_AUTO programs """
+    return G.search_pref if G.search_pref is not None else program_count() >= SEARCH_AUTO
+
+
+def search_row_h():
+    """ Panel: the height of the search row under the title strip, in design pixels - 0 when the search is off (or there's nothing to search) """
+    return round(36 * (0.25 + 0.75 * text_scale())) if search_on() and program_count() else 0
+
+
+def match_spans(name, q):
+    """ Where the search q (lower case) matches a name: [(start, end)] of the letters to mark - or None.  Anywhere in the name ('pi': Pip
+        Refresh, Piano...), each word of q somewhere in it ('ref pip'), or the first letters of its words ('pdm': Piano Dynamics Monitor) """
+    low = ''.join(c.lower() if len(c.lower()) == 1 else c for c in name)      # (as long as the name, so the marks land on the right letters)
+    i = low.find(q)
+    if i >= 0:
+        return [(i, i + len(q))]
+    words = q.split()
+    if len(words) > 1:
+        spans = [(low.find(w), low.find(w) + len(w)) for w in words]
+        return spans if all(s >= 0 for s, e in spans) else None
+    starts = [m.start() for m in re.finditer(r'[^\W_]+|%', low)]
+    if len(q) > 1 and ''.join(low[s] for s in starts).startswith(q):
+        return [(s, s + 1) for s in starts[:len(q)]]
+    return None
+
+
+def search_find():
+    """ The search now: (the programs that match, in list order;  {block_num: the letters to mark};  {the headings they sit under}) - None
+        while nothing is typed.  A heading whose name matches brings its whole section """
+    q = ' '.join(G.search.lower().split())
+    if not q:
+        return None
+    found, marks, heads = [], {}, set()
+    section, whole = None, False
+    for b in Block.active_blocks.values():
+        spans = match_spans(b.name or '', q)
+        if spans:
+            marks[b.block_num] = spans
+        if b.kind == KIND_HEADING:
+            section, whole = b, spans is not None
+        elif spans is not None or whole:
+            found.append(b)
+            if section is not None:
+                heads.add(section.block_num)
+    return found, marks, heads
+
+
+def search_pick():
+    """ The match Enter opens - the one in blue - or None """
+    found = search_find()
+    if not found or not found[0]:
+        return None
+    G.search_sel = min(max(0, G.search_sel), len(found[0]) - 1)
+    return found[0][G.search_sel]
+
+
+def redraw_soon(window):
+    """ Redraw once tk is idle - the keys already waiting are taken first, so typing fast makes one picture instead of one per letter """
+    if G.redraw_due:
+        return
+    G.redraw_due = True
+
+    def go():
+        if G.redraw_due:
+            redraw(window)
+    window.TKroot.after_idle(go)
+
+
+def set_search(window, text):
+    """ What's in the Panel's search box changed: the first match is the pick again, and the dock shows the new matches """
+    text = text[:60]
+    if text != G.search:
+        G.search, G.search_sel, G.hover, G.search_all = text, 0, None, False
+        if window is G.window and not G.hidden:
+            redraw_soon(window)
+
+
+def clear_search_later(window, ms=450):
+    """ A program started from the search: the search clears a moment later, once its row has glowed - unless something new was typed """
+    text = G.search
+    window.TKroot.after(ms, lambda: set_search(window, '') if window is G.window and G.search == text else None)
+
+
+def toggle_search(window):
+    """ The magnifier in the Panel's title strip, or right-click > Search > Search box / Search button: this dock's search on or off """
+    G.search_pref = not search_on()
+    sg.user_settings_set_entry(K_SEARCH, G.search_pref)
+    G.search, G.search_sel = '', 0
+    if G.search_pref and G.style == 'Panel':                            # on: type straight away
+        try:
+            window.TKroot.focus_force()
+        except Exception:
+            pass
+    relayout(window)
+    set_right_click_menu(window, make_menu())
+
+
+def typed(text, keysym, char, state, root, picked=False):
+    """ A key for a search box: (the new text, all of it selected?) - None when the key isn't for the text.  Letters (Ctrl+Alt too: AltGr),
+        Backspace (Ctrl: a whole word), Ctrl+V or Shift+Insert: the clipboard's first line.  Ctrl+A selects it all (picked - drawn highlighted,
+        as in a real text box): then a letter or a paste replaces it, Backspace or Delete clears it, Ctrl+C copies it, Ctrl+X cuts it """
+    ctrl, alt = bool(state & 0x4), bool(state & 0x20000)                # (Windows: Alt is 0x20000)
+    command, key = ctrl and not alt, keysym.lower()
+    if command and key == 'a':
+        return text, bool(text)
+    if keysym == 'BackSpace' or (keysym == 'Delete' and picked):
+        return ('' if picked else re.sub(r'\S*\s*$', '', text) if ctrl else text[:-1]), False
+    if command and key in ('c', 'x'):                                   # copy / cut - only what's selected, as in a text box
+        if not picked:
+            return None
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(text)
+        except Exception:
+            return None
+        return ('', False) if key == 'x' else (text, True)
+    start = '' if picked else text
+    if (command and key == 'v') or (keysym == 'Insert' and state & 0x1):
+        try:
+            clip = root.clipboard_get()
+        except Exception:
+            return None
+        return (start + next((line.strip() for line in clip.splitlines() if line.strip()), '')).lstrip()[:60], False
+    if len(char) == 1 and char.isprintable() and ctrl == alt:
+        return (start + char).lstrip()[:60], False                      # (a space first does nothing)
+    return None
+
+
+def search_key(window, e):
+    """ A key while the dock has the keyboard.  Panel: its search box takes it - letters, Backspace, Ctrl+V;  the arrows move the pick,
+        Enter starts it, Esc clears.  Bar: a letter opens its search with that letter """
+    if window is not G.window or G.hidden or G.drag_item is not None or not search_on() or not program_count():
+        return
+    if G.style == 'Bar':
+        typing = typed('', e.keysym, e.char, e.state, window.TKroot)
+        if typing and typing[0].strip():
+            window.write_event_value(K_FIND_OPEN, typing[0])
+        return
+    G.focus = True                                                      # (a key came, so the dock has the keyboard - in case no FocusIn said so)
+    if e.keysym == 'Escape':
+        G.search_all = False
+        set_search(window, '')
+    elif e.keysym in ('Return', 'KP_Enter'):
+        b = search_pick()
+        if b is not None:
+            start_program(window, b.block_num)
+            clear_search_later(window)
+    elif e.keysym in ('Up', 'Down', 'Left', 'Right'):
+        if G.search_all:                                                # an arrow first lets go of Ctrl+A's selection (Left / Right only that)
+            G.search_all = False
+            redraw_soon(window)
+            if e.keysym in ('Left', 'Right'):
+                return
+        search_move(window, e.keysym)
+    else:
+        typing = typed(G.search, e.keysym, e.char, e.state, window.TKroot, G.search_all and bool(G.search))
+        if typing is not None:
+            if typing[1] != G.search_all:
+                G.search_all = typing[1]
+                redraw_soon(window)
+            set_search(window, typing[0])
+
+
+def search_move(window, key):
+    """ The arrows in the Panel's search: Up / Down - the match before / after;  Left / Right - the nearest one in the column beside """
+    found = search_find()
+    if not found or not found[0]:
+        return
+    if key in ('Left', 'Right') and G.redraw_due:                       # (where the matches are: from the newest picture)
+        redraw(window)
+    order = [b.block_num for b in found[0]]
+    sel = min(max(0, G.search_sel), len(order) - 1)
+    spots = {num: (x, y) for num, x, y in G.search_spots}
+    if key in ('Left', 'Right') and order[sel] in spots:
+        x, y = spots[order[sel]]
+        beside = []
+        for i, num in enumerate(order):
+            sx, sy = spots.get(num, (x, y))
+            if (sx < x) if key == 'Left' else (sx > x):
+                beside.append((sx, abs(sy - y), i))
+        if beside:
+            column = max(c[0] for c in beside) if key == 'Left' else min(c[0] for c in beside)
+            sel = min((c for c in beside if c[0] == column), key=lambda c: c[1])[2]
+    elif key in ('Up', 'Down'):
+        sel += 1 if key == 'Down' else -1
+    G.search_sel = min(len(order) - 1, max(0, sel))
+    redraw_soon(window)
+
+
+def start_program(window, num):
+    """ Start a program from the dock - a click, or Enter in a search: it hops on the Bar (in Stacks, its stack hops), its row glows in the Panel """
+    launch(Block.active_blocks[num].path)
+    now = time.time()
+    G.bounce[num], G.flash[num] = now, now + 0.35
+    if G.style == 'Bar':
+        section = sections()[1].get(num) if G.bar_layout == 'Stacks' else None
+        if section is not None:
+            G.bounce[section.block_num] = now
+        bar_track_start(window)
+    else:
+        redraw(window)
+        window.TKroot.after(400, lambda: redraw(window))
+
+
+def see_through(im, amount):
+    """ A copy of a picture at that much of its opacity - the search dims what doesn't match """
+    out = im.copy()
+    out.putalpha(im.getchannel('A').point(lambda a: round(a * amount)))
+    return out
+
+
+def draw_marks(d, shown, spans, fnt, x, cy, t):
+    """ The search: a soft amber mark behind each run of matching letters in a name drawn at x (its middle at cy).  shown = the name as drawn,
+        perhaps cut short with … """
+    if not spans:
+        return
+    keep = len(shown) - 1 if shown.endswith('…') else len(shown)
+    half = fnt.size * 0.62
+    for s, e in spans:
+        e = min(e, keep)
+        if s < e:
+            x0, x1 = x + d.textlength(shown[:s], font=fnt), x + d.textlength(shown[:e], font=fnt)
+            d.rounded_rectangle((x0 - 1, cy - half, x1 + 1, cy + half), radius=fnt.size * 0.2, fill=mix_hex(C_MARK, t['card'], 0.5))
+
+
+def draw_field(d, box, u, t, text, placeholder, caret, right_room=0, picked=False):
+    """ A search box: its outline (blue while it has the keyboard), a magnifier, what's typed - or a faint placeholder - and the caret.
+        box in pixels, u = pixels per design pixel;  right_room: pixels kept free at its right end;  picked: what's typed is selected (Ctrl+A) -
+        white on blue, no caret """
+    x0, y0, x1, y1 = box
+    cy = (y0 + y1) / 2
+    d.rounded_rectangle(box, radius=8 * u, fill=mix_hex(t['track'], t['card'], 0.35), outline=mix_hex(C_CHECKED, t['card'], 0.2) if caret else t['border'],
+                        width=max(1, round(u)))
+    draw_magnifier(d, x0 + 15 * u, cy, 6.5 * u, t['text'] if caret or text else t['dim'], max(1, round(1.6 * u)))
+    f, tx = font(False, round(14 * text_scale() * u)), x0 + 30 * u
+    room = max(10 * u, x1 - tx - right_room - 8 * u)
+    if text:
+        shown = fit(d, text, f, room, keep_end=True)
+        end = tx + d.textlength(shown, font=f) + 1.5 * u
+        if picked:
+            d.rectangle((tx - 1.5 * u, cy - f.size * 0.68, end, cy + f.size * 0.68), fill=C_SELECT)
+        d.text((tx, cy), shown, font=f, fill='#ffffff' if picked else t['text'], anchor='lm')
+    else:
+        d.text((tx + 4 * u, cy), fit(d, placeholder, f, room), font=f, fill=mix_hex(t['dim'], t['card'], 0.2), anchor='lm')
+        end = tx + 1.5 * u
+    if caret and not (picked and text):
+        d.line((end, cy - f.size * 0.55, end, cy + f.size * 0.55), fill=t['text'], width=max(1, round(1.3 * u)))
+
+
+def draw_search_box(d, k, t, W, h, hits):
+    """ Panel: the search box under the title strip - with an x that clears it once something is typed.  Adds their parts to hits """
+    x0, y0, x1, y1 = 12, HEAD_H + 6, W - 12, HEAD_H + h
+    n = program_count()
+    draw_field(d, (x0 * k, y0 * k, x1 * k, y1 * k), k, t, G.search, f'Search {n} program{"s" * (n != 1)}', G.focus, 26 * k if G.search else 0, G.search_all)
+    if G.search:
+        cx, cy, hot = x1 - 14, (y0 + y1) / 2, G.hover == 'clear'
+        hits.append((x1 - 27, y0, x1, y1, 'clear'))
+        if hot:
+            d.ellipse(((cx - 9) * k, (cy - 9) * k, (cx + 9) * k, (cy + 9) * k), fill=mix_hex(t['text'], t['card'], 0.8))
+        r, color = 3.8, t['text'] if hot else t['dim']
+        d.line(((cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k), fill=color, width=max(1, round(1.5 * k)))
+        d.line(((cx - r) * k, (cy + r) * k, (cx + r) * k, (cy - r) * k), fill=color, width=max(1, round(1.5 * k)))
+    hits.append((x0, y0, x1, y1, 'find'))
+
+
+def bar_lit():
+    """ The Bar while its search is out, with Dim: the programs that match (the rest of the bar fades) - None when nothing fades """
+    if G.stack_open != 'search' or G.search_mode != 'Dim':
+        return None
+    found = search_find()
+    return {b.block_num for b in found[0]} if found is not None else None
+
+
 # ------------------------------------------------------------ Panel style ------------------------------------------------------------
 
 def card_layout():
     """ Panel style: where everything goes, in design pixels:  (width, height, [(kind, block, x, y, w, h)], y of the bottom line).
-        Rows, headings and columns follow the text size """
+        Rows, headings and columns follow the text size.  The search box (when on) sits under the title strip.  A search that hides what
+        doesn't match: the matches and their headings fill the same columns from the top, and the card keeps its size """
     ts = text_scale()
     row_h, head_h = max(ICON_PX + 5, round(ROW_H * (0.25 + 0.75 * ts))), round(30 * (0.2 + 0.8 * ts))
     col_w = round(COL_W * (0.45 + 0.55 * ts))
-    G.fit_rows = max(AUTO_ROWS, int(((G.work[3] - G.work[1]) / G.scale - HEAD_H - FOOT_H - 60) // row_h))   # a Panel on a side edge: rows that fit in one column
+    top = HEAD_H + 6 + search_row_h()                                   # where the list starts
+    G.fit_rows = max(AUTO_ROWS, int(((G.work[3] - G.work[1]) / G.scale - top - FOOT_H - 54) // row_h))      # a Panel on a side edge: rows that fit in one column
     columns = panel_columns(list(Block.active_blocks.values()), row_h, head_h, col_w) or [[]]
     measure, z = ImageDraw.Draw(Image.new('L', (1, 1))), 4                 # room in the title strip for this dock's name (up to 520): narrower columns get wider
     title_w = measure.textlength(G.dock_title.upper(), font=font(True, round(13 * min(ts, 1.25) * z))) / z + measure.textlength(f'v{version}', font=font(False, 12 * z)) / z
-    need = min(520, round(38 + title_w + 7 + 14 + 184))
+    need = min(520, round(38 + title_w + 7 + 14 + 211))                 # (211: the search button, S M L, the switch, the gear and the x)
     n = len(columns)
     if 2 * PAD + n * col_w + (n - 1) * COL_GAP < need:
         col_w = (need - 2 * PAD - (n - 1) * COL_GAP) / n
-    items, bottom = [], HEAD_H + 6
+    full = max((column_height(c, row_h, head_h) for c in columns), default=0)        # how tall the list is with everything showing
+    found = search_find() if G.search_mode == 'Hide' and search_row_h() else None
+    if found is not None:                                               # Hide: just the matches and their headings, in as many columns
+        shown = {b.block_num for b in found[0]} | found[2]
+        columns = dock_columns([b for b in Block.active_blocks.values() if b.block_num in shown], n) or [[]]
+    items, bottom = [], top
     for c, entries in enumerate(columns):
-        x, y = PAD + c * (col_w + COL_GAP), HEAD_H + 6
+        x, y = PAD + c * (col_w + COL_GAP), top
         for i, b in enumerate(entries):
             if b.kind == KIND_HEADING:
                 y += 8 if i else 0
@@ -2343,14 +2665,15 @@ def card_layout():
                 items.append((KIND_APP, b, x, y, col_w, row_h))
                 y += row_h
         bottom = max(bottom, y)
-    if not Block.active_blocks:
-        bottom += row_h
-    width = max(2 * PAD + len(columns) * col_w + (len(columns) - 1) * COL_GAP, 340)
+    bottom = max(bottom, top + full)
+    if not Block.active_blocks or (found is not None and not found[0]):
+        bottom = max(bottom, top + row_h)                               # (room for a line: Drop programs here / No matches)
+    width = max(2 * PAD + n * col_w + (n - 1) * COL_GAP, 340)
     return width, bottom + 6 + FOOT_H, items, bottom + 6
 
 
 def hint(part):
-    """ The bottom line: what's under the mouse (a program's path), else a summary """
+    """ The bottom line: what's under the mouse (a program's path), else a summary - while searching: how many match, and the one Enter opens """
     if part == 'gear':
         return 'Programs - add, remove and order them'
     if part == 'close':
@@ -2359,6 +2682,12 @@ def hint(part):
         return 'Hide this dock'                                         # (a narrow Panel's bottom line has little room)
     if part == 'switch':
         return 'Switch to the Bar - the icons in a row, Mac style' if G.style == 'Panel' else 'Switch to the Panel - names and versions'
+    if part == 'search':
+        return 'Hide the search box' if search_row_h() else 'Search - a box that finds your programs as you type'
+    if part == 'find':
+        return 'Type to find a program   ·   Enter opens it   ·   Esc clears'
+    if part == 'clear':
+        return 'Clear the search'
     if isinstance(part, tuple) and part[0] == 'size':
         return f'Size {round(G.size * 100)}%   ·   click T, S, M or L  -  or drag across them for any size'
     if isinstance(part, tuple) and part[1] in Block.active_blocks:
@@ -2367,9 +2696,15 @@ def hint(part):
             return f'{b.name}   ·   right-click: add a program here, rename, remove'
         ver = G.versions.get(b.block_num, '') if G.show_versions else ''
         return (b.path + (f'   ·   v{ver}' if ver else '')) if b.path else 'No program set for this entry - add one in the Programs window'
-    n = sum(1 for b in Block.active_blocks.values() if b.kind != KIND_HEADING)
+    n = program_count()
     if not n:
         return 'No programs yet - drop some here, or click the gear'
+    found = search_find() if search_row_h() else None
+    if found is not None and found[0]:
+        pick = found[0][min(max(0, G.search_sel), len(found[0]) - 1)]
+        return f'{len(found[0])} of {n} match   ·   Enter opens {pick.name or "(no name)"}   ·   arrows move   ·   Esc clears'
+    if found is not None:
+        return f'No matches among the {n} programs   ·   Esc clears'
     return f'{n} program{"s" * (n != 1)}   ·   drag to rearrange   ·   drop programs here   ·   right-click for options'
 
 
@@ -2392,7 +2727,7 @@ def render_card():
         im.alpha_composite(icon, (round(13 * k), round((BTN_Y - 9) * k)))
     title_font = font(True, round(13 * min(ts, 1.25) * k))
     ver_font = font(False, round(12 * k))
-    title = fit(d, G.dock_title.upper(), title_font, max(40 * k, (W - 184 - 38 - 14) * k - d.textlength(f'v{version}', font=ver_font)))     # this dock's name
+    title = fit(d, G.dock_title.upper(), title_font, max(40 * k, (W - 211 - 38 - 14) * k - d.textlength(f'v{version}', font=ver_font)))     # this dock's name
     d.text((38 * k, BTN_Y * k), title, font=title_font, fill=t['dim'], anchor='lm')
     d.text((38 * k + d.textlength(title, font=title_font) + 7 * k, (BTN_Y + 1) * k), f'v{version}', font=ver_font, fill=mix_hex(t['dim'], t['card'], 0.4), anchor='lm')
     size_box = (W - 184, BTN_Y - 10, W - 89, BTN_Y + 10)                    # T S M L
@@ -2401,27 +2736,43 @@ def render_card():
     for i, letter in enumerate(SIZE_PRESETS):
         part = (size_box[2] - size_box[0]) / len(SIZE_PRESETS)          # (a third each made L's part reach over the switch once T was added)
         hits.append((size_box[0] + i * part, size_box[1], size_box[0] + (i + 1) * part, size_box[3], ('size', letter)))
-    for part, cx in (('switch', W - 74), ('gear', W - 47), ('close', W - 20)):
+    searching = search_row_h()                                          # the search box shows (its magnifier up here is lit)
+    for part, cx in (('search', W - 199), ('switch', W - 74), ('gear', W - 47), ('close', W - 20)):
         hits.append((cx - BTN_R, BTN_Y - BTN_R, cx + BTN_R, BTN_Y + BTN_R, part))
         hot = G.hover == part
         if hot:
             d.ellipse(((cx - BTN_R) * k, (BTN_Y - BTN_R) * k, (cx + BTN_R) * k, (BTN_Y + BTN_R) * k), fill=C_CLOSE if part == 'close' else mix_hex(t['text'], t['card'], 0.82))
-        color = ('#ffffff' if part == 'close' else t['text']) if hot else mix_hex(t['dim'], t['card'], 0.25)
+        color = ('#ffffff' if part == 'close' else t['text']) if hot or (part == 'search' and searching) else mix_hex(t['dim'], t['card'], 0.25)
         if part == 'gear':
             draw_gear(d, cx * k, BTN_Y * k, 6.5 * k, color, mix_hex(t['text'], t['card'], 0.82) if hot else t['card'])
         elif part == 'switch':
             draw_switch(d, cx * k, BTN_Y * k, 6.5 * k, color, to_bar=True)
+        elif part == 'search':
+            draw_magnifier(d, cx * k, BTN_Y * k, 7 * k, color, max(1, round(1.7 * k)))
         else:
             r = 4.5 * k
             d.line((cx * k - r, BTN_Y * k - r, cx * k + r, BTN_Y * k + r), fill=color, width=max(1, round(1.6 * k)))
             d.line((cx * k - r, BTN_Y * k + r, cx * k + r, BTN_Y * k - r), fill=color, width=max(1, round(1.6 * k)))
     d.line((14 * k, HEAD_H * k, (W - 14) * k, HEAD_H * k), fill=t['track'], width=max(1, round(k)))
+    # ---- the search: its box, what matches, the letters to mark, the pick (the one Enter opens)
+    found = search_find() if searching else None
+    if searching:
+        draw_search_box(d, k, t, W, searching, hits)
+    lit, marks, heads, pick = None, {}, set(), None
+    if found is not None:
+        lit, marks, heads = {b.block_num for b in found[0]}, found[1], found[2]
+        if found[0]:
+            G.search_sel = min(max(0, G.search_sel), len(found[0]) - 1)
+            pick = found[0][G.search_sel].block_num
+    dim = found is not None and G.search_mode == 'Dim'                  # Dim: what doesn't match fades (Hide: card_layout left it out)
     # ---- headings and programs
     name_font, small_font, head_font = font(False, round(14 * ts * k)), font(False, round(12 * ts * k)), font(True, round(16 * ts * k))
     if not Block.active_blocks:
         d.text((W / 2 * k, (HEAD_H + 6 + ROW_H / 2) * k), 'Drop programs here', font=small_font, fill=t['dim'], anchor='mm')
+    elif found is not None and not found[0] and not dim:
+        d.text((W / 2 * k, (HEAD_H + 6 + searching + ROW_H / 2) * k), 'No matches  -  Esc clears', font=name_font, fill=t['dim'], anchor='mm')
     position = {n: i for i, n in enumerate(Block.active_blocks)}
-    rows, last_x = [], None
+    rows, last_x, spots = [], None, []
     now = time.time()
     for kind, b, x, y, w, h in items:
         if x != last_x:
@@ -2432,29 +2783,41 @@ def render_card():
         hits.append((x, y, x + w, y + h, part))
         if kind == KIND_HEADING:                                        # the section's name in its colour, a thin line under it
             color = colors[b.block_num]
-            d.text(((x + 8) * k, (y + h * 0.45) * k), fit(d, b.name, head_font, (w - 16) * k), font=head_font, fill=color, anchor='lm')
+            if dim and b.block_num not in heads and b.block_num not in marks:
+                color = mix_hex(color, t['card'], 0.62)
+            name = fit(d, b.name, head_font, (w - 16) * k)
+            draw_marks(d, name, marks.get(b.block_num), head_font, (x + 8) * k, (y + h * 0.45) * k, t)
+            d.text(((x + 8) * k, (y + h * 0.45) * k), name, font=head_font, fill=color, anchor='lm')
             d.line(((x + 8) * k, (y + h - 4) * k, (x + w - 8) * k, (y + h - 4) * k), fill=mix_hex(color, t['card'], 0.55), width=max(1, round(k)))
             continue
+        faded = dim and b.block_num not in lit                          # the search, Dim: a program that doesn't match
+        if lit is not None and b.block_num in lit:
+            spots.append((b.block_num, x, y))
         section = owner.get(b.block_num)
         if section is not None and G.sections:                         # a thin rail in the section's colour down the left of its programs
-            d.rounded_rectangle(((x + 1) * k, (y + 4) * k, (x + 3.5) * k, (y + h - 4) * k), radius=1.2 * k, fill=mix_hex(colors[section.block_num], t['card'], 0.25))
+            rail = mix_hex(colors[section.block_num], t['card'], 0.75 if faded else 0.25)
+            d.rounded_rectangle(((x + 1) * k, (y + 4) * k, (x + 3.5) * k, (y + h - 4) * k), radius=1.2 * k, fill=rail)
         flash = G.flash.get(b.block_num, 0) > now                       # just launched / just added: a short accent glow
-        if G.hover == part or flash:
-            d.rounded_rectangle(((x + 5) * k, (y + 1) * k, (x + w) * k, (y + h - 1) * k), radius=7 * k, fill=mix_hex(C_CHECKED if flash else t['text'], t['card'], 0.55 if flash else 0.88))
+        if G.hover == part or flash or b.block_num == pick:             # (the search's pick - the one Enter opens - in blue)
+            glow = C_CHECKED if flash else C_SELECT if b.block_num == pick else t['text']
+            glow = mix_hex(glow, t['card'], 0.55 if flash else 0.4 if b.block_num == pick else 0.88)
+            d.rounded_rectangle(((x + 5) * k, (y + 1) * k, (x + w) * k, (y + h - 1) * k), radius=7 * k, fill=glow)
         icon = icon_image(b.iconb64, round(ICON_PX * k))
         ix, iy = (x + 9) * k, (y + (h - ICON_PX) / 2) * k
         if icon:
-            im.alpha_composite(icon, (round(ix + (ICON_PX * k - icon.width) / 2), round(iy + (ICON_PX * k - icon.height) / 2)))
+            im.alpha_composite(see_through(icon, 0.3) if faded else icon, (round(ix + (ICON_PX * k - icon.width) / 2), round(iy + (ICON_PX * k - icon.height) / 2)))
         else:                                                           # no icon: an empty tile
-            d.rounded_rectangle((ix, iy, ix + ICON_PX * k, iy + ICON_PX * k), radius=5 * k, fill=t['track'])
+            d.rounded_rectangle((ix, iy, ix + ICON_PX * k, iy + ICON_PX * k), radius=5 * k, fill=mix_hex(t['track'], t['card'], 0.6) if faded else t['track'])
         ver = G.versions.get(b.block_num, '') if G.show_versions else ''
         ver_w = d.textlength(ver, font=small_font) + 10 * k if ver else 0
         if ver and d.textlength(b.name or '(no name)', font=name_font) > (w - 53) * k - ver_w:     # no room for both: the whole name - the version
             ver, ver_w = '', 0                                                                     # is in the bottom line when the mouse is on it
-        d.text(((x + 43) * k, (y + h / 2) * k), fit(d, b.name or '(no name)', name_font, (w - 53) * k - ver_w), font=name_font, fill=t['text'], anchor='lm')
+        name = fit(d, b.name or '(no name)', name_font, (w - 53) * k - ver_w)
+        draw_marks(d, name, marks.get(b.block_num), name_font, (x + 43) * k, (y + h / 2) * k, t)
+        d.text(((x + 43) * k, (y + h / 2) * k), name, font=name_font, fill=mix_hex(t['text'], t['card'], 0.62) if faded else t['text'], anchor='lm')
         if ver:
-            d.text(((x + w - 10) * k, (y + h / 2 + 0.5) * k), ver, font=small_font, fill=t['dim'], anchor='rm')
-    G.drop_rows = rows
+            d.text(((x + w - 10) * k, (y + h / 2 + 0.5) * k), ver, font=small_font, fill=mix_hex(t['dim'], t['card'], 0.55) if faded else t['dim'], anchor='rm')
+    G.drop_rows, G.search_spots = rows, spots
     if G.drag_item:                                                     # a program / section being dragged to a new place: faded where it was
         veil = Image.new('RGBA', im.size, (0, 0, 0, 0))
         vd = ImageDraw.Draw(veil)
@@ -2513,8 +2876,8 @@ def panel_drop(xd, yd):
 
 def bar_items():
     """ What the Bar shows, in order: (kind, block, list position, the heading of its section).  'app' a program; 'sep' a thin line where a
-        section starts; 'stack' a whole section as one tile (Stacks layout); then 'size' (S M L), 'switch' and 'gear'.  Programs and whole
-        sections left out of the Bar (right-click > Show in the Bar) are skipped """
+        section starts; 'stack' a whole section as one tile (Stacks layout); then 'size' (S M L), 'switch', 'gear' and 'search' (right-click >
+        Search).  Programs and whole sections left out of the Bar (right-click > Show in the Bar) are skipped """
     items, order = [], list(Block.active_blocks.values())
     section, shown, i = None, True, 0
     while i < len(order):
@@ -2536,7 +2899,9 @@ def bar_items():
     if items and items[-1][0] == 'sep':
         items.pop()
     end = len(order)
-    return items + [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)] + ([('hide', None, end, None)] if hide_shown() else [])
+    tools = [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)]
+    tools += [('search', None, end, None)] if search_on() and program_count() else []
+    return items + tools + ([('hide', None, end, None)] if hide_shown() else [])
 
 
 def label_room(items, icon, gap, name_w):
@@ -2657,7 +3022,7 @@ def bar_drop(L, m):
     for i, ((kind, b, pos, sec), c, slot) in enumerate(zip(L['items'], bar_rest_centers(L), L['slots'])):
         if kind == 'stack' and abs(m - c) <= slot * 0.4:
             return section_end(b.block_num), None, b.block_num
-        if kind in ('size', 'switch', 'gear', 'hide') or m < c:
+        if kind in ('size', 'switch', 'gear', 'search', 'hide') or m < c:
             return pos, i, None
     return len(Block.active_blocks), len(L['items']) - 1, None
 
@@ -2793,7 +3158,7 @@ def render_bar():
             if kind == 'app':
                 d.rounded_rectangle(bar_box(L, r0 + 2, c0, r1 - 2, c0 + rail), radius=rail / 2, fill=rgba(colors[num], 235))
     G.label_spans = draw_section_labels(im, d, L, runs, colors, t, m0 + pad, m0 + length - pad) if lab else []
-    spans = []
+    spans, lit, veils = [], bar_lit(), []                               # the search out, with Dim: the programs that match - the rest fades (veils)
     for entry in places:
         if entry[0] == 'gap':                                           # programs being dragged over: an outlined space where they'll land
             m, w = entry[1], entry[2]
@@ -2815,12 +3180,16 @@ def render_bar():
                 im.alpha_composite(icon, (round(box[0] + (w - icon.width) / 2), round(box[1] + (w - icon.height) / 2)))
             else:
                 d.rounded_rectangle(box, radius=round(w * 0.2), fill=t['track'], outline=t['border'])
+            if lit is not None and b.block_num not in lit:
+                veils.append((box, round(w * 0.2)))
             part, top = ('app', b.block_num), base + pad + lift + w
         elif kind == 'stack':
             lift = round(bounce_lift(b.block_num) * L['icon'] * 0.5) + (round(3 * s) if G.stack_open == b.block_num else 0)
             tile = min(w, round(L['icon'] * G.mag[i]))                  # the tile, in the middle of its place (wider for a long name)
             box = bar_box(L, m + (w - tile) / 2, base + pad + lift, m + (w + tile) / 2, base + pad + lift + tile)
             draw_stack_tile(im, d, box, b, colors[b.block_num], t, s, G.stack_open == b.block_num or G.drop_stack == b.block_num)
+            if lit is not None and not any(p.block_num in lit for p in section_members(b.block_num)):
+                veils.append((box, round(tile * 0.24)))
             part, top = ('stack', b.block_num), base + pad + lift + tile
         elif kind == 'sep':
             mid, lw = m + w / 2, max(1, round(1.2 * s))
@@ -2834,9 +3203,9 @@ def render_bar():
             box = bar_box(L, m, base + (zone - st) / 2, m + w, base + (zone + st) / 2)
             draw_size_control(d, box, not vertical(), t, (isinstance(G.hover, tuple) and G.hover[0] == 'size') or G.scrub is not None)
             part, top = ('size', box), base + (zone + st) / 2
-        else:                                                           # the switch and the gear
+        else:                                                           # the switch, the gear and the search button
             box = bar_box(L, m, base + (zone - w) / 2, m + w, base + (zone + w) / 2)
-            hot = G.hover == kind
+            hot = G.hover == kind or (kind == 'search' and G.stack_open == 'search')
             color = t['text'] if hot else mix_hex(t['dim'], t['card'], 0.15)
             cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
             if hot:
@@ -2846,10 +3215,18 @@ def render_bar():
                 draw_gear(d, cx, cy, w * 0.36, color, mix_hex(t['text'], t['card'], 0.84) if hot else rgba(t['card'], 208 if G.glass else 255))
             elif kind == 'hide':
                 draw_hide(d, cx, cy, w * 0.26, color, max(2, round(w * 0.08)))
+            elif kind == 'search':
+                draw_magnifier(d, cx, cy, w * 0.38, color, max(2, round(w * 0.07)))
             else:
                 draw_switch(d, cx, cy, w * 0.36, color, to_bar=False)
             part, top = kind, base + (zone + w) / 2
         spans.append((m - L['gap'] / 2, m + w + L['gap'] / 2, part, top))
+    if veils:                                                           # the search, Dim: what doesn't match fades into the bar
+        veil = Image.new('RGBA', im.size, (0, 0, 0, 0))
+        vd = ImageDraw.Draw(veil)
+        for box, r in veils:
+            vd.rounded_rectangle(box, radius=r, fill=rgba(t['card'], 185))
+        im.alpha_composite(veil)
     G.spans = spans
     G.bar_extent = (m0, m0 + length)
     if G.stack_open is not None:                                        # its fly-out is the label now
@@ -2926,6 +3303,9 @@ def bar_bubble(im, d, L, part, text=None):
     elif part == 'hide':
         runs.append(('Hide', small, '#eceff6'))
         runs.append(('point at the edge to bring it back' if G.autohide else 'click its handle to bring it back', sub_f, '#9aa3b2'))
+    elif part == 'search':
+        runs.append(('Search', small, '#eceff6'))
+        runs.append(('find a program by its name  -  or click the bar and type', sub_f, '#9aa3b2'))
     elif part == 'size':
         runs.append((f'Size {round(G.size * 100)}%', small, '#eceff6'))
         if G.scrub is None:
@@ -3192,6 +3572,7 @@ def redraw(window):
     """ Draw the dock in its style and show it - or just its handle while auto-hidden """
     if window is not G.window:
         return
+    G.redraw_due = False                                                # (a redraw_soon() waiting is done by this one)
     if G.hidden:
         present(window, render_handle(), handle=True)
         return
@@ -3416,7 +3797,7 @@ def slide(window, show):
             return
         G.anim, G.sliding = None, False
         if not show:                                                    # tucked away: just the handle shows
-            G.hidden, G.pointer, G.hover = True, None, None
+            G.hidden, G.pointer, G.hover, G.search, G.search_sel = True, None, None, '', 0          # (a search clears as the dock tucks away)
             present(window, render_handle(), handle=True)
             move_to(window, *handle_position())
             if not G.autohide:                                          # hidden by hand: the handle stays in sight above other windows
@@ -3470,7 +3851,8 @@ def autohide_tick(window):
         w, h = G.full_size
         margin = round(30 * G.dpi)
         inside = x0 - margin <= px < x0 + w + margin and y0 - margin <= py < y0 + h + margin
-        if inside or G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None or G.press is not None:
+        busy = G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None or G.press is not None
+        if inside or busy or (G.search and G.focus):                    # (typing in its search: it stays out)
             G.out_since = None
         else:
             G.out_since = G.out_since or now
@@ -3719,13 +4101,14 @@ def float_side_check(window):
 # ------------------------------------------------------------ Mouse, menus, the size control, drops ------------------------------------------------------------
 
 def part_at(x, y):
-    """ The part of the dock at window pixel (x, y): ('app', n), ('head', n), ('stack', n), ('size', letter), 'switch', 'gear', 'close' or None """
+    """ The part of the dock at window pixel (x, y): ('app', n), ('head', n), ('stack', n), ('size', letter), 'switch', 'gear', 'close', 'search',
+        the search box ('find') and its x ('clear') - or None """
     if G.hidden:
         return None
     if G.style == 'Bar':
         return bar_part_at(x, y)
     for x0, y0, x1, y1, part in G.hits:
-        if part in ('gear', 'close', 'switch', 'hide'):
+        if part in ('gear', 'close', 'switch', 'hide', 'search'):
             if math.hypot(x - (x0 + x1) / 2, y - (y0 + y1) / 2) <= BTN_R * G.scale:
                 return part
         elif x0 <= x <= x1 and y0 <= y <= y1:
@@ -3786,11 +4169,19 @@ def bind_mouse(window):
             return
         part = part_at(e.x, e.y)
         if part != G.hover and not (G.press and G.press['moving']):
-            widget.configure(cursor='hand2' if part else '')
+            widget.configure(cursor='xterm' if part == 'find' else 'hand2' if part else '')
             window.write_event_value(K_HOVER, part)
 
     def press(e):
         part = part_at(e.x, e.y)
+        if search_on() and not G.hidden:                                # click the dock, then type: its search takes the keys
+            try:
+                window.TKroot.focus_force()
+            except Exception:
+                pass
+        if part == 'find' and G.search_all:                             # a click in the search box lets go of Ctrl+A's selection
+            G.search_all = False
+            redraw_soon(window)
         G.press = {'x': e.x_root, 'y': e.y_root, 'part': part, 'wx': window.TKroot.winfo_rootx(), 'wy': window.TKroot.winfo_rooty(), 'moving': False,
                    'handle': G.hidden, 'along': G.along, 'shown': G.shown_pos, 'pulled': False}             # (docked: where it was, to go back to)
         if isinstance(part, tuple) and part[0] == 'size':
@@ -3814,6 +4205,8 @@ def bind_mouse(window):
             drag_entry(window, e.x_root, e.y_root)
             return
         if not p['moving'] and math.hypot(dx, dy) >= DOCK_DRAG:
+            if G.style == 'Panel' and G.search.strip() and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'head'):
+                return                                                  # while searching, nothing moves (the list may show only part of itself)
             if G.style == 'Panel' and isinstance(p['part'], tuple) and p['part'][0] in ('app', 'head') and start_entry_drag(window, p):
                 widget.configure(cursor='fleur')                       # pressed on a program or a heading: that moves, not the dock
                 drag_entry(window, e.x_root, e.y_root)
@@ -3881,6 +4274,16 @@ def bind_mouse(window):
     widget.bind('<ButtonRelease-1>', release, add='+')
     widget.bind('<ButtonPress-3>', right_press, add='+')
 
+    def focus(on):                                                      # the search box shows its caret while the dock has the keyboard
+        if G.focus != on:
+            G.focus = on
+            if window is G.window and G.style == 'Panel' and not G.hidden and search_row_h():
+                redraw(window)
+
+    window.TKroot.bind('<KeyPress>', lambda e: search_key(window, e), add='+')
+    window.TKroot.bind('<FocusIn>', lambda e: focus(True), add='+')
+    window.TKroot.bind('<FocusOut>', lambda e: focus(False), add='+')
+
 
 def scrub_apply(window):
     """ Dragging across S M L: show the newest size (once per idle moment, however fast the mouse moves) """
@@ -3910,6 +4313,9 @@ def drop_over(window, x_root, y_root):
             G.drop_item = item
         bar_track_start(window)
     else:
+        if G.search:                                                    # programs dragged in: the whole list again, so they land where they're dropped
+            G.search, G.search_sel = '', 0
+            redraw(window)
         index, line = panel_drop((x - G.panel_off) / G.scale, (y - G.panel_off) / G.scale)
         if (index, line) != (G.drop_index, G.drop_line):
             G.drop_index, G.drop_line = index, line
@@ -4397,14 +4803,17 @@ def two_lines(d, text, fnt, width):
     return [first, fit(d, ' '.join(words), fnt, width)]
 
 
-def render_stack(heading, members, color, hover, side, anchor):
+def render_stack(heading, members, color, hover, side, anchor, find=None):
     """ The fly-out of a stack: the section's name (big, in its colour) and its programs in a grid (icon, name) on a card, with a notch on
-        `side` ('bottom' = the card is above a bottom bar, 'top', 'left', 'right') at `anchor` pixels along that side.
-        Returns (picture, [tile boxes in picture pixels], card box) """
+        `side` ('bottom' = the card is above a bottom bar, 'top', 'left', 'right') at `anchor` pixels along that side.  find: the Bar's
+        search instead - {'text': what's typed, 'grid': (columns, rows), 'more': matches with no room, 'count': the count to show} - its box
+        where the name goes, and the card keeps its size as the matches change.  Returns (picture, [tile boxes in picture pixels], card box) """
     s, sd, ts, t = G.scale, G.dpi, text_scale(), T()
     n = max(1, len(members))
     cols = min(n, 3 if side in ('left', 'right') else 5)
     rows = -(-n // cols)
+    if find:
+        cols, rows = find['grid']
     icon = round(52 * s)
     name_f, title_f, count_f = font(False, round(12.5 * sd * ts)), font(True, round(19 * sd * ts)), font(False, round(12 * sd * ts))
     tile_w = max(round(104 * s), round(icon + 24 * sd), round(name_f.size * 8))
@@ -4438,17 +4847,22 @@ def render_stack(heading, members, color, hover, side, anchor):
         im.alpha_composite(soft_shadow(cw, ch, radius, blur, 120), (cx0 - 2 * blur, cy0 - 2 * blur + round(4 * sd)))
     im.alpha_composite(card)
     d = ImageDraw.Draw(im)
-    d.text((cx0 + pad, cy0 + pad + title_h * 0.32), heading.name, font=title_f, fill=color, anchor='lm')
-    count = f'{len(members)} program{"s" * (len(members) != 1)}'
-    d.text((cx0 + cw - pad, cy0 + pad + title_h * 0.32), count, font=count_f, fill=t['dim'], anchor='rm')
-    d.line((cx0 + pad, cy0 + pad + title_h * 0.72, cx0 + cw - pad, cy0 + pad + title_h * 0.72), fill=mix_hex(color, t['card'], 0.6), width=max(1, round(sd)))
+    if find:                                                            # the Bar's search: its box where a section's name goes, the count at its end
+        box = (cx0 + pad, cy0 + pad - round(6 * sd), cx0 + cw - pad, cy0 + pad + title_h * 0.64)
+        draw_field(d, box, sd, t, find['text'], 'type to search', True, d.textlength(find['count'], font=count_f) + 16 * sd, find.get('picked'))
+        d.text((box[2] - 10 * sd, (box[1] + box[3]) / 2), find['count'], font=count_f, fill=t['dim'], anchor='rm')
+    else:
+        d.text((cx0 + pad, cy0 + pad + title_h * 0.32), heading.name, font=title_f, fill=color, anchor='lm')
+        count = f'{len(members)} program{"s" * (len(members) != 1)}'
+        d.text((cx0 + cw - pad, cy0 + pad + title_h * 0.32), count, font=count_f, fill=t['dim'], anchor='rm')
+        d.line((cx0 + pad, cy0 + pad + title_h * 0.72, cx0 + cw - pad, cy0 + pad + title_h * 0.72), fill=mix_hex(color, t['card'], 0.6), width=max(1, round(sd)))
     tiles = []
     for i, b in enumerate(members):
         tx, ty = cx0 + pad + (i % cols) * tile_w, cy0 + pad + title_h + (i // cols) * tile_h
         box = (tx + 3, ty, tx + tile_w - 3, ty + tile_h - 4)
         tiles.append(box)
         if hover == i:
-            d.rounded_rectangle(box, radius=round(10 * sd), fill=mix_hex(color, t['card'], 0.78))
+            d.rounded_rectangle(box, radius=round(10 * sd), fill=mix_hex(color, t['card'], 0.5 if find else 0.78))
         ic = icon_image(b.iconb64, icon)
         ix, iy = tx + (tile_w - icon) / 2, ty + round(6 * sd)
         if ic:
@@ -4457,6 +4871,12 @@ def render_stack(heading, members, color, hover, side, anchor):
             d.rounded_rectangle((ix, iy, ix + icon, iy + icon), radius=icon * 0.2, fill=t['track'])
         for n, line in enumerate(two_lines(d, b.name or '(no name)', name_f, tile_w - 10 * sd)):
             d.text((tx + tile_w / 2, ty + icon + round(9 * sd) + name_f.size * (0.6 + 1.2 * n)), line, font=name_f, fill=t['text'], anchor='mm')
+    if find and find['more']:                                           # more matches than room: how many more, in the last place
+        i = len(members)
+        tx, ty = cx0 + pad + (i % cols) * tile_w, cy0 + pad + title_h + (i // cols) * tile_h
+        d.text((tx + tile_w / 2, ty + tile_h / 2 - round(4 * sd)), f'+{find["more"]} more', font=name_f, fill=t['dim'], anchor='mm')
+    if find and not members:
+        d.text((cx0 + cw / 2, cy0 + pad + title_h + rows * tile_h / 2 - round(6 * sd)), 'No matches  -  Esc clears', font=name_f, fill=t['dim'], anchor='mm')
     return im, tiles, (cx0, cy0, cx0 + cw, cy0 + ch)
 
 
@@ -4594,6 +5014,167 @@ def open_stack(window, heading_num, by_hover=False):
     return pending
 
 
+def open_search(window, text=''):
+    """ The Bar's search button - or a letter typed while the Bar has the keyboard: a search card flies out of the button.  Type, and the
+        programs whose names match show as tiles (every program while nothing is typed - as many as fit, and how many more).  Arrows move,
+        Enter or a click starts one, Esc clears what's typed - and closes it once empty;  a click elsewhere or the button again closes it too.
+        Dim (right-click > Search): the bar's other icons fade while it's out.  Runs until it closes; a dock event that came in meanwhile is
+        returned for the main loop - None otherwise """
+    span = next((sp for sp in G.spans if sp[2] == 'search'), None)
+    everyone = [b for b in Block.active_blocks.values() if b.kind != KIND_HEADING]
+    if span is None or not everyone:
+        return None
+    L = G.bar_geo
+    side = {'Top': 'top', 'Left': 'left', 'Right': 'right'}.get(bar_side(), 'bottom')
+    cols = min(len(everyone), 3 if side in ('left', 'right') else 5)
+    grid = (cols, min(5 if side in ('left', 'right') else 3, -(-len(everyone) // cols)))      # the card keeps this size as the matches change
+    G.search, G.search_sel = text[:60], 0
+    state = {'sel': 0 if G.search.strip() else None, 'press': None, 'drawn': [], 'all': False}       # (all: Ctrl+A selected what's typed)
+
+    def view():                                                         # for what's typed now: (the tiles, how many more matches, the count)
+        found = search_find()
+        hits = everyone if found is None else found[0]
+        room = grid[0] * grid[1]
+        shown = hits if len(hits) <= room else hits[:room - 1]          # no room for them all: the last place says how many more
+        if state['sel'] is not None:
+            state['sel'] = min(state['sel'], len(shown) - 1) if shown else None
+        count = f'{len(everyone)} programs' if found is None else f'{len(hits)} of {len(everyone)}'
+        return shown, len(hits) - len(shown), count
+
+    def picture(anchor):                                                # the card for what's typed now
+        shown, more, count = view()
+        state['drawn'] = shown
+        find = {'text': G.search, 'grid': grid, 'more': more, 'count': count, 'picked': state['all'] and bool(G.search)}
+        return render_stack(None, shown, C_SELECT, state['sel'], side, anchor, find=find)
+
+    rx, ry = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
+    mc = (span[0] + span[1]) / 2
+    tip = bar_box(L, mc, span[3] + 4 * G.dpi, mc + 1, span[3] + 5 * G.dpi)                           # just past the button, inward
+    tip_x, tip_y = round(rx + tip[0]), round(ry + tip[1])
+    im, tiles, card = picture(0)
+    W, H = im.size
+    mon, work = monitor_area(tip_x, tip_y)
+    if side in ('bottom', 'top'):
+        x = min(max(round(tip_x - W / 2), work[0]), work[2] - W)
+        y = tip_y - H if side == 'bottom' else tip_y
+        anchor = tip_x - x - card[0]
+    else:
+        y = min(max(round(tip_y - H / 2), work[1]), work[3] - H)
+        x = tip_x if side == 'left' else tip_x - W
+        anchor = tip_y - y - card[1]
+    im, tiles, card = picture(anchor)
+    key_color = sg.running_windows() and not G.glass
+    bg = TRANSPARENT if sg.running_windows() else T()['card']
+    popup = sg.Window('Search', [[sg.Image(key=K_STACK_IMAGE, background_color=bg, pad=(0, 0))]], no_titlebar=True, keep_on_top=True, margins=(0, 0),
+                      element_padding=(0, 0), background_color=bg, transparent_color=TRANSPARENT if key_color else None, alpha_channel=0, location=(x, y),
+                      finalize=True, icon=dock_icon_64)
+    surface, keep = (glass_setup(popup) if G.glass else None), {}
+    shift = {'bottom': (0, 1), 'top': (0, -1), 'left': (-1, 0), 'right': (1, 0)}[side]
+    started = time.time()
+    while True:                                                         # fly out: slide in from the bar while fading in
+        f = min(1.0, (time.time() - started) / 0.13)
+        e = 1 - (1 - f) ** 3
+        off = round((1 - e) * 12 * G.dpi)
+        move_to(popup, x + shift[0] * off, y + shift[1] * off)
+        if not show_picture(popup, K_STACK_IMAGE, surface, im, round(G.opacity * e), keep) and surface:
+            surface = None
+            show_picture(popup, K_STACK_IMAGE, None, im, 100, keep)
+        if not surface:
+            popup.set_alpha(G.opacity / 100 * e)
+        popup.refresh()
+        if f >= 1:
+            break
+        time.sleep(0.012)
+    widget = popup[K_STACK_IMAGE].Widget
+
+    def tile_at(px, py):
+        return next((i for i, (x0, y0, x1, y1) in enumerate(tiles) if x0 <= px < x1 and y0 <= py < y1), None)
+
+    def motion(e):                                                      # the mouse on a tile makes it the pick (off the tiles, the pick stays)
+        i = tile_at(e.x, e.y)
+        widget.configure(cursor='hand2' if i is not None else '')
+        if i is not None and i != state['sel']:
+            state['sel'] = i
+            popup.write_event_value(K_STACK_HOVER, i)
+
+    def release(e):
+        p, state['press'] = state['press'], None
+        i = tile_at(e.x, e.y)
+        if p is not None and i == p:
+            popup.write_event_value(K_STACK_CLICK, i)
+
+    widget.bind('<Motion>', motion, add='+')
+    widget.bind('<ButtonPress-1>', lambda e: state.update(press=tile_at(e.x, e.y)), add='+')
+    widget.bind('<ButtonRelease-1>', release, add='+')
+    popup.TKroot.bind('<KeyPress>', lambda e: popup.write_event_value(K_FIND_KEY, (e.keysym, e.char, e.state)))
+    popup.TKroot.bind('<FocusOut>', lambda e: popup.write_event_value(K_STACK_CLOSE, 'focus') if e.widget is popup.TKroot else None, add='+')
+    popup.force_focus()
+    G.stack_open = 'search'                                             # (the bar keeps still meanwhile, as for a stack)
+    G.last_signature = None
+    redraw(window)
+    pending, chosen, dirty, bar_due = None, None, False, False
+    while True:
+        win, event, values = sg.read_all_windows(timeout=0 if dirty else 150)
+        if event == sg.TIMEOUT_KEY:                                     # no more keys waiting: show what's typed now (one picture per burst of typing)
+            if dirty:
+                im, tiles, card = picture(anchor)
+                show_picture(popup, K_STACK_IMAGE, surface, im, G.opacity, keep)
+                if bar_due:
+                    redraw(window)                                      # the bar too (Dim: what doesn't match fades)
+                dirty, bar_due = False, False
+            continue
+        if win is popup:
+            if event in (sg.WIN_CLOSED, K_STACK_CLOSE):
+                break
+            if event == K_STACK_CLICK:                                  # (a tile as drawn)
+                i = values[event]
+                chosen = state['drawn'][i] if i is not None and i < len(state['drawn']) else None
+                break
+            if event == K_FIND_KEY:
+                key, char, st = values[event]
+                if key == 'Escape':
+                    if not G.search:
+                        break
+                    G.search, state['sel'], state['all'], bar_due = '', None, False, True
+                elif key in ('Return', 'KP_Enter'):
+                    shown = view()[0]                                   # (for what's typed now, drawn yet or not)
+                    if state['sel'] is not None:
+                        chosen = shown[state['sel']]
+                        break
+                    continue
+                elif key in ('Left', 'Right', 'Up', 'Down'):
+                    shown, i, held = view()[0], state['sel'], state['all']
+                    state['all'] = False                                # an arrow first lets go of Ctrl+A's selection (Left / Right only that)
+                    if shown and not (held and key in ('Left', 'Right')):
+                        step = {'Left': -1, 'Right': 1, 'Up': -grid[0], 'Down': grid[0]}[key]
+                        state['sel'] = 0 if i is None else min(len(shown) - 1, max(0, i + step))
+                else:
+                    typing = typed(G.search, key, char, st, popup.TKroot, state['all'] and bool(G.search))
+                    if typing is None:
+                        continue
+                    new, state['all'] = typing
+                    if new != G.search:
+                        G.search, bar_due = new, True
+                        state['sel'] = 0 if G.search.strip() else None
+            dirty = True
+        elif win is window:
+            if event == K_CLICK and values[K_CLICK] == 'search':        # its button again: close
+                break
+            if event in (K_HOVER, K_FIND_OPEN):
+                continue
+            pending = (event, values)
+            break
+    glass_free(surface)
+    popup.close()
+    G.stack_open, G.stack_closed, G.last_signature = None, ('search', time.time()), None
+    G.search, G.search_sel = '', 0
+    if chosen is not None:
+        start_program(window, chosen.block_num)
+    bar_track_start(window)
+    redraw(window)
+    return pending
+
+
 # ------------------------------------------------------------ The window ------------------------------------------------------------
 
 def make_psg_launcher():
@@ -4617,6 +5198,7 @@ def make_psg_launcher():
     G.mag, G.bar_geo, G.last_signature, G.win_size, G.full_size, G.keep, G.layered, G.bounce = [], None, None, None, None, {}, None, {}
     G.drop_index, G.drop_item, G.drop_line, G.drop_open, G.drop_stack, G.stack_open, G.rest = None, None, None, 0.0, None, None, None
     G.handle_since, G.edge_target, G.preview, G.preview_size = None, None, None, None
+    G.search, G.search_sel, G.focus, G.search_spots, G.redraw_due, G.search_all = '', 0, False, [], False, False
     here = G.default_pt or (window.TKroot.winfo_rootx() + 50, window.TKroot.winfo_rooty() + 50)    # the other style's dock was here, else where tk put this one
     if not floating and G.monitor_pt is None:
         G.monitor_pt = here
@@ -5084,6 +5666,10 @@ def load_view_settings():
     G.bar_layout = sg.user_settings_get_entry(K_LAYOUT, 'Icons')
     G.bar_layout = G.bar_layout if G.bar_layout in LAYOUTS else 'Icons'
     G.stacks_hover = bool(sg.user_settings_get_entry(K_STACKS_HOVER, True))
+    G.search_pref = sg.user_settings_get_entry(K_SEARCH, None)
+    G.search_pref = G.search_pref if isinstance(G.search_pref, bool) else None                # not set: on by itself once the dock has many programs
+    G.search_mode = sg.user_settings_get_entry(K_SEARCH_MODE, 'Hide')
+    G.search_mode = G.search_mode if G.search_mode in SEARCH_MODES else 'Hide'
     load_style_settings()
 
 
@@ -5380,22 +5966,28 @@ def main():
                 menu_key = K_PROGRAMS                                   # handled at the bottom
             elif part == 'switch':
                 window = switch_style(window, 'Bar' if G.style == 'Panel' else 'Panel')
+            elif part == 'search':                                      # the magnifier: the Panel's search box on / off - the Bar's search flies out
+                closed = G.stack_closed
+                if G.style == 'Panel':
+                    toggle_search(window)
+                elif not (closed and closed[0] == 'search' and time.time() - closed[1] < 0.5):     # (not the click that just closed it)
+                    pending = open_search(window)
+            elif part == 'clear':                                       # the x in the search box
+                set_search(window, '')
             elif isinstance(part, tuple) and part[0] == 'stack' and part[1] in Block.active_blocks:
                 closed = G.stack_closed
                 if not (closed and closed[0] == part[1] and time.time() - closed[1] < 0.5):    # the click that just closed it doesn't open it again
                     pending = open_stack(window, part[1])
             elif isinstance(part, tuple) and part[0] == 'app' and part[1] in Block.active_blocks:
-                launch(Block.active_blocks[part[1]].path)
-                G.bounce[part[1]] = time.time()
-                G.flash[part[1]] = time.time() + 0.35
-                if G.style == 'Bar':
-                    bar_track_start(window)
-                else:
-                    redraw(window)
-                    window.TKroot.after(400, lambda: redraw(window))
+                start_program(window, part[1])
+                if G.search:                                            # started from a search: it clears a moment later
+                    clear_search_later(window)
         elif event == K_STACK_OPEN:                                     # the mouse rested on a stack
             if values[K_STACK_OPEN] in Block.active_blocks and G.style == 'Bar':
                 pending = open_stack(window, values[K_STACK_OPEN], by_hover=True)
+        elif event == K_FIND_OPEN:                                      # a letter typed while the Bar has the keyboard: its search, with that letter
+            if G.style == 'Bar' and search_on():
+                pending = open_search(window, values[K_FIND_OPEN])
         elif event == K_DROP:
             files, x_root, y_root = values[K_DROP]
             if G.drop_index is None:
@@ -5463,6 +6055,13 @@ def main():
         elif menu_key == K_STACKS_HOVER:
             G.stacks_hover = not G.stacks_hover
             sg.user_settings_set_entry(K_STACKS_HOVER, G.stacks_hover)
+            set_right_click_menu(window, make_menu())
+        elif menu_key == K_SEARCH:                                      # right-click > Search > Search box / Search button
+            toggle_search(window)
+        elif isinstance(menu_key, str) and menu_key.startswith(K_SEARCH_MODE):     # right-click > Search > Hide / Dim what doesn't match
+            G.search_mode = menu_key[len(K_SEARCH_MODE):] if menu_key[len(K_SEARCH_MODE):] in SEARCH_MODES else 'Hide'
+            sg.user_settings_set_entry(K_SEARCH_MODE, G.search_mode)
+            relayout(window)
             set_right_click_menu(window, make_menu())
         elif menu_key == K_SECTIONS:
             G.sections = not G.sections

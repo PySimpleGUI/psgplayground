@@ -43,7 +43,7 @@ The Widget Template has all of it, ready for a widget of your own.
 
 Paths are inside the `psgplayground` package - in this repo, or in site-packages once you've installed it.
 
-<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync e328ff6f8790) -->
+<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 5281206c8e25) -->
 
 ### Widgets
 
@@ -51,13 +51,13 @@ Small (optionally) always-on-top desktop widgets that sit in a corner and quietl
 
 | Program | What it does | Needs |
 |---|---|---|
-| <img src="psgplayground/icons/github_repo_watch.png" width="40" height="40"><br>**GitHub Repo Watch** | Notices commits, releases and issues on the repos (or whole accounts) you watch - because GitHub never emails you about plain pushes.<br>`Widgets/github_repo_watch.pyw`<br><a href="psgplayground/screenshots/github_repo_watch.png"><img src="psgplayground/screenshots/github_repo_watch.png" width="240" height="89"></a> | - |
+| <img src="psgplayground/icons/github_repo_watch.png" width="40" height="40"><br>**GitHub Repo Watch** | Notices commits, releases and issues on the repos (or whole accounts) you watch - because GitHub never emails you about plain pushes.<br>`Widgets/github_repo_watch.pyw`<br><a href="psgplayground/screenshots/github_repo_watch.png"><img src="psgplayground/screenshots/github_repo_watch.png" width="240" height="90"></a> | - |
 | <img src="psgplayground/icons/cpu_cores_widget.png" width="40" height="40"><br>**CPU Cores Widget** | One scrolling graph per core. Click a core to see which processes are running on it.<br>`Widgets/cpu_cores_widget.pyw`<br><a href="psgplayground/screenshots/cpu_cores_widget.png"><img src="psgplayground/screenshots/cpu_cores_widget.png" width="240" height="43"></a> | psutil (optional: pywintrace) |
 | <img src="psgplayground/icons/cpu_percent_widget.png" width="40" height="40"><br>**CPU % Widget** | CPU load on a ring gauge that goes green to amber to red, with a sparkline of the last minute. No title bar; right-click for 32 themes.<br>`Widgets/cpu_percent_widget.pyw`<br><a href="psgplayground/screenshots/cpu_percent_widget.png"><img src="psgplayground/screenshots/cpu_percent_widget.png" width="240" height="119"></a> | psutil, pillow |
 | <img src="psgplayground/icons/ram_percent_widget.png" width="40" height="40"><br>**RAM % Widget** | Memory in use on the same ring-gauge card - GB used of the total, and a sparkline. Themes, sizes and opacity on the right-click menu.<br>`Widgets/ram_percent_widget.pyw`<br><a href="psgplayground/screenshots/ram_percent_widget.png"><img src="psgplayground/screenshots/ram_percent_widget.png" width="130" height="150"></a> | psutil, pillow |
 | <img src="psgplayground/icons/clock_widget.png" width="40" height="40"><br>**Clock Widget** | The time and the date on a small card, with a bar that fills up every minute. 12 or 24 hours, 32 themes, Brightness, sizes and opacity on the right-click menu.<br>`Widgets/clock_widget.pyw`<br><a href="psgplayground/screenshots/clock_widget.png"><img src="psgplayground/screenshots/clock_widget.png" width="184" height="132"></a> | pillow |
 | <img src="psgplayground/icons/pip_refresh.png" width="40" height="40"><br>**Pip Refresh** | Your pip packages beside their latest release on PyPI and newest version on GitHub - click one to pick a version (GitHub's newest or any PyPI release) and install it. Edit the list in a Settings window.<br>`Widgets/pip_refresh.pyw`<br><a href="psgplayground/screenshots/pip_refresh.png"><img src="psgplayground/screenshots/pip_refresh.png" width="226" height="150"></a> | pillow (optional: psgdnd) |
-| <img src="psgplayground/icons/claude_usage_widget.png" width="40" height="40"><br>**Claude Usage Widget** | How much of your Claude plan is used, per limit, with a forecast of when you'll hit the wall.<br>`Widgets/claude_usage_widget.pyw`<br><a href="psgplayground/screenshots/claude_usage_widget.png"><img src="psgplayground/screenshots/claude_usage_widget.png" width="233" height="150"></a> | - |
+| <img src="psgplayground/icons/claude_usage_widget.png" width="40" height="40"><br>**Claude Usage Widget** | How much of your Claude plan is used, per limit, with a forecast of when you'll hit the wall.<br>`Widgets/claude_usage_widget.pyw`<br><a href="psgplayground/screenshots/claude_usage_widget.png"><img src="psgplayground/screenshots/claude_usage_widget.png" width="216" height="150"></a> | - |
 
 ### Tools
 

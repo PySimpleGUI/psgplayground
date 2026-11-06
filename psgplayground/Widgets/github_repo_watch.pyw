@@ -13,8 +13,9 @@ THE WIDGET
     Click a row       ->  "What's new" window: a plain-English digest, every new commit / branch / tag / release / issue / PR,
                           click any commit for a colored diff peek, a 30-day activity chart and rhythm stats.
     Click the chip    ->  Issues window (see ISSUES below)
-    ≡ or right-click  ->  Check now · Mark all read · Pause · Snooze · Snap to corner · Settings · Edit Me · Version · Exit
-    Drag it anywhere; its position is remembered.  The faint ✕ in the top-right corner closes it.
+    ≡ or right-click  ->  Check now · Mark all read · Pause · Keep on top · Theme · Brightness · Snooze · Snap to corner · Settings · Edit Me · Version · Exit
+    Drag it anywhere; its position is remembered.  The faint ✕ in the top-right corner closes it, and so does Esc.
+    The other windows are moved by their title strip.
 
     ⇄ (next to ≡) switches to the ISSUES VIEW and back - the choice is remembered:
     PySimpleGUI issues                3 new · 4 waiting
@@ -44,7 +45,8 @@ TOKEN
     Leave it blank to use the GITHUB_TOKEN / GH_TOKEN environment variable, or your `gh auth login` session.
     Polls use ETag conditional requests, so a quiet repo costs nothing against your API quota.
 
-    python github_repo_watch.pyw --demo        made-up data, no token, no network (handy for trying the UI)
+    python github_repo_watch.pyw --demo        made-up data, no token, no network (handy for trying the UI) - with its own settings file,
+                                               github_repo_watch_demo.json, so trying things never touches your real settings
 
 CHANGELOG
     1.0   20-Sep-2026   Commits / branches / tags / releases / issues / PRs, whole accounts, quiet repos fold into one row
@@ -57,12 +59,18 @@ CHANGELOG
                         click an issue to read it, click the title to step through the watched repos that have issues
     1.4   01-Nov-2026   Keep on top can be turned off - right-click / ≡ menu (✓ when on) or Settings; remembered between runs.
                         Version popup shows the app's version, and its X closes it
+    1.5.0 06-Nov-2026   The standard widget themes: right-click > Theme (32, as color chips) and Brightness...; every window themed with no OS title
+                        bar (moved by its title strip, round corners on Windows 11) and an icon; flat themed menus; Esc closes the widget; --demo has its
+                        own settings and never touches the network
 
-Needs only PySimpleGUI - everything else is stdlib.  Settings + unread state live in github_repo_watch.json in PySimpleGUI's
+Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings + unread state live in github_repo_watch.json in PySimpleGUI's
 user-settings folder; problems are logged to github_repo_watch.log in the same folder.
 """
+import base64
 import ctypes
+import io
 import json
+import math
 import os
 import random
 import re
@@ -80,14 +88,17 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 import PySimpleGUI as sg
+from PIL import Image, ImageDraw, ImageFont
 
 APP_NAME = 'GitHub Repo Watch'
-VERSION = '1.4'
+VERSION = '1.5.0'
 SETTINGS_FILE = 'github_repo_watch.json'
+DEMO_SETTINGS_FILE = 'github_repo_watch_demo.json'               # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'github_repo_watch.log'
 API = 'https://api.github.com'
 DEMO = '--demo' in sys.argv
 AUTO_OPEN = '--open' in sys.argv
+ICON = b'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'          # embedded window icon (a green commit graph with a blue branch) - the title strips show it, launchers find it
 DETAIL_FETCH_LIMIT = 25         # newest new commits whose files + patch are fetched during a poll (older ones fetch when clicked)
 MAX_PATCH_LINES = 1500          # diff peek stops here and tells you to open GitHub for the rest
 EARLIER_LIMIT = 60              # how many already-seen commits to list under "Earlier"
@@ -99,14 +110,63 @@ MAINTAINER_ROLES = ('OWNER', 'MEMBER', 'COLLABORATOR')                  # GitHub
 ROLE_TEXT = {'OWNER': 'owner', 'MEMBER': 'member', 'COLLABORATOR': 'collaborator', 'CONTRIBUTOR': 'contributor', 'FIRST_TIME_CONTRIBUTOR': 'first-time contributor',
              'FIRST_TIMER': 'first-timer'}
 
-# ---------------------------------------------------------------- colors (GitHub dark palette) ----------------------------------------------------------------
-C_BG, C_BG2, C_BG3, C_LINE = '#0d1117', '#161b22', '#21262d', '#30363d'
-C_TEXT, C_MUTED, C_DIM = '#e6edf3', '#8b949e', '#484f58'
-C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = '#3fb950', '#f85149', '#d29922', '#58a6ff', '#bc8cff', '#f778ba'
-KIND_COLOR = {'commit': C_GREEN, 'merge': C_GREEN, 'branch': C_AMBER, 'tag': C_PURPLE, 'release': C_PURPLE, 'issue': C_BLUE, 'pr': C_PINK}
-STATUS_COLOR = {'added': C_GREEN, 'removed': C_RED, 'modified': C_AMBER, 'renamed': C_BLUE, 'copied': C_BLUE, 'changed': C_AMBER}
+# ---------------------------------------------------------------- colors ----------------------------------------------------------------
+# Every window is drawn with these.  They are never written out here: apply_theme() works them all out from theme_colors() (the chosen theme at its
+# Brightness) whenever the theme or the Brightness changes - C_BG card, C_BG2 panes (lifted a touch), C_BG3 chips / buttons / the selected row,
+# C_LINE lines, C_TEXT, C_MUTED (= the theme's dim), C_DIM fainter still, C_STRIP title strips.  The meaning colors (commit / branch / tag / issue / PR,
+# open / closed / waiting, + / - lines) keep their meaning on every theme: on a light card apply_theme() draws them a shade deeper so they still read.
+MEANING_COLORS = {'green': '#3fb950', 'red': '#f85149', 'amber': '#d29922', 'blue': '#58a6ff', 'purple': '#bc8cff', 'pink': '#f778ba'}
+C_BG = C_BG2 = C_BG3 = C_LINE = C_TEXT = C_MUTED = C_DIM = C_STRIP = ''                         # set by apply_theme()
+C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = MEANING_COLORS.values()
+KIND_COLOR, STATUS_COLOR = {}, {}                                                                 # filled by apply_theme()
+C_MENU_SEL = '#2a62a8'                                          # menu highlight, white text on it
+C_CLOSE = '#c0392b'                                             # a close x under the mouse
+C_SWATCH_EDGE = '#7c8594'                                       # outline of the color chips in the Theme menu
 UI_FONT = 'Segoe UI' if sg.running_windows() else 'DejaVu Sans'
 MONO_FONT = 'Consolas' if sg.running_windows() else 'DejaVu Sans Mono'
+FONT_MENU = (UI_FONT, 10)
+FONT_NAMES = {True: ('segoeuib.ttf', 'DejaVuSans-Bold.ttf'), False: ('segoeui.ttf', 'DejaVuSans.ttf')}     # Pillow fonts (Brightness panel): Windows first, then Linux
+TRANSPARENT = '#010203'                                         # Windows color key: the Brightness panel's rounded corners are see-through
+RADIUS = 18                                                     # the Brightness panel's corner radius in design pixels - the windows get Windows 11's own round corners
+DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWMWA_BORDER_COLOR = 33, 2, 34                    # Windows 11: round a window's corners, color its outline
+
+# --- WIDGET THEMES: the same block in every card widget (master copy in modern_widget_recipe.md) - change it in all of them at once ---
+# card = background, border = outline, track = gauge track / lines, text = main text, dim = labels.   16 dark first, then 16 light: the Theme menu
+# shows them as two columns of color chips.  ForestFloor and CrimsonVelvet come from Mike's dark themes; the other colored darks follow their lead.
+THEMES = {'Toybox':        {'card': '#141821', 'border': '#2f3a4e', 'track': '#1e2430', 'text': '#e6eaf2', 'dim': '#8a93a3'},
+          'Carbon':        {'card': '#121212', 'border': '#2e2e2e', 'track': '#1f1f1f', 'text': '#e0e0e0', 'dim': '#8c8c8c'},
+          'Slate':         {'card': '#2a3140', 'border': '#48526a', 'track': '#363e50', 'text': '#eef1f6', 'dim': '#a3acbd'},
+          'CrimsonVelvet': {'card': '#5e0d1f', 'border': '#8f1530', 'track': '#781429', 'text': '#f9d276', 'dim': '#d6a7a0'},
+          'Ember':         {'card': '#451f11', 'border': '#773c27', 'track': '#5c2f1e', 'text': '#f1e4df', 'dim': '#bd9f93'},
+          'Espresso':      {'card': '#2c2016', 'border': '#594331', 'track': '#423224', 'text': '#f1e7df', 'dim': '#bda693'},
+          'Bronze':        {'card': '#48310f', 'border': '#7b5823', 'track': '#60441b', 'text': '#f1eadf', 'dim': '#bdac93'},
+          'Olive':         {'card': '#2a3013', 'border': '#545f2b', 'track': '#3e4620', 'text': '#eef1df', 'dim': '#b5bd93'},
+          'ForestFloor':   {'card': '#101c0e', 'border': '#2a4424', 'track': '#1b2e18', 'text': '#d0e0c8', 'dim': '#83977d'},
+          'Jade':          {'card': '#113124', 'border': '#29614a', 'track': '#1e4836', 'text': '#dff1ea', 'dim': '#93bdac'},
+          'Lagoon':        {'card': '#0e3434', 'border': '#236767', 'track': '#1a4c4c', 'text': '#dff1f1', 'dim': '#93bdbd'},
+          'Petrol':        {'card': '#0f303e', 'border': '#235a71', 'track': '#1b4456', 'text': '#dfecf1', 'dim': '#93b1bd'},
+          'Cobalt':        {'card': '#132949', 'border': '#294a7a', 'track': '#20395f', 'text': '#dfe6f1', 'dim': '#93a4bd'},
+          'Indigo':        {'card': '#1e1e48', 'border': '#383876', 'track': '#2c2c5d', 'text': '#dfdff1', 'dim': '#9393bd'},
+          'Plum':          {'card': '#341c3f', 'border': '#5a376c', 'track': '#472b54', 'text': '#ebdff1', 'dim': '#af93bd'},
+          'Mulberry':      {'card': '#3f1731', 'border': '#6e3057', 'track': '#552544', 'text': '#f1dfea', 'dim': '#bd93ae'},
+          'Paper':         {'card': '#f5f7fb', 'border': '#c9d1dc', 'track': '#dadfe8', 'text': '#1b2130', 'dim': '#5c6676'},
+          'Fog':           {'card': '#dde2e8', 'border': '#b8c0ca', 'track': '#c5ccd5', 'text': '#1b2028', 'dim': '#545d69'},
+          'Stone':         {'card': '#e1dedb', 'border': '#b9b5b1', 'track': '#c5c2be', 'text': '#2b2117', 'dim': '#63574b'},
+          'Sand':          {'card': '#e7dfcf', 'border': '#c1b6a4', 'track': '#cbc2b3', 'text': '#2b2417', 'dim': '#675942'},
+          'Linen':         {'card': '#f7f2e8', 'border': '#dcd1bd', 'track': '#e4dac9', 'text': '#2b2620', 'dim': '#73685a'},
+          'Butter':        {'card': '#fbf5dc', 'border': '#e3d7a6', 'track': '#e8ddb1', 'text': '#2e2a18', 'dim': '#766c4c'},
+          'Peach':         {'card': '#fce9df', 'border': '#dfbdaa', 'track': '#e6ccbc', 'text': '#2b1e17', 'dim': '#705d51'},
+          'Blush':         {'card': '#faedf0', 'border': '#eccad2', 'track': '#efd1d8', 'text': '#321c22', 'dim': '#80606a'},
+          'Rose':          {'card': '#ecd5dd', 'border': '#c7a9b3', 'track': '#d1b8c0', 'text': '#2b171e', 'dim': '#70515c'},
+          'Orchid':        {'card': '#f4e5f5', 'border': '#d1b6d3', 'track': '#dbc6dc', 'text': '#2a172b', 'dim': '#6e5170'},
+          'Lavender':      {'card': '#f0ecfa', 'border': '#d2c9ec', 'track': '#dad3f0', 'text': '#231e33', 'dim': '#665e80'},
+          'Periwinkle':    {'card': '#e3e6f7', 'border': '#b2b7d6', 'track': '#c3c7df', 'text': '#171a2b', 'dim': '#515670'},
+          'Sky':           {'card': '#e7f0fa', 'border': '#bdd2ea', 'track': '#c7daee', 'text': '#18222f', 'dim': '#53667d'},
+          'Aqua':          {'card': '#ddf2f3', 'border': '#aecfd0', 'track': '#bfd9d9', 'text': '#172a2b', 'dim': '#516f70'},
+          'Mint':          {'card': '#e8f5ee', 'border': '#bcdccb', 'track': '#c5e1d2', 'text': '#1b2a22', 'dim': '#557064'},
+          'Pistachio':     {'card': '#ebf3dd', 'border': '#c4cfaf', 'track': '#cfd9bf', 'text': '#242b17', 'dim': '#657051'}}
+OLD_THEME_NAMES = {'Midnight': 'Carbon', 'VoidBlue': 'Carbon', 'DarkSlate': 'Slate', 'MidnightPurple': 'Plum', 'DeepOceanTeal': 'Lagoon'}   # saved by older versions
+# --- end WIDGET THEMES ---
 
 # ---------------------------------------------------------------- keys ----------------------------------------------------------------
 # widget window
@@ -226,28 +286,28 @@ K_IBADGE = '-IBADGE-';      KT_IBADGE = lambda i: (K_IBADGE, i)
 K_IAGE = '-IAGE-';          KT_IAGE = lambda i: (K_IAGE, i)
 VIEW_REPOS, VIEW_ISSUES = 'repos', 'issues'
 ISSUE_ROW_CHOICES = [4, 6, 8, 10, 12, 15]
-# menu items (right-click menu returns the whole string, ButtonMenu returns it in values[K_MENU])
-M_CHECK = 'Check now::-M CHECK-'
-M_READ = 'Mark all as read::-M READ-'
-M_PAUSE = 'Pause / resume polling::-M PAUSE-'
-M_SNOOZE_1 = 'Hide badges for 1 hour::-M SNOOZE 1-'
-M_SNOOZE_4 = 'Hide badges for 4 hours::-M SNOOZE 4-'
-M_SNOOZE_TOMORROW = 'Hide badges until tomorrow::-M SNOOZE TOMORROW-'
-M_SNOOZE_OFF = 'Show badges again::-M SNOOZE OFF-'
-M_SNAP_TL = 'Top left::-M SNAP TL-'
-M_SNAP_TR = 'Top right::-M SNAP TR-'
-M_SNAP_BL = 'Bottom left::-M SNAP BL-'
-M_SNAP_BR = 'Bottom right::-M SNAP BR-'
-M_SETTINGS = 'Settings...::-M SETTINGS-'
-M_LOG = 'Open log file::-M LOG-'
-M_ABOUT = 'About::-M ABOUT-'
-M_TOP = 'Keep on top::-M TOP-'                                  # label gets a ✓ while it's on (show_keep_on_top)
-MENU_SNOOZE = [M_SNOOZE_1, M_SNOOZE_4, M_SNOOZE_TOMORROW, M_SNOOZE_OFF]
-MENU_SNAP = [M_SNAP_TL, M_SNAP_TR, M_SNAP_BL, M_SNAP_BR]
-# the standard 'Edit Me' / 'Version' / 'Exit' trio from sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT sits at the bottom of the app's own menu
-M_VIEW = 'Switch view  (repos ⇄ issues)::-M VIEW-'
-MENU_ITEMS = [M_CHECK, M_READ, M_VIEW, '---', M_PAUSE, M_TOP, 'Snooze', MENU_SNOOZE, 'Snap to corner', MENU_SNAP, '---', M_SETTINGS, M_LOG, M_ABOUT, '---']
-MENU = ['', MENU_ITEMS + sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT[1]]
+# menu items: make_menu() puts the labels in front ('    Check now::-M CHECK-'); the event is the key after '::'.  The standard 'Edit Me' / 'Version' /
+# 'Exit' trio from sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT keeps its plain keys at the bottom
+K_M_CHECK = '-M CHECK-'
+K_M_READ = '-M READ-'
+K_M_VIEW = '-M VIEW-'
+K_M_PAUSE = '-M PAUSE-'
+K_M_TOP = '-M TOP-'
+K_M_SETTINGS = '-M SETTINGS-'
+K_M_LOG = '-M LOG-'
+K_M_ABOUT = '-M ABOUT-'
+SNOOZES = {'-M SNOOZE 1-': 'Hide badges for 1 hour', '-M SNOOZE 4-': 'Hide badges for 4 hours', '-M SNOOZE TOMORROW-': 'Hide badges until tomorrow',
+           '-M SNOOZE OFF-': 'Show badges again'}                # key: label
+KT_M_SNAP = lambda corner: f'-M SNAP {corner}-'
+SNAP_CORNERS = {'TL': 'Top left', 'TR': 'Top right', 'BL': 'Bottom left', 'BR': 'Bottom right'}
+SNAP_KEYS = {KT_M_SNAP(corner): corner for corner in SNAP_CORNERS}
+K_THEME = '-THEME-'                                             # settings entry for the theme, and the start of the Theme menu's keys
+KT_THEME = lambda name: f'{K_THEME}{name}'
+# every window but the widget
+K_STRIP = '-STRIP-'                                             # the title strip - drag it to move the window
+K_STRIP_CLOSE = '-STRIP CLOSE-'                                 # its x
+K_ASK_INPUT = '-ASK INPUT-'                                     # the small question card (Choose repos: which account)
+K_ASK_OK = '-ASK OK-'
 
 HOURS = ['12 AM'] + [f'{h} AM' for h in range(1, 12)] + ['12 PM'] + [f'{h} PM' for h in range(1, 12)]
 INTERVALS = ['1 min', '2 min', '5 min', '10 min', '15 min', '30 min', '60 min']
@@ -423,26 +483,6 @@ def span(dt):
     return n_of(s // (30 * 86400), 'month')
 
 
-def add_close_x(window, event_key):
-    """A faint ✕ overlaid in the window's top-right corner - brightens under the pointer, closes the widget when clicked."""
-    label = tk.Label(window.TKroot, text='✕', font=(UI_FONT, 9), fg=C_DIM, bg=C_BG, bd=0, cursor='hand2')
-    label.place(relx=1.0, x=-3, y=1, anchor='ne')
-    label.bind('<Enter>', lambda e: label.config(fg=C_RED))
-    label.bind('<Leave>', lambda e: label.config(fg=C_DIM))
-    label.bind('<ButtonRelease-1>', lambda e: window.write_event_value(event_key, None))
-
-
-def show_keep_on_top(window, on):
-    """Tick the 'Keep on top' entries in the window's menus (every right-click menu and the ≡ menu) when it's on.
-    Only the label changes - the event the item sends stays M_TOP."""
-    for w in descendants(window.TKroot):
-        if w.winfo_class() != 'Menu' or w.index('end') is None:
-            continue
-        for i in range(w.index('end') + 1):
-            if w.type(i) == 'command' and w.entrycget(i, 'label').lstrip('✓ ') == 'Keep on top':
-                w.entryconfigure(i, label=('✓ ' if on else '') + 'Keep on top')
-
-
 def wheel_scrolls_list(window, column_key):
     """The mouse wheel scrolls a scrollable Column wherever the pointer is over it.  PySimpleGUI hooks the wheel only while the pointer
     is over the bare canvas and drops it as soon as the pointer moves onto a row, so that hook is swapped for one on the window."""
@@ -464,6 +504,501 @@ def wheel_scrolls_list(window, column_key):
 
     for seq in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
         window.TKroot.bind(seq, on_wheel, add='+')
+
+
+# ================================================================ themes ================================================================
+class G:
+    """State the shared WIDGET THEMES / BRIGHTNESS blocks and the menus use"""
+    theme = 'Toybox'                                            # the chosen theme (settings entry K_THEME)
+    bright = 0                                                  # its Brightness level (K_BRIGHT)
+    tuned = {}                                                  # (theme, level) -> its five colors at that level
+    swatches = {}                                               # (theme, level) -> Theme menu chip - tk keeps an image only while someone holds it
+    fonts = {}                                                  # (bold, px) -> Pillow font
+    scale = 1.0                                                 # display scale, 2.0 on a 200% screen - the Brightness panel and the x are drawn at it
+    window = None                                               # the widget window
+    app = None                                                  # the App - redraw() recolors its widget
+
+
+def mix(c1, c2, f):
+    """Blend two hex colors, f=0 -> c1, f=1 -> c2"""
+    return '#%02x%02x%02x' % tuple(round(a + (b - a) * f) for a, b in zip(channels(c1), channels(c2)))
+
+
+def is_light(color):
+    """True for a light color - a light card gets deeper meaning colors"""
+    r, g, b = channels(color)
+    return 0.299 * r + 0.587 * g + 0.114 * b > 140
+
+
+def font(bold, px):
+    """A Segoe UI (Windows) / DejaVu (Linux) Pillow font of px pixels, cached"""
+    key = (bold, px)
+    if key not in G.fonts:
+        f = None
+        for name in FONT_NAMES[bold]:
+            try:
+                f = ImageFont.truetype(name, px)
+                break
+            except OSError:
+                continue
+        if f is None:
+            try:
+                f = ImageFont.load_default(size=px)
+            except TypeError:
+                f = ImageFont.load_default()
+        G.fonts[key] = f
+    return G.fonts[key]
+
+
+def palette():
+    """Every color apply_theme() sets, in a fixed order - redraw() swaps each for its new value"""
+    return (C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK)
+
+
+def apply_theme():
+    """Work out every color from the chosen theme at its Brightness (theme_colors), and make it the PySimpleGUI theme too, so buttons, text boxes,
+       combos, sliders and check boxes follow it.  Windows built after this use the new colors"""
+    global C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK
+    t = theme_colors()
+    light = is_light(t['card'])
+    C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED = t['card'], mix(t['card'], t['text'], 0.04), t['track'], t['border'], t['text'], t['dim']
+    C_DIM, C_STRIP = mix(t['dim'], t['card'], 0.4), mix(t['card'], t['border'], 0.4 if light else 0.3)
+    C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = (mix(c, '#000000', 0.3) if light else c for c in MEANING_COLORS.values())
+    KIND_COLOR.update({'commit': C_GREEN, 'merge': C_GREEN, 'branch': C_AMBER, 'tag': C_PURPLE, 'release': C_PURPLE, 'issue': C_BLUE, 'pr': C_PINK})
+    STATUS_COLOR.update({'added': C_GREEN, 'removed': C_RED, 'modified': C_AMBER, 'renamed': C_BLUE, 'copied': C_BLUE, 'changed': C_AMBER})
+    sg.theme_add_new('RepoWatch', {'BACKGROUND': C_BG, 'TEXT': C_TEXT, 'INPUT': '#ffffff' if light else C_BG3, 'TEXT_INPUT': C_TEXT, 'SCROLL': C_LINE,
+                                   'BUTTON': (C_TEXT, C_BG3), 'PROGRESS': (C_BLUE, C_BG2), 'BORDER': 0, 'SLIDER_DEPTH': 0, 'PROGRESS_DEPTH': 0})
+    sg.theme('RepoWatch')
+
+
+def sbar(trough=None):
+    """Scrollbars in the theme's colors, flat - for every window's and list's sbar_ arguments"""
+    return dict(sbar_trough_color=trough or C_BG2, sbar_background_color=C_LINE, sbar_arrow_color=C_MUTED, sbar_frame_color=trough or C_BG2, sbar_relief=sg.RELIEF_FLAT)
+
+
+def recolor(window, swap):
+    """Swap colors in place in a built window: every tk widget's colors and every canvas drawing's, old -> new (swap = {old: new})"""
+    for w in descendants(window.TKroot):
+        if w.winfo_class() == 'Menu':
+            continue
+        for opt in ('background', 'foreground', 'activebackground', 'activeforeground', 'highlightbackground', 'selectcolor'):
+            try:
+                value = str(w.cget(opt)).lower()
+            except tk.TclError:
+                continue
+            if value in swap:
+                w.configure(**{opt: swap[value]})
+        if w.winfo_class() == 'Canvas':
+            for item in w.find_all():
+                for opt in ('fill', 'outline'):
+                    try:
+                        value = str(w.itemcget(item, opt)).lower()
+                    except tk.TclError:
+                        continue
+                    if value in swap:
+                        w.itemconfigure(item, **{opt: swap[value]})
+
+
+def round_corners(window):
+    """Windows 11 rounds the window's corners and draws its 1-px outline in the theme's border color.  Windows 10, Linux and Mac keep square corners"""
+    if not sg.running_windows():
+        return
+    try:
+        hwnd = ctypes.windll.user32.GetParent(window.TKroot.winfo_id())
+        r, g, b = channels(C_LINE)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(ctypes.c_int(DWMWCP_ROUND)), 4)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ctypes.byref(ctypes.c_uint(r | g << 8 | b << 16)), 4)     # 0x00BBGGRR
+    except Exception:
+        pass
+
+
+def title_strip(title):
+    """The strip across the top of every window but the widget: icon, title, version, x (red under the mouse).  Drag it to move the window"""
+    row = [sg.Image(data=ICON, subsample=2, background_color=C_STRIP, pad=((10, 6), 5)),
+           sg.Text(title, font=(UI_FONT, 12, 'bold'), text_color=C_TEXT, background_color=C_STRIP, pad=(0, 5)),
+           sg.Text(f'v{VERSION}', font=(UI_FONT, 9), text_color=C_MUTED, background_color=C_STRIP, pad=((6, 0), (8, 4))),
+           sg.Push(background_color=C_STRIP),
+           sg.Text('  ✕  ', key=K_STRIP_CLOSE, font=(UI_FONT, 12), text_color=C_MUTED, background_color=C_STRIP, enable_events=True, pad=0, tooltip='Close (Escape)')]
+    return [sg.Column([row], key=K_STRIP, background_color=C_STRIP, expand_x=True, pad=0)]
+
+
+def framed(title, layout, pad):
+    """A window's layout under its title strip - pad = the margin the window used to have around it"""
+    return [title_strip(title), [sg.Column(layout, pad=pad, background_color=C_BG, expand_x=True, expand_y=True)]]
+
+
+def drag_by_strip(window, strip, skip=None):
+    """Move a window by dragging its title strip (any of it but `skip`, the close x) - the rest of the window stays put, as in Pip Refresh's Packages window"""
+    start = {}
+
+    def press(e):
+        start['p'] = (e.x_root, e.y_root, window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty())
+
+    def motion(e):
+        p = start.get('p')
+        if p:
+            window.TKroot.geometry(f'+{round(p[2] + e.x_root - p[0])}+{round(p[3] + e.y_root - p[1])}')
+
+    def release(e):
+        start.pop('p', None)
+
+    def bind(w):
+        if w is skip:
+            return
+        w.bind('<ButtonPress-1>', press, add='+')
+        w.bind('<B1-Motion>', motion, add='+')
+        w.bind('<ButtonRelease-1>', release, add='+')
+        for child in w.winfo_children():
+            bind(child)
+
+    bind(strip)
+
+
+def dress(window, escape_key):
+    """What every window but the widget gets once it is built: moved by its title strip, its x red under the mouse, Escape, round corners on Windows 11"""
+    close, strip = window[K_STRIP_CLOSE].Widget, C_STRIP
+    close.bind('<Enter>', lambda e: close.configure(bg=C_CLOSE, fg='#ffffff'))
+    close.bind('<Leave>', lambda e: close.configure(bg=strip, fg=C_MUTED))
+    drag_by_strip(window, window[K_STRIP].Widget, skip=close)
+    window.bind('<Escape>', escape_key)
+    round_corners(window)
+
+
+def ask_text(title, message, default):
+    """A small themed question card with a text box (the Choose repos account) - returns the text, or None for Cancel, Escape, the x or Alt-F4"""
+    layout = framed(title, [[sg.Text(message, font=(UI_FONT, 11), pad=(4, (4, 6)))],
+                            [sg.Input(default, key=K_ASK_INPUT, size=(40, 1), font=(UI_FONT, 12), pad=(4, 4))],
+                            [sg.Push(background_color=C_BG), sg.Button('OK', key=K_ASK_OK, size=(8, 1), button_color=(C_BG, C_GREEN), border_width=0, pad=(4, (8, 4))),
+                             sg.Button('Cancel', key=K_CANCEL, size=(8, 1), pad=(4, (8, 4)))]], (10, 8))
+    card = sg.Window(title, layout, no_titlebar=True, keep_on_top=True, modal=True, finalize=True, margins=(0, 0), background_color=C_BG)
+    dress(card, K_CANCEL)
+    card.bind('<Return>', K_ASK_OK)
+    card[K_ASK_INPUT].set_focus()
+    card[K_ASK_INPUT].Widget.select_range(0, 'end')
+    event, values = card.read()
+    card.close()
+    return values[K_ASK_INPUT] if event == K_ASK_OK and values else None
+
+
+def tk_menu(master, items, window):
+    """A tk menu from a PySimpleGUI-style menu list ('label::key', '---', 'label' followed by its sub-list).  A choice sends its key as the window's event"""
+    menu, i = tk.Menu(master, tearoff=0), 0
+    while i < len(items):
+        item = items[i]
+        if item == '---':
+            menu.add_separator()
+        elif i + 1 < len(items) and isinstance(items[i + 1], list):
+            menu.add_cascade(label=item, menu=tk_menu(menu, items[i + 1], window))
+            i += 1
+        else:
+            label, _, key = item.partition('::')
+            menu.add_command(label=label, command=lambda k=key or label: window.write_event_value(k, None))
+        i += 1
+    return menu
+
+
+def menu_colors():
+    """Right-click menu background and text: the card's own colors (background lifted a touch), so the menu matches the theme"""
+    T = theme_colors()
+    return mix(T['card'], T['text'], 0.04), T['text']
+
+
+def theme_swatch(name):
+    """A tiny card in a theme's colors (card, a line of text, a dim line) shown beside its name in the Theme menu.  Made once and kept - tk drops images nobody holds"""
+    if (name, G.bright) not in G.swatches:                                                      # a set per Brightness level: the chips show what you'd get
+        T, z = theme_colors(name), max(1.0, G.window.TKroot.winfo_fpixels('1i') / 96) * 4           # drawn 4x and shrunk, so the edges are smooth
+        im = Image.new('RGBA', (round(34 * z), round(20 * z)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.rounded_rectangle((0, 0, im.width - 1, im.height - 1), radius=5 * z, fill=T['card'], outline=C_SWATCH_EDGE, width=round(z))
+        d.rounded_rectangle((6 * z, 5.5 * z, 25 * z, 9 * z), radius=1.5 * z, fill=T['text'])
+        d.rounded_rectangle((6 * z, 12 * z, 17 * z, 14.5 * z), radius=1.2 * z, fill=T['dim'])
+        buf = io.BytesIO()
+        im.resize((round(im.width / 4), round(im.height / 4)), Image.LANCZOS).save(buf, 'PNG')
+        G.swatches[(name, G.bright)] = tk.PhotoImage(master=G.window.TKroot, data=base64.b64encode(buf.getvalue()))
+    return G.swatches[(name, G.bright)]
+
+
+def style_menus(window):
+    """tk draws menus Windows-gray and PySimpleGUI colors only the top level: recolor every menu of the window - the right-click menu, the ≡ menu and
+       their sub-menus - flat and compact in the theme's colors, with a chip beside each theme name (the lights in a column of their own)"""
+    bg, fg = menu_colors()
+    for menu in descendants(window.TKroot):
+        if menu.winfo_class() != 'Menu':
+            continue
+        menu.configure(bg=bg, fg=fg, activebackground=C_MENU_SEL, activeforeground='#ffffff', bd=0, activeborderwidth=1, relief='flat', font=FONT_MENU)
+        first_light = True
+        for i in range(menu.index('end') + 1 if menu.index('end') is not None else 0):
+            name = menu.entrycget(i, 'label').lstrip('✓ ') if menu.type(i) == 'command' else None
+            if name in THEMES:
+                menu.entryconfigure(i, image=theme_swatch(name), compound='left')
+                if first_light and is_light(THEMES[name]['card']):
+                    menu.entryconfigure(i, columnbreak=1)                     # the light themes get a column of their own
+                    first_light = False
+
+
+def close_x_images():
+    """The widget's close x: faint, and a red disc with a white x under the mouse.  Drawn 4x and shrunk, so the edges are smooth"""
+    z, size, images = G.scale * 4, 18, []
+    for hover in (False, True):
+        im = Image.new('RGBA', (round(size * z), round(size * z)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c, r = size / 2 * z, 3.5 * z
+        if hover:
+            d.ellipse((c - 8 * z, c - 8 * z, c + 8 * z, c + 8 * z), fill=C_CLOSE)
+        color = '#ffffff' if hover else C_DIM
+        d.line((c - r, c - r, c + r, c + r), fill=color, width=round(1.5 * z))
+        d.line((c - r, c + r, c + r, c - r), fill=color, width=round(1.5 * z))
+        buf = io.BytesIO()
+        im.resize((round(size * G.scale), round(size * G.scale)), Image.LANCZOS).save(buf, 'PNG')
+        images.append(tk.PhotoImage(master=G.window.TKroot, data=base64.b64encode(buf.getvalue())))
+    return images
+
+
+def set_close_x(label):
+    """The x's pictures in the current theme"""
+    label.images = close_x_images()
+    label.configure(image=label.images[0], bg=C_BG)
+
+
+def add_close_x(window, event_key):
+    """The close x overlaid in the window's top-right corner - faint, a red disc under the pointer, closes the widget when clicked"""
+    label = tk.Label(window.TKroot, bd=0, cursor='hand2')
+    set_close_x(label)
+    label.place(relx=1.0, x=-round(5 * G.scale), y=round(3 * G.scale), anchor='ne')
+    label.bind('<Enter>', lambda e: label.configure(image=label.images[1]))
+    label.bind('<Leave>', lambda e: label.configure(image=label.images[0]))
+    label.bind('<ButtonRelease-1>', lambda e: window.write_event_value(event_key, None))
+    return label
+
+
+def redraw(window):
+    """The Brightness panel moved its knob: the widget in the new colors at once, in place (the panel holds on to it) - each color it was drawn with
+       is swapped for the same color at the new level.  The other windows follow when the panel closes"""
+    old = palette()
+    apply_theme()
+    recolor(window, {a: b for a, b in zip(old, palette()) if a != b})
+    set_close_x(G.app.close_x)
+    round_corners(window)
+
+
+# --- BRIGHTNESS: the same block in every card widget (master copy in modern_widget_recipe.md) - the program darkens or lightens its own theme ---
+# Right-click > Brightness... opens a small panel under the card with a slider, and the card changes as the knob moves.  theme_colors() is what the card,
+# its menu and the Theme chips are drawn with: the theme at the chosen level, its text kept readable.  The program supplies redraw(window),
+# font(bold, px), is_light(), RADIUS, TRANSPARENT, THEMES and G.theme / G.scale / G.bright / G.tuned.
+BRIGHT_LEVELS = list(range(-80, 51, 5))                           # the slider's stops, darkest first: -80 = much darker, 0 = as designed, 50 = lighter
+K_BRIGHT = '-BRIGHTNESS-'                                         # settings-file entry, and the right-click item that opens the panel
+K_PANEL_IMAGE, K_PANEL_VALUE, K_PANEL_STEP = '-PANEL IMAGE-', '-PANEL VALUE-', '-PANEL STEP-'      # values: the new level / +1 or -1 stop
+K_PANEL_HOVER, K_PANEL_CLICK = '-PANEL HOVER-', '-PANEL CLICK-'   # values: 'track' | 'reset' | 'done' | None
+K_PANEL_DONE, K_PANEL_CANCEL = '-PANEL DONE-', '-PANEL CANCEL-'   # Enter / Escape
+PANEL_W, PANEL_H = 270, 114                                       # the panel, in design pixels
+TRACK_X0, TRACK_X1, TRACK_Y, TRACK_H = 20, PANEL_W - 20, 52, 10
+PILL_W, PILL_H, PILL_Y = 70, 24, 90                               # Reset (left) and Done (right); PILL_Y is their middle
+C_PANEL_DONE = '#2a62a8'                                          # the Done button
+
+
+def channels(color):
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def shade(c1, c2, f):
+    """c1 moved f of the way toward c2"""
+    return '#%02x%02x%02x' % tuple(round(a + (b - a) * f) for a, b in zip(channels(c1), channels(c2)))
+
+
+def tune(color, level, light, line=False):
+    """A card / border / track color at a Brightness level.  Dark themes: the brightness is scaled - darker is deeper, lighter more vivid, the hue kept;
+       lines darken less, so the border and the gauge track still show at -80.  Light themes: darker turns gently gray (at most 32%), lighter fades to white"""
+    if light and level > 0:
+        return shade(color, '#ffffff', level / 100)
+    f = 1 + level / (250 if light else 100)
+    if line and level < 0 and not light:
+        f **= 0.6
+    return '#%02x%02x%02x' % tuple(min(255, round(v * f)) for v in channels(color))
+
+
+def luminance(color):
+    """WCAG relative luminance, 0 = black .. 1 = white"""
+    return sum(w * (v / 3294.6 if v <= 10.31 else ((v / 255 + 0.055) / 1.055) ** 2.4) for w, v in zip((0.2126, 0.7152, 0.0722), channels(color)))
+
+
+def readable(fg, bg, ratio, pole):
+    """fg moved toward pole (white on a dark card, black on a light one) just far enough to have ratio contrast with bg"""
+    lb = luminance(bg)
+    for i in range(26):
+        c = shade(fg, pole, i / 25)
+        lf = luminance(c)
+        if (max(lf, lb) + 0.05) / (min(lf, lb) + 0.05) >= ratio:
+            return c
+    return pole
+
+
+def theme_colors(name=None):
+    """A theme's five colors at the Brightness setting (the chosen theme if no name) - text keeps 7:1 contrast with the card, dim 4.5:1"""
+    name = name if name in THEMES else G.theme if G.theme in THEMES else 'Toybox'
+    if (name, G.bright) not in G.tuned:
+        T = THEMES[name]
+        if G.bright:
+            light, level = is_light(T['card']), G.bright
+            card, pole = tune(T['card'], level, light), '#000000' if light else '#ffffff'
+            T = {'card': card, 'border': tune(T['border'], level, light, True), 'track': tune(T['track'], level, light, True),
+                 'text': readable(T['text'], card, 7, pole), 'dim': readable(T['dim'], card, 4.5, pole)}
+        G.tuned[(name, G.bright)] = T
+    return G.tuned[(name, G.bright)]
+
+
+def bright_text(level):
+    return 'as designed' if level == 0 else f'{level:+d}%'.replace('-', '\u2212')
+
+
+def knob_x(level):
+    """Design-pixel x of the knob at a level: the middle of that level's band on the track"""
+    return TRACK_X0 + (BRIGHT_LEVELS.index(level) + 0.5) * (TRACK_X1 - TRACK_X0) / len(BRIGHT_LEVELS)
+
+
+def level_at(x):
+    """The level whose band is under panel pixel x"""
+    i = int((x / G.scale - TRACK_X0) / (TRACK_X1 - TRACK_X0) * len(BRIGHT_LEVELS))
+    return BRIGHT_LEVELS[max(0, min(len(BRIGHT_LEVELS) - 1, i))]
+
+
+def panel_part(x, y):
+    """'track', 'reset', 'done' or None at panel pixel (x, y)"""
+    x, y = x / G.scale, y / G.scale
+    if TRACK_X0 - 10 <= x <= TRACK_X1 + 10 and abs(y - TRACK_Y) <= 14:
+        return 'track'
+    if abs(y - PILL_Y) <= PILL_H / 2:
+        if 18 <= x <= 18 + PILL_W:
+            return 'reset'
+        if PANEL_W - 18 - PILL_W <= x <= PANEL_W - 18:
+            return 'done'
+    return None
+
+
+def render_panel(hover):
+    """The Brightness panel, drawn like the card and in its colors (so it changes too).  The track shows the card's own color at every level, darkest
+       on the left; the knob sits on the one in use, the tick under the track marks 'as designed'"""
+    s = G.scale
+    k = s * 2
+    T, base = theme_colors(), THEMES.get(G.theme, THEMES['Toybox'])
+    light = is_light(base['card'])
+    W, H = round(PANEL_W * k), round(PANEL_H * k)
+    im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=(RADIUS if sg.running_windows() else 0) * k, fill=T['card'], outline=T['border'], width=max(1, round(k)))
+    d.text((18 * k, 20 * k), 'BRIGHTNESS', font=font(True, round(13 * k)), fill=T['dim'], anchor='lm')
+    d.text(((PANEL_W - 18) * k, 20 * k), bright_text(G.bright), font=font(True, round(13 * k)), fill=T['text'], anchor='rm')
+    x0, x1, y0, y1 = TRACK_X0 * k, TRACK_X1 * k, (TRACK_Y - TRACK_H / 2) * k, (TRACK_Y + TRACK_H / 2) * k
+    strip = Image.new('RGBA', (round(x1 - x0), round(y1 - y0)))                       # a band per level, in the card color at that level
+    band = strip.width / len(BRIGHT_LEVELS)
+    for i, level in enumerate(BRIGHT_LEVELS):
+        ImageDraw.Draw(strip).rectangle((round(i * band), 0, round((i + 1) * band), strip.height), fill=tune(base['card'], level, light))
+    mask = Image.new('L', strip.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, strip.width - 1, strip.height - 1), radius=strip.height / 2, fill=255)
+    im.paste(strip, (round(x0), round(y0)), mask)
+    d.rounded_rectangle((x0, y0, x1, y1), radius=(y1 - y0) / 2, outline=T['dim'] if hover == 'track' else T['border'], width=max(1, round(k)))
+    zx = knob_x(0) * k
+    d.line((zx, y1 + 3 * k, zx, y1 + 7 * k), fill=T['dim'], width=max(1, round(1.2 * k)))
+    kx, ky, r = knob_x(G.bright) * k, TRACK_Y * k, 9 * k                                # the knob, filled with the color in use
+    d.ellipse((kx - r, ky - r, kx + r, ky + r), fill=T['card'], outline=T['text'], width=max(1, round(2 * k)))
+    small = font(False, round(11 * k))
+    d.text((x0, (TRACK_Y + 17) * k), 'darker', font=small, fill=T['dim'], anchor='lm')
+    d.text((x1, (TRACK_Y + 17) * k), 'lighter', font=small, fill=T['dim'], anchor='rm')
+    for part, px, fill, color in (('reset', 18, T['track'], T['text'] if G.bright else T['dim']), ('done', PANEL_W - 18 - PILL_W, C_PANEL_DONE, '#ffffff')):
+        if hover == part:
+            fill = shade(fill, '#ffffff', 0.15) if part == 'done' else shade(T['text'], T['card'], 0.78)
+        d.rounded_rectangle((px * k, (PILL_Y - PILL_H / 2) * k, (px + PILL_W) * k, (PILL_Y + PILL_H / 2) * k), radius=PILL_H / 2 * k, fill=fill)
+        d.text(((px + PILL_W / 2) * k, PILL_Y * k), part.capitalize(), font=font(True, round(12 * k)), fill=color, anchor='mm')
+    im = im.resize((round(PANEL_W * s), round(PANEL_H * s)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+def brightness_panel(card, keep_going):
+    """Right-click > Brightness...: the panel under the card.  The card and the panel change as the knob moves (drag, click, arrow keys, mouse wheel,
+       Home / End).  Done or Enter keeps the level, Escape puts back the one it had.  keep_going(card, event, values) handles the card's own events
+       meanwhile (its timer, hover...) and returns False for one that should close the panel - a menu choice, the close x.  That event is returned so the
+       main loop can handle it; None otherwise"""
+    start = G.bright
+    x, y = card.current_location()
+    below, height = y + card.size[1] + 6, round(PANEL_H * G.scale)
+    py = below if below + height <= card.TKroot.winfo_screenheight() else max(0, y - height - 6)    # under the card, or above it near the bottom
+    panel = sg.Window('Brightness', [[sg.Image(data=render_panel(None), key=K_PANEL_IMAGE, background_color=TRANSPARENT, pad=(0, 0))]], no_titlebar=True,
+                      keep_on_top=True, margins=(0, 0), element_padding=(0, 0), background_color=TRANSPARENT, location=(x, py), finalize=True,
+                      transparent_color=TRANSPARENT if sg.running_windows() else None)  # no grab_anywhere: it would move the panel as the knob is dragged
+    widget, mouse = panel[K_PANEL_IMAGE].Widget, {'drag': False, 'press': None, 'hover': None}
+
+    def press(e):
+        part = panel_part(e.x, e.y)
+        if part == 'track':                                                             # the knob jumps to the mouse and follows it
+            mouse['drag'] = True
+            panel.write_event_value(K_PANEL_VALUE, level_at(e.x))
+        else:
+            mouse['press'] = (e.x_root, e.y_root, part, panel.TKroot.winfo_x(), panel.TKroot.winfo_y())
+
+    def drag(e):
+        p = mouse['press']
+        if mouse['drag']:
+            panel.write_event_value(K_PANEL_VALUE, level_at(e.x))
+        elif p:                                                                         # anywhere off the track drags the panel
+            panel.TKroot.geometry(f'+{p[3] + e.x_root - p[0]}+{p[4] + e.y_root - p[1]}')
+
+    def release(e):
+        if mouse['drag']:
+            mouse['drag'] = False
+            return
+        p, mouse['press'] = mouse['press'], None
+        if p and p[2] in ('reset', 'done') and math.hypot(e.x_root - p[0], e.y_root - p[1]) < 4:        # a click, not a drag of the panel
+            panel.write_event_value(K_PANEL_CLICK, p[2])
+
+    def hover(part):
+        if part != mouse['hover']:
+            mouse['hover'] = part
+            panel.write_event_value(K_PANEL_HOVER, part)
+
+    widget.bind('<ButtonPress-1>', press, add='+')
+    widget.bind('<B1-Motion>', drag, add='+')
+    widget.bind('<ButtonRelease-1>', release, add='+')
+    widget.bind('<Motion>', lambda e: hover(panel_part(e.x, e.y)), add='+')
+    widget.bind('<Leave>', lambda e: hover(None), add='+')
+    widget.bind('<MouseWheel>', lambda e: panel.write_event_value(K_PANEL_STEP, 1 if e.delta > 0 else -1), add='+')   # Windows
+    widget.bind('<Button-4>', lambda e: panel.write_event_value(K_PANEL_STEP, 1), add='+')                            # Linux wheel
+    widget.bind('<Button-5>', lambda e: panel.write_event_value(K_PANEL_STEP, -1), add='+')
+    for seq, n in (('<Left>', -1), ('<Down>', -1), ('<Right>', 1), ('<Up>', 1)):
+        panel.TKroot.bind(seq, lambda e, n=n: panel.write_event_value(K_PANEL_STEP, n))
+    panel.TKroot.bind('<Home>', lambda e: panel.write_event_value(K_PANEL_VALUE, BRIGHT_LEVELS[0]))
+    panel.TKroot.bind('<End>', lambda e: panel.write_event_value(K_PANEL_VALUE, BRIGHT_LEVELS[-1]))
+    panel.bind('<Return>', K_PANEL_DONE)
+    panel.bind('<Escape>', K_PANEL_CANCEL)
+    panel.force_focus()
+    pending = None
+    while True:
+        win, event, values = sg.read_all_windows()
+        if win is card:                                                                 # the card keeps going while the panel is open
+            if keep_going(card, event, values):
+                continue
+            pending = (event, values)
+            break
+        if event in (sg.WINDOW_CLOSED, K_PANEL_CANCEL):
+            G.bright = start
+            break
+        if event == K_PANEL_DONE or (event == K_PANEL_CLICK and values[event] == 'done'):
+            break
+        level = G.bright
+        if event == K_PANEL_VALUE:
+            level = values[event]
+        elif event == K_PANEL_STEP:
+            level = BRIGHT_LEVELS[max(0, min(len(BRIGHT_LEVELS) - 1, BRIGHT_LEVELS.index(G.bright) + values[event]))]
+        elif event == K_PANEL_CLICK and values[event] == 'reset':
+            level = 0
+        if level != G.bright:
+            G.bright = level
+            redraw(card)
+        panel[K_PANEL_IMAGE].update(data=render_panel(mouse['hover']))
+    panel.close()
+    redraw(card)
+    return pending
+# --- end BRIGHTNESS ---
 
 
 def resolve_token():
@@ -987,6 +1522,16 @@ def demo_poll(repo, rstate, history_days, commit_cache):
     return snap
 
 
+def demo_commit_detail(sha, cache):
+    """--demo: made-up files and diff for an older commit clicked under Earlier (instead of asking GitHub)"""
+    if sha not in cache:
+        rnd = random.Random(sha)
+        files = [{'name': n, 'status': 'modified', 'add': rnd.randint(2, 60), 'del': rnd.randint(0, 25), 'patch': DEMO_PATCH, 'prev': None}
+                 for n in rnd.sample(['src/impulsing-scene.adb', 'src/impulsing-gltf.adb', 'tests/scene_tests.adb', 'progress/notes.md'], rnd.randint(1, 3))]
+        cache[sha] = {'files': files, 'add': sum(f['add'] for f in files), 'del': sum(f['del'] for f in files)}
+    return cache[sha]
+
+
 # ================================================================ background poller ================================================================
 class Poller(threading.Thread):
     def __init__(self, app):
@@ -1063,7 +1608,8 @@ class Poller(threading.Thread):
 # ================================================================ the app ================================================================
 class App:
     def __init__(self):
-        sg.user_settings_filename(filename=SETTINGS_FILE)
+        sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
+        G.app, self.close_x, self.menu, self.cards, self.panel_open = self, None, None, [], False
         self.state = sg.user_settings_get_entry(K_STATE, {}) or {}
         self.scale = dpi_scale()
         self.snapshots, self.busy = {}, set()
@@ -1120,7 +1666,8 @@ class App:
             return
         want = self.widget_row_ids()
         if any(r not in self.widget_rows for r in want):
-            self.rebuild_widget()
+            if not self.panel_open:                             # the Brightness panel holds on to this window - it is rebuilt when the panel closes
+                self.rebuild_widget()
             return
         if want != self.visible_rows:
             for r in self.widget_rows:
@@ -1184,11 +1731,15 @@ class App:
         rows.append([sg.Text('starting…', font=f['status'], text_color=C_DIM, key=K_STATUS, pad=((10, 0), (0, 3)), tooltip=f'{APP_NAME} {VERSION}'),
                      sg.Push(background_color=C_BG),
                      sg.Text('⇄', font=f['name'], text_color=C_MUTED, key=K_VIEW_TOGGLE, pad=((0, 10), (0, 2)), tooltip=f'Switch to the {other} view'),
-                     sg.ButtonMenu('≡', MENU, key=K_MENU, font=f['name'], button_color=(C_MUTED, C_BG), border_width=0, pad=((0, 6), (0, 2)), tooltip='Menu (or right-click)')])
+                     sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=f['name'], button_color=(C_MUTED, C_BG), border_width=0, pad=((0, 8), (0, 3)),
+                                   tooltip='Menu (or right-click)')])
         first_run = sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME) is None
         self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100, auto_save_location=True,
-                                right_click_menu=MENU, right_click_menu_background_color=C_BG2, right_click_menu_text_color=C_TEXT,
-                                right_click_menu_selected_colors=(C_TEXT, C_BG3), margins=(2, 2), background_color=C_BG, finalize=True)
+                                margins=(2, 2), background_color=C_BG, finalize=True)
+        G.window, G.scale = self.widget, max(1.0, self.widget.TKroot.winfo_fpixels('1i') / 96)
+        self.wire_menu()
+        round_corners(self.widget)
+        self.widget.bind('<Escape>', 'Exit')
         self.current_alpha = int(cfg(K_OPACITY)) / 100
         widget_map = {}
         for repo in self.widget_rows:
@@ -1204,8 +1755,7 @@ class App:
         bind_click(self.widget, widget_map)
         if self.view == VIEW_ISSUES:
             self.refresh_issue_rows()
-        add_close_x(self.widget, K_CLOSE_X)                     # added after the click map, so clicking it can't also open a window
-        show_keep_on_top(self.widget, bool(cfg(K_KEEP_ON_TOP)))
+        self.close_x = add_close_x(self.widget, K_CLOSE_X)      # added after the click map, so clicking it can't also open a window
         if first_run:
             self.snap_to('TR')
         for repo in self.visible_rows:
@@ -1213,10 +1763,97 @@ class App:
         self.refresh_status()
         self.keep_on_screen()
 
+    def make_menu(self):
+        """The right-click / ≡ menu with a ✓ on the current choices - every label starts with a ✓ or the same width of spaces, so they line up"""
+        tick = lambda on: '✓ ' if on else '    '
+        theme = lambda n: f'{tick(n == G.theme)}{n}::{KT_THEME(n)}'
+        paused = self.poller is not None and self.poller.paused
+        return ['', [f'    Check now::{K_M_CHECK}', f'    Mark all as read::{K_M_READ}', f'    Switch view  (repos ⇄ issues)::{K_M_VIEW}', '---',
+                     f'{tick(paused)}Pause polling::{K_M_PAUSE}', f'{tick(cfg(K_KEEP_ON_TOP))}Keep on top::{K_M_TOP}',
+                     '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
+                     f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
+                     '    Snooze', [f'    {label}::{key}' for key, label in SNOOZES.items()],
+                     '    Snap to corner', [f'    {name}::{KT_M_SNAP(corner)}' for corner, name in SNAP_CORNERS.items()], '---',
+                     f'    Settings...::{K_M_SETTINGS}', f'    Open log file::{K_M_LOG}', f'    About::{K_M_ABOUT}', '---',
+                     '    Edit Me::Edit Me', '    Version::Version', '    Exit::Exit']]
+
+    def wire_menu(self):
+        """The right-click menu: ONE menu for the whole widget, popped up from a right-click anywhere on it (PySimpleGUI's right_click_menu would give
+           every element - all the rows, hidden ones too - a copy of its own, and with 32 themes in it that gets slow).  Its choices send their keys as events"""
+        self.menu = tk_menu(self.widget.TKroot, self.make_menu()[1], self.widget)
+
+        def popup(e):
+            self.menu.tk_popup(e.x_root, e.y_root, 0)
+            if not sg.running_linux():
+                self.menu.grab_release()
+
+        self.widget.TKroot.bind('<ButtonRelease-2>' if sg.running_mac() else '<ButtonRelease-3>', popup, add='+')
+        style_menus(self.widget)
+
+    def rebuild_menus(self):
+        """After a choice: the right-click menu and the ≡ menu rebuilt (new ✓ marks), then styled"""
+        menu = self.make_menu()
+        old, self.menu = self.menu, tk_menu(self.widget.TKroot, menu[1], self.widget)
+        old.destroy()
+        old = self.widget[K_MENU].TKMenu
+        self.widget[K_MENU].update(menu_definition=menu, button_color=(C_MUTED, C_BG))     # without button_color, update() puts back the colors it was built with
+        old.destroy()
+        style_menus(self.widget)
+
     def set_keep_on_top(self, on):
         sg.user_settings_set_entry(K_KEEP_ON_TOP, on)
         self.widget.keep_on_top_set() if on else self.widget.keep_on_top_clear()
-        show_keep_on_top(self.widget, on)
+        self.rebuild_menus()                                    # the ✓ beside Keep on top
+
+    def retheme(self):
+        """A new theme or Brightness: every color worked out again, the widget rebuilt in them, and every open window reopened in place in the new colors
+           (lists keep their selection, Settings what was typed)"""
+        apply_theme()
+        self.rebuild_widget()
+        if self.details is not None:
+            spot, repo = self.details.current_location(), self.details_repo
+            self.open_details(repo, reopen=True, spot=spot)
+        if self.issues_win is not None:
+            spot, repo = self.issues_win.current_location(), self.issues_repo
+            number = self.issue_items[self.issue_selected][1]['number'] if self.issue_selected is not None else None
+            self.open_issues(repo, reopen=True, number=number, spot=spot)
+        if self.all_win is not None:
+            self.open_all_repos(self.all_win.current_location())
+        if self.settings_win is not None:
+            spot, values = self.settings_win.current_location(), self.settings_win.read(timeout=0)[1]
+            self.settings_win.close()
+            self.settings_win = None
+            self.open_settings(values, spot)
+        if self.pick_win is not None:
+            spot, values = self.pick_win.current_location(), self.pick_win.read(timeout=0)[1] or {}
+            text = self.settings_win[K_REPOS].get() if self.settings_win is not None else ''
+            self.open_picker(self.pick_owner, self.pick_repos, text, spot)
+            for i in range(len(self.pick_repos)):
+                if KT_PICK_ROW(i) in values:
+                    self.pick_win[KT_PICK_ROW(i)].update(values[KT_PICK_ROW(i)])
+        old, self.cards = self.cards, []
+        for card in old:
+            spot = card.current_location()
+            card.close()
+            self.text_card(card.metadata['title'], card.metadata['text'], card.metadata['size'], spot)
+
+    def keep_going(self, window, event, values):
+        """While the Brightness panel is open the widget keeps taking poll results; anything else closes the panel and goes to the main loop"""
+        if event in (K_POLL_BUSY, K_POLL_RESULT, K_REPOS_RESOLVED):
+            self.widget_event(event, values)
+            return True
+        return False
+
+    def text_card(self, title, text, size, spot=(None, None)):
+        """Version, About and messages: the text on a themed card with a title strip, no OS title bar.  The main loop closes it (x, Close, Escape, Alt-F4)"""
+        layout = [title_strip(title),
+                  [sg.Multiline(text, size=size, font=(MONO_FONT, 10), disabled=True, background_color=C_BG2, text_color=C_TEXT, border_width=0, pad=((10, 10), (8, 4)),
+                                expand_x=True, expand_y=True)],
+                  [sg.Push(background_color=C_BG), sg.Button('Close', key=K_CLOSE, pad=((0, 4), (4, 10))), sg.Sizegrip(background_color=C_BG)]]
+        card = sg.Window(title, layout, no_titlebar=True, keep_on_top=True, finalize=True, margins=(0, 0), resizable=True, location=spot, background_color=C_BG,
+                         metadata={'title': title, 'text': text, 'size': size}, **sbar())
+        dress(card, K_CLOSE)
+        self.cards.append(card)
 
     def keep_on_screen(self):
         """As the widget changes width (a longer line, a row appearing or going quiet): one sitting against the right edge of the main
@@ -1450,7 +2087,7 @@ class App:
         self.sync_widget()
 
     # ---------------------------------------------------------------- "all repos" list (click the quiet-repos row) ----------------------------------------------------------------
-    def open_all_repos(self):
+    def open_all_repos(self, spot=(None, None)):
         if self.all_win is not None:
             self.all_win.close()
         f, sc = self.fonts(), self.scale
@@ -1474,13 +2111,14 @@ class App:
             rows.append([sg.Column([row], key=KT_ALL_ROW(repo), pad=0, background_color=C_BG)])
         height = min(int(520 * sc), int(36 * sc) * max(len(rows), 3))
         col = sg.Column(rows, scrollable=True, vertical_scroll_only=True, size=(int(1000 * sc), height), key=K_ALL_LIST, background_color=C_BG, expand_y=True, pad=(0, 4),
-                        sbar_background_color=C_LINE, sbar_trough_color=C_BG, sbar_arrow_color=C_MUTED)
+                        **sbar(C_BG))
         layout = [[sg.Text(f'Watched repos · {len(repos)}', font=f['h1'], text_color=C_BLUE, pad=((6, 6), (6, 0))), sg.Push(background_color=C_BG),
                    sg.Text("click a repo to open What's new", font=f['small'], text_color=C_MUTED, pad=((0, 6), (14, 0)))],
                   [col],
                   [sg.Text('↑↓ PgUp PgDn Home End scroll · Esc closes', font=f['status'], text_color=C_DIM, pad=((6, 0), (6, 4))), sg.Push(background_color=C_BG),
-                   sg.Button('Close', key=K_CLOSE, **self.btn(f))]]
-        self.all_win = sg.Window(f'{APP_NAME} · watched repos', layout, finalize=True, resizable=True, margins=(4, 4), background_color=C_BG)
+                   sg.Button('Close', key=K_CLOSE, **self.btn(f)), sg.Sizegrip(background_color=C_BG)]]
+        self.all_win = sg.Window(f'{APP_NAME} · watched repos', framed(f'{APP_NAME} · watched repos', layout, (4, 4)), no_titlebar=True, finalize=True, resizable=True,
+                                 margins=(0, 0), background_color=C_BG, location=spot, **sbar())
         widget_map = {}
         for repo in repos:
             for w in descendants(self.all_win[KT_ALL_ROW(repo)].Widget):
@@ -1488,10 +2126,11 @@ class App:
         bind_click(self.all_win, widget_map)
         for seq, key in KEY_BINDS:
             self.all_win.bind(seq, key)
+        dress(self.all_win, K_KEY_ESC)
         wheel_scrolls_list(self.all_win, K_ALL_LIST)
 
     def all_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC):
+        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC, K_STRIP_CLOSE):
             self.all_win.close()
             self.all_win = None
         elif event in LIST_KEYS:
@@ -1510,7 +2149,7 @@ class App:
         except Exception:
             pass
 
-    def open_picker(self, owner, repos, current_text):
+    def open_picker(self, owner, repos, current_text, spot=(None, None)):
         if self.pick_win is not None:
             self.pick_win.close()
         f, sc = self.fonts(), self.scale
@@ -1530,7 +2169,7 @@ class App:
             rows = [[sg.Text('No repos found for that account', font=f['body'], text_color=C_MUTED, pad=(6, 6))]]
         height = min(int(520 * sc), int(36 * sc) * max(len(rows), 3))
         col = sg.Column(rows, scrollable=True, vertical_scroll_only=True, size=(int(1000 * sc), height), key=K_PICK_LIST, background_color=C_BG, expand_y=True, pad=(0, 4),
-                        sbar_background_color=C_LINE, sbar_trough_color=C_BG, sbar_arrow_color=C_MUTED)
+                        **sbar(C_BG))
         layout = [[sg.Text(f'{owner} · {n_of(len(repos), "repo")}', font=f['h1'], text_color=C_BLUE, pad=((6, 6), (6, 0))), sg.Push(background_color=C_BG),
                    sg.Text('tick the repos to watch · ticking every one watches the whole account (new repos included)', font=f['small'], text_color=C_MUTED,
                            pad=((0, 6), (14, 0)))],
@@ -1539,14 +2178,17 @@ class App:
                    sg.Button('Pushed in last 90 days', key=K_PICK_ACTIVE, **self.btn(f)), sg.Push(background_color=C_BG),
                    sg.Button('Use selected', key=K_PICK_OK, font=f['body'], button_color=(C_BG, C_GREEN), border_width=0, pad=((0, 6), (6, 0))),
                    sg.Button('Cancel', key=K_CANCEL, **self.btn(f))],
-                  [sg.Text('↑↓ PgUp PgDn Home End scroll · Esc cancels', font=f['status'], text_color=C_DIM, pad=((6, 0), (6, 4)))]]
-        self.pick_win = sg.Window(f'Choose repos · {owner}', layout, finalize=True, keep_on_top=True, resizable=True, margins=(4, 4), background_color=C_BG)
+                  [sg.Text('↑↓ PgUp PgDn Home End scroll · Esc cancels', font=f['status'], text_color=C_DIM, pad=((6, 0), (6, 4))), sg.Push(background_color=C_BG),
+                   sg.Sizegrip(background_color=C_BG)]]
+        self.pick_win = sg.Window(f'Choose repos · {owner}', framed(f'Choose repos · {owner}', layout, (4, 4)), no_titlebar=True, finalize=True, keep_on_top=True,
+                                  resizable=True, margins=(0, 0), background_color=C_BG, location=spot, **sbar())
         for seq, key in KEY_BINDS:
             self.pick_win.bind(seq, key)
+        dress(self.pick_win, K_KEY_ESC)
         wheel_scrolls_list(self.pick_win, K_PICK_LIST)
 
     def pick_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CANCEL, K_KEY_ESC):
+        if event in (sg.WIN_CLOSED, K_CANCEL, K_KEY_ESC, K_STRIP_CLOSE):
             self.pick_win.close()
             self.pick_win = None
         elif event in LIST_KEYS:
@@ -1609,11 +2251,11 @@ class App:
                 sg.Text(shorten(meta, self.meta_chars), size=(self.meta_chars, 1), font=f['small'], text_color=C_MUTED, key=KT_ITEM_META(idx), pad=(0, (0, 4)))]
         return sg.Column([row1, row2], key=KT_ITEM(idx), pad=0, expand_x=True, background_color=C_BG)
 
-    def open_details(self, repo, reopen=False):
+    def open_details(self, repo, reopen=False, spot=(None, None)):
         snap = self.snapshots.get(repo)
         if not snap or not snap.get('ok'):
             msg = snap['error'] if snap else 'Still doing the first check - try again in a moment.'
-            sg.popup(f'{repo}\n\n{msg}', title=repo, keep_on_top=True, background_color=C_BG2, text_color=C_TEXT)
+            self.text_card(repo, f'{repo}\n\n{msg}', (60, 4))
             return
         if self.details is not None and self.details_repo == repo and not reopen:
             self.details.bring_to_front()
@@ -1644,10 +2286,9 @@ class App:
         head.append([sg.Text('New activity arrived while this was open · click Refresh to reload', key=K_FRESH, font=f['small'], text_color=C_AMBER, visible=False,
                              pad=((8, 0), (0, 4)))])
         list_col = sg.Column(rows, scrollable=True, vertical_scroll_only=True, size=(list_w, list_h), key=K_LIST, background_color=C_BG, expand_y=True, pad=(0, 0),
-                             sbar_background_color=C_LINE, sbar_trough_color=C_BG, sbar_arrow_color=C_MUTED)
+                             **sbar(C_BG))
         detail = sg.Multiline(size=(pane_chars, 34), key=K_DETAIL, font=f['mono'], disabled=True, write_only=True, horizontal_scroll=True, background_color=C_BG2,
-                              text_color=C_TEXT, border_width=0, expand_x=True, expand_y=True, pad=(0, 0), sbar_background_color=C_LINE, sbar_trough_color=C_BG2,
-                              sbar_arrow_color=C_MUTED)
+                              text_color=C_TEXT, border_width=0, expand_x=True, expand_y=True, pad=(0, 0), **sbar())
         btn = dict(font=f['small'], button_color=(C_TEXT, C_BG3), border_width=0, pad=((0, 6), (6, 0)))
         right = sg.Column([[detail], [sg.Button('Open on GitHub', key=K_OPEN, **btn), sg.Button('Copy SHA', key=K_COPY_SHA, **btn), sg.Button('Copy link', key=K_COPY_LINK, **btn),
                                       sg.Push(background_color=C_BG), sg.Text(KEYS_HINT, font=f['status'], text_color=C_DIM, pad=(0, (6, 0)))]],
@@ -1658,8 +2299,9 @@ class App:
                                     sg.Button('Issues…', key=K_ISSUES_BTN, **btn), sg.Button('Open repo on GitHub', key=K_OPEN_REPO, **btn),
                                     sg.Button('Copy digest', key=K_COPY_DIGEST, **btn),
                                     sg.Button('Close', key=K_CLOSE, **btn)]], background_color=C_BG, pad=(0, 0))]]
-        layout = head + [[list_col, sg.VerticalSeparator(color=C_LINE), right]] + foot
-        self.details = sg.Window(f"{name} · What's new", layout, finalize=True, resizable=True, margins=(4, 4), background_color=C_BG, icon=None)
+        layout = head + [[list_col, sg.VerticalSeparator(color=C_LINE), right]] + foot + [[sg.Push(background_color=C_BG), sg.Sizegrip(background_color=C_BG)]]
+        self.details = sg.Window(f"{name} · What's new", framed(f"{name} · What's new", layout, (4, 4)), no_titlebar=True, finalize=True, resizable=True, margins=(0, 0),
+                                 background_color=C_BG, location=spot, **sbar())
         self.details_repo, self.details_sig, self.selected, self.item_widgets = repo, self.signature(snap), None, {}
         for i in range(len(self.details_items)):
             for w in descendants(self.details[KT_ITEM(i)].Widget):
@@ -1667,6 +2309,7 @@ class App:
         bind_click(self.details, self.item_widgets)
         for seq, key in KEY_BINDS:
             self.details.bind(seq, key)
+        dress(self.details, K_KEY_ESC)
         wheel_scrolls_list(self.details, K_LIST)
         self.write_digest(snap)
         self.draw_chart(snap)
@@ -1794,7 +2437,7 @@ class App:
 
     def fetch_detail_bg(self, repo, sha, window):
         try:
-            det = fetch_commit_detail(self.poller.gh, repo, sha, self.poller.commit_cache)
+            det = demo_commit_detail(sha, self.poller.commit_cache) if DEMO else fetch_commit_detail(self.poller.gh, repo, sha, self.poller.commit_cache)
         except Exception as e:
             det = f'{e}'
         try:
@@ -1952,11 +2595,11 @@ class App:
                 sg.Text(shorten(' · '.join(parts), self.is_meta_chars), size=(self.is_meta_chars, 1), font=f['small'], text_color=C_MUTED, pad=(0, (0, 4)))]
         return sg.Column([row1, row2], key=KT_IS_ITEM(idx), pad=0, expand_x=True, background_color=C_BG)
 
-    def open_issues(self, repo, reopen=False, number=None):
+    def open_issues(self, repo, reopen=False, number=None, spot=(None, None)):
         snap = self.snapshots.get(repo)
         if not snap or not snap.get('ok'):
             msg = snap['error'] if snap else 'Still doing the first check - try again in a moment.'
-            sg.popup(f'{repo}\n\n{msg}', title=repo, keep_on_top=True, background_color=C_BG2, text_color=C_TEXT)
+            self.text_card(repo, f'{repo}\n\n{msg}', (60, 4))
             return
         if self.issues_win is not None and self.issues_repo == repo and not reopen:
             self.issues_win.bring_to_front()
@@ -1989,7 +2632,6 @@ class App:
         n_wait = sum(1 for r in snap.get('open_issues', []) if r['waiting'])
         facts = f'{snap.get("open_issue_total", 0)} open · {n_wait} waiting on you · {len(new)} new'
         plain = dict(disabled=True, write_only=True, border_width=0, expand_x=True)
-        sbar = dict(sbar_background_color=C_LINE, sbar_trough_color=C_BG2, sbar_arrow_color=C_MUTED)
         btn = self.btn(f)
         digest = sg.Multiline(size=(150, 2), key=K_IS_DIGEST, font=f['body'], no_scrollbar=True, background_color=C_BG, pad=((8, 8), (2, 4)), **plain)
         fresh = sg.Text('New issue activity arrived while this was open · click Refresh to reload', key=K_IS_FRESH, font=f['small'], text_color=C_AMBER, visible=False)
@@ -1998,16 +2640,17 @@ class App:
                 [digest],
                 [fresh]]
         list_col = sg.Column(rows, scrollable=True, vertical_scroll_only=True, size=(list_w, list_h), key=K_IS_LIST, background_color=C_BG, expand_y=True, pad=(0, 0),
-                             sbar_background_color=C_LINE, sbar_trough_color=C_BG, sbar_arrow_color=C_MUTED)
-        thread = sg.Multiline(size=(pane_chars, 34), key=K_IS_THREAD, font=f['body'], background_color=C_BG2, expand_y=True, pad=(0, 0), **plain, **sbar)
+                             **sbar(C_BG))
+        thread = sg.Multiline(size=(pane_chars, 34), key=K_IS_THREAD, font=f['body'], background_color=C_BG2, expand_y=True, pad=(0, 0), **plain, **sbar())
         reply = sg.Button('Reply on GitHub', key=K_IS_REPLY, font=f['small'], button_color=(C_BG, C_GREEN), border_width=0, pad=((0, 6), (6, 0)))
         right = sg.Column([[thread],
                            [reply, sg.Button('Copy link', key=K_IS_COPY, **btn), sg.Push(background_color=C_BG), sg.Text(ISSUES_HINT, font=f['status'], text_color=C_DIM)]],
                           expand_x=True, expand_y=True, pad=((8, 0), 0), background_color=C_BG)
         foot = [[sg.Button('Mark issues read', key=K_IS_READ, **btn), sg.Button('Refresh now', key=K_IS_REFRESH, **btn), sg.Button('All issues on GitHub', key=K_IS_ALL, **btn),
-                 sg.Push(background_color=C_BG), sg.Button('Close', key=K_CLOSE, **btn)]]
+                 sg.Push(background_color=C_BG), sg.Button('Close', key=K_CLOSE, **btn), sg.Sizegrip(background_color=C_BG)]]
         layout = head + [[list_col, sg.VerticalSeparator(color=C_LINE), right]] + foot
-        self.issues_win = sg.Window(f'{name} · Issues', layout, finalize=True, resizable=True, margins=(6, 4), background_color=C_BG)
+        self.issues_win = sg.Window(f'{name} · Issues', framed(f'{name} · Issues', layout, (6, 4)), no_titlebar=True, finalize=True, resizable=True, margins=(0, 0),
+                                    background_color=C_BG, location=spot, **sbar())
         self.issues_repo, self.issues_sig, self.issue_selected = repo, self.issue_signature(snap), None
         widget_map = {}
         for i in range(len(self.issue_items)):
@@ -2016,6 +2659,7 @@ class App:
         bind_click(self.issues_win, widget_map)
         for seq, key in KEY_BINDS:
             self.issues_win.bind(seq, key)
+        dress(self.issues_win, K_KEY_ESC)
         wheel_scrolls_list(self.issues_win, K_IS_LIST)
         self.write_issue_digest(snap)
         if self.issue_items:
@@ -2170,7 +2814,7 @@ class App:
             run.append(line)
 
     def issues_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC):
+        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC, K_STRIP_CLOSE):
             self.close_issues()
         elif event == K_CLICK:
             self.select_issue(values[event])
@@ -2201,7 +2845,8 @@ class App:
             webbrowser.open(f'https://github.com/{self.issues_repo}/issues')
 
     # ---------------------------------------------------------------- settings window ----------------------------------------------------------------
-    def open_settings(self):
+    def open_settings(self, values=None, spot=(None, None)):
+        """The settings window.  values = what it showed before it was rebuilt in a new theme (None: the saved settings)"""
         if self.settings_win is not None:
             self.settings_win.bring_to_front()
             return
@@ -2233,10 +2878,19 @@ class App:
                    sg.Combo(HOURS, key=K_QUIET_TO, setting=DEFAULTS[K_QUIET_TO], readonly=True, font=f['body'], size=(7, 1))],
                   [sg.Text(f'Settings & log folder: {os.path.dirname(sg.user_settings_filename())}', font=f['status'], text_color=C_DIM)],
                   [sg.Button('Save', key=K_SAVE, font=f['body'], button_color=(C_BG, C_GREEN)), sg.Button('Cancel', key=K_CANCEL, font=f['body'])]]
-        self.settings_win = sg.Window(f'{APP_NAME} {VERSION} · Settings', layout, finalize=True, keep_on_top=True, margins=(12, 10), background_color=C_BG)
-        self.settings_win.bind('<Escape>', K_CANCEL)
+        self.settings_win = sg.Window(f'{APP_NAME} {VERSION} · Settings', framed(f'{APP_NAME} · Settings', layout, (12, 10)), no_titlebar=True, finalize=True,
+                                      keep_on_top=True, margins=(0, 0), background_color=C_BG, location=spot, **sbar())
+        dress(self.settings_win, K_CANCEL)
+        for key, value in (values or {}).items():               # rebuilt in a new theme: put back what was showing
+            try:
+                self.settings_win[key].update(value)
+            except Exception:
+                pass
 
     def test_token_bg(self, token, repos, window):
+        if DEMO:                                                # --demo never touches the network
+            window.write_event_value(K_TEST_RESULT, 'demo - no token and no network: every repo answers OK')
+            return
         gh, lines = GitHub(token), []
         try:
             lines.append(f'token OK - logged in as {gh.get("/user").get("login")}' if token else 'no token found - only public repos will work')
@@ -2291,6 +2945,11 @@ class App:
                 continue
             if window is None or (window is self.widget and event in ('Exit', sg.WINDOW_CLOSED)):
                 break
+            if window in self.cards:                            # Version / About / messages
+                if event in (sg.WIN_CLOSED, K_CLOSE, K_STRIP_CLOSE):
+                    window.close()
+                    self.cards.remove(window)
+                continue
             if window not in (self.widget, self.details, self.settings_win, self.pick_win, self.all_win, self.issues_win):
                 if event == sg.WIN_CLOSED:
                     window.close()                      # a non-blocking popup's X (Version): read_all_windows reports it, the app has to close it
@@ -2312,13 +2971,14 @@ class App:
         self.poller.wake.set()
         self.close_details()
         self.close_issues()
-        for w in (self.settings_win, self.pick_win, self.all_win):
+        for w in self.cards + [self.settings_win, self.pick_win, self.all_win]:
             if w is not None:
                 w.close()
         self.widget.close()
 
     def widget_event(self, event, values):
         item = values.get(K_MENU) if event == K_MENU else event
+        item = item.split('::')[-1] if isinstance(item, str) and '::' in item else item       # a ≡ menu choice arrives as its whole 'label::key'
         if event == K_POLL_BUSY:
             self.busy.add(values[event])
             self.refresh_row(values[event])
@@ -2377,46 +3037,62 @@ class App:
                 self.open_all_repos()
             else:
                 self.open_details(target)
-        elif item == M_CHECK:
+        elif item == K_M_CHECK:
             self.poller.wake.set()
-        elif item == M_VIEW:
+        elif item == K_M_VIEW:
             self.switch_view()
-        elif item == M_READ:
+        elif item == K_M_READ:
             for repo in self.repos():
                 self.mark_read(repo, sync=False)
             self.sync_widget()
-        elif item == M_PAUSE:
+        elif item == K_M_PAUSE:
             self.poller.paused = not self.poller.paused
             self.poller.wake.set()
             self.refresh_status()
-        elif item in (M_SNOOZE_1, M_SNOOZE_4, M_SNOOZE_TOMORROW, M_SNOOZE_OFF):
+            self.rebuild_menus()                                # the ✓ beside Pause polling
+        elif item in SNOOZES:
             tomorrow = datetime.combine(date.today() + timedelta(days=1), datetime.min.time()).replace(hour=7)
-            until = {M_SNOOZE_1: datetime.now() + timedelta(hours=1), M_SNOOZE_4: datetime.now() + timedelta(hours=4), M_SNOOZE_TOMORROW: tomorrow, M_SNOOZE_OFF: None}
+            until = {'-M SNOOZE 1-': datetime.now() + timedelta(hours=1), '-M SNOOZE 4-': datetime.now() + timedelta(hours=4), '-M SNOOZE TOMORROW-': tomorrow,
+                     '-M SNOOZE OFF-': None}
             self.snooze_until = until[item]
             self.sync_widget()
-        elif item in (M_SNAP_TL, M_SNAP_TR, M_SNAP_BL, M_SNAP_BR):
-            self.snap_to({M_SNAP_TL: 'TL', M_SNAP_TR: 'TR', M_SNAP_BL: 'BL', M_SNAP_BR: 'BR'}[item])
-        elif item == M_SETTINGS:
+        elif item in SNAP_KEYS:
+            self.snap_to(SNAP_KEYS[item])
+        elif item == K_M_SETTINGS:
             self.open_settings()
-        elif item == M_TOP:
+        elif item == K_M_TOP:
             self.set_keep_on_top(not cfg(K_KEEP_ON_TOP))
-        elif item == M_LOG:
+        elif isinstance(item, str) and item.startswith(K_THEME):
+            G.theme = item[len(K_THEME):]
+            sg.user_settings_set_entry(K_THEME, G.theme)
+            self.retheme()
+        elif item == K_BRIGHT:
+            self.panel_open = True
+            try:
+                pending = brightness_panel(self.widget, self.keep_going)
+            finally:
+                self.panel_open = False
+            sg.user_settings_set_entry(K_BRIGHT, G.bright)
+            self.retheme()
+            if pending:                                         # the widget event that closed the panel (a menu choice, the x...)
+                return self.widget_event(*pending)
+        elif item == K_M_LOG:
             path = os.path.join(os.path.dirname(sg.user_settings_filename()), LOG_FILE_NAME)
             if not os.path.exists(path):
                 log('log created')
             os.startfile(path) if hasattr(os, 'startfile') else webbrowser.open('file://' + path)
-        elif item == M_ABOUT:
-            sg.popup(f'{APP_NAME} {VERSION}\n\n{__doc__.strip()}', title='About', keep_on_top=True, font=(MONO_FONT, 10), background_color=C_BG2, text_color=C_TEXT, line_width=140)
+        elif item == K_M_ABOUT:
+            self.text_card(f'{APP_NAME} - about', f'{APP_NAME} {VERSION}\n\n{__doc__.strip()}', (140, 30))
         elif item == 'Version':
-            sg.popup_scrolled(f'{APP_NAME} {VERSION}', __file__, sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
+            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__, sg.get_versions()]), (70, 10))
         elif item == 'Edit Me':
             sg.execute_editor(__file__)
-        elif item in ('Exit', K_CLOSE_X):                       # the ≡ ButtonMenu's Exit or the ✕; the right-click 'Exit' is caught with WINDOW_CLOSED in run()
+        elif item in ('Exit', K_CLOSE_X):                       # Exit from either menu, or the ✕
             return False
         return True
 
     def details_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC):
+        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC, K_STRIP_CLOSE):
             self.close_details()
         elif event == K_CLICK:
             self.select_item(values[event])
@@ -2466,7 +3142,7 @@ class App:
                 self.thread_arrived(self.details[K_DETAIL], it['data'], result)
 
     def settings_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CANCEL):
+        if event in (sg.WIN_CLOSED, K_CANCEL, K_STRIP_CLOSE):
             self.settings_win.close()
             self.settings_win = None
         elif event == K_OPACITY:
@@ -2474,15 +3150,14 @@ class App:
             self.current_alpha = int(values[K_OPACITY]) / 100
         elif event == K_TEST:
             self.settings_win[K_TEST_RESULT].update('testing…')
-            token = values[K_TOKEN].strip() or resolve_token()
+            token = '' if DEMO else values[K_TOKEN].strip() or resolve_token()
             threading.Thread(target=self.test_token_bg, args=(token, parse_entries(values[K_REPOS]), self.settings_win), daemon=True).start()
         elif event == K_TEST_RESULT:
             self.settings_win[K_TEST_RESULT].update(values[event])
         elif event == K_PICK:
-            token = values[K_TOKEN].strip() or resolve_token()
+            token = '' if DEMO else values[K_TOKEN].strip() or resolve_token()
             default = next((e for e in parse_entries(values[K_REPOS]) if '/' not in e), '') or ('PySimpleGUI' if DEMO else GitHub(token).login())
-            owner = sg.popup_get_text('Account (user or organization) whose repos to list:', title='Choose repos', default_text=default, keep_on_top=True,
-                                      background_color=C_BG2, text_color=C_TEXT)
+            owner = ask_text('Choose repos', 'Account (user or organization) whose repos to list:', default)
             if owner and owner.strip():
                 owner = clean_entry(owner).split('/')[0]
                 self.settings_win[K_TEST_RESULT].update(f'listing repos for {owner}…')
@@ -2499,15 +3174,18 @@ class App:
 
 
 def main():
-    sg.theme_add_new('RepoWatch', {'BACKGROUND': C_BG, 'TEXT': C_TEXT, 'INPUT': C_BG2, 'TEXT_INPUT': C_TEXT, 'SCROLL': C_LINE, 'BUTTON': (C_TEXT, C_BG3),
-                                   'PROGRESS': (C_BLUE, C_BG2), 'BORDER': 0, 'SLIDER_DEPTH': 0, 'PROGRESS_DEPTH': 0})
-    sg.theme('RepoWatch')
-    sg.set_options(dpi_awareness=True, font=(UI_FONT, 11), tooltip_font=(UI_FONT, 10))
+    sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
+    G.theme = sg.user_settings_get_entry(K_THEME, 'Toybox')
+    G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')
+    G.bright = sg.user_settings_get_entry(K_BRIGHT, 0)
+    G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
+    sg.set_options(dpi_awareness=True, font=(UI_FONT, 11), tooltip_font=(UI_FONT, 10), icon=ICON)
+    apply_theme()
     try:
         App().run()
-    except Exception:
+    except Exception as e:
         log(traceback.format_exc())
-        raise
+        sg.popup_error_with_traceback(f'{APP_NAME} crashed', e, traceback.format_exc())
 
 
 if __name__ == '__main__':

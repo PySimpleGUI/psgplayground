@@ -17,8 +17,8 @@ THE FORECAST
     Rate = least-squares slope of the recent checks (last 90 min for the session limit, last 24 h for weekly ones); when there aren't
     enough checks yet it falls back to the average rate since the window started.  From that: when 100% would arrive, and whether
     that's before or after the reset.  A finite monthly spend limit gets the same treatment in $/day.
-    ≡ or right-click  ->  Refresh · Detail · Pause · Keep on top · Snap to corner · Settings · Sign in · Edit Me · Version · Exit
-    Drag it anywhere; its position is remembered.
+    ≡ or right-click  ->  Refresh · Detail · Pause · Keep on top · Theme · Brightness · Snap to corner · Settings · Sign in · Edit Me · Version · Exit
+    Drag it anywhere; its position is remembered.  Esc closes it.  The other windows are moved by their title strip.
 
 WHERE THE NUMBERS COME FROM
     The same undocumented endpoint Claude Code's /usage uses:  GET https://api.anthropic.com/api/oauth/usage
@@ -29,14 +29,17 @@ WHERE THE NUMBERS COME FROM
       Own sign-in   - this widget does its own OAuth (PKCE) login and keeps its own token pair, refreshing it independently.
                       Menu -> Sign in, open the URL, approve, paste the code back.  Nothing to do with Claude Code's token.
 
-    python claude_usage_widget.pyw --demo      made-up numbers, no token, no network (handy for trying the UI)
+    python claude_usage_widget.pyw --demo      made-up numbers, no token, no network (handy for trying the UI) - with its own settings file,
+                                               claude_usage_widget_demo.json, so trying things never touches your real settings
 
     Anthropic rate-limits this endpoint hard if you hammer it - keep the poll interval at 5 minutes or more.
 
-Needs only PySimpleGUI - everything else is stdlib.  Settings and history live in claude_usage_widget.json in PySimpleGUI's
+Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings and history live in claude_usage_widget.json in PySimpleGUI's
 user-settings folder; problems are logged to claude_usage_widget.log in the same folder.
 
 CHANGELOG
+    1.7.0  06-Nov-2026   The standard widget themes: right-click > Theme (32, as color chips) and Brightness...; every window themed with no OS title
+                         bar (moved by its title strip, round corners on Windows 11); flat themed menus; Esc closes the widget; --demo has its own settings
     1.6.6  03-Nov-2026   Credits get a bar row like the limits - % of the monthly limit, $ left, $ spent and $/day - and count in the
                          forecast line ("Credits reach the $150 limit ~Nov 11").  Detail window: a Credits graph + forecast, and this week's
                          use by app (Cowork / Claude Code / Chats).  Credits can be the widget's graph.  The usage response no longer gives
@@ -46,7 +49,9 @@ CHANGELOG
 import base64
 import ctypes
 import hashlib
+import io
 import json
+import math
 import os
 import secrets
 import subprocess
@@ -61,10 +66,12 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 
 import PySimpleGUI as sg
+from PIL import Image, ImageDraw, ImageFont
 
 APP_NAME = 'Claude Usage'
-VERSION = '1.6.6'
+VERSION = '1.7.0'
 SETTINGS_FILE = 'claude_usage_widget.json'
+DEMO_SETTINGS_FILE = 'claude_usage_widget_demo.json'             # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'claude_usage_widget.log'
 DEMO = '--demo' in sys.argv
 ICON = b'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAHlElEQVR4nO1bW4wcRxU991Z198zs2qwjxzyU/DjgxSZCdkwUhSDW+UH2B/kA9QbzEAIhjOCHSNgBIWWyPBRICFh8RNgSCQ+B8IyE5S8UKZZthMGKFEfEsTdrO46jBFux4/gxOzvT3VV1+ZgeP3bn4d3ZnRkre6TS7qq7au89VXXrVHVdoAUEoH35ES0CavVev0JuwvamDyWfZxobc/W/3/7xw3daqOFqYu5VTNo4gHm+TZ47nAM0M7IevQL2Jg4emzoxWixaAJAwVJT+Ph0NCZBCqGi0aHd8e723cfmqzRb0NRF5INCc9ZWq1ZJW9PUAUvthnGAqThwRjiqiP1+Kqn9c+/Tuc81ImOHCvvyIfnDsgDm2dfSeAV8/k/H0fbG1qCQWzjkHkJtep89ARFCBVsh5GuXYnDHGPfKxJ/9WmD6qMZ0AyY9oGjtgjm4Nv7kk8LYz8ZLJKDZERAIw9Veft4LUABd4SvtKoRwn24d/uesRKYQKo0VH6Zi56lB9iBzbFn59KJP5QzlOYJxYJqieutIhRMSBSG4fyKjzpeqOjz+16zv1KQ4AjHrAKxbtaz/60iez2numEifOOOdudedRmw8MAb9briTLcv6W8W2j36DRopUwVOlzwD2W59M47UeVyn8GA29tKTK3fM9PhwjEU+yIUHWMdXf99K8n8fjjxO6xvKaxMVetVr9wWy6zthQlpqHzRADxLVJmhioiUGytDPjegIntD4lI9gNMhTBU4Zo1MlEZ3zsYeCOTsXGE6QQQxCYQa3BtDexH1GwjYpDnz3gqAtGKIE7eE86tXvXEc+8SABzPf+UOjuxJgfjW1di62iQxbHUSQ/dvxNL1n4U4B+qZAmqzCIkDiBGdOY1ze34P8gJAbuwsEdihrK8uV+IvDj+56+8aABCZNRlP+5NRIkR0o3dEEGPgf/AO5O66e/59WgBwkK11VOPRKsQkxFgHoEaAQNZ7WhEiY+srw40tMtzUJOxUCeIsiLsYH1PFKc5BBQGIqfkMdA5QDHPpQvP2CGStIwjuAQANACTkNRtc4ixUZgAXD/4Dl17c27lDswQRwUUxBlfeiQ9v2gAY0zDIASkBmQDxqZcBaTNNBT7qBIDaRDUiSBLDxdW5+jFnEDNMuQJ/aBhQDlKNmscgEcARsrcPpTu15m5J6rO+eUsIxDf/+nyBmEFapwGQ0uW4VTCk6XGvJWbn0Wxani+ILOj/7aMdfW+wSECvDeg1uh/VgDSYtXjcxVjTdQKIGWINxDV3krS34MGvjq4TYMslqKXLwNpr/IIIzOULIC8AqYVXnN0jIBVTyzd9GUP3fw7sBTPWcxEBxKE8fhjv7HkWLqrWRsMCojsEMMNVyhi8+z4s37i57etLP7UB5spFvLPnWbA/c1s7n+gKAQSCWIPcytWAuHRL3WR4OwchQnbl6toUWOA40NUYIMakJzbSXM4S1QKlMV2xqbs6oKWG7+DdDvC+F0KLBPTagF6jgyDYP3K2E8yJgH6Ts51gTgT0m5ztBLMjYK5y1utfEm6egE7kbBB0aObC4aYJ6Gc52wlmHQP6Uc52gtnrgD6Us53gfS+EFgnotQG9xiIBvTag11gkoNcG9BqLBPTagF5jkYBeG9BraABgotlv15xrem+vdkUt3Qs02gl2VFdqG7GGdQUkLTZp14HTRjhts+2JhYiA/QClI4eA+pEXc8NCWgPMKB3+Z3oshrnXBcBao3TyTSBOQANZwPeBYGahjA/4PkoTp1KSm8Olt2F1St2rxjqAWhxzigN5AaK3T+GtnT/Bsgc2gYNs2pHXVUtPhK7899+4/OJecCYHsaaDuhbkaUTn38Nbu5/HsrVrwJ5OyZlmLgFXJt7A5WMnwIHfeAQJRNUyH169SoAiOlJJrKV2MUEE5Acojx9Gefyl2rnAjKto6e1M58CZ3PzV9TTKb55B+fT/aqkbzSatuJYfVCVlTQEvA4DO5/O88iNn33jt9UsTOU+vriTWEbUgQgSczV1trRkovd05r3X99p/KqX4u2cR6ReBybCpOyb8AgD9/9qyiLTsTBj2X9TUJpH1OkHO1Is3LDAfmo279mL1FaeE8nMANBj5F1u5f9fNdr+8bGdG8fsdOIwJSNv7T5an4fEYrJYJ+T4yaExRBrHMA4ykBaMP3VggTQTAa8kef3n3OCL7rK0XMsNK/SQFzgogkQ9lAT0Zm++onCvsQhkyjRXstaSpNJDq6NfzNh5bkvn9+smoAUUS3wMFeG4hIclsu412sRIdWrXefKRaBsFB0RJBrBAC0Pz+iHhw7YI4/+vDvlmb8LaUogXXOAKSo1RLZn5DaVBZalstwuZocnIrMQ5/4dfEi0m88aCDHSPJ5orExd+LRzd8KPP5VoPkDpSiBsWJr+Sj9TQQJRABighoMPFgniK3b/sKF49u27HwpEQHRdbfjG6fOphmW41vD4Zzv/cA6eSjn6xVMBNNGYfUSglr+MCAoVZNYET8fi/nt8C8KLyCVEzQtNaBpbxbCUNWTj0/mv7rCt/bTiZF1Rty9DNK271KHBYoIntKvEHDEEg6t/NlfJnDNFzfrbC/J51kKYf9+2WyDQhiqQtja/v8Dz13VURvjRhAAAAAASUVORK5CYII='          # embedded window/taskbar icon (three usage bars) - also what launchers show
@@ -85,19 +92,67 @@ RATE_LOOKBACK = {'session': 90 * 60, 'weekly_all': 24 * 3600, 'weekly_scoped': 2
 MIN_FIT_SECONDS = 15 * 60                                        # a slope needs checks spanning at least this long
 GRAPH_CHOICES = ['Favorite model', 'Session', 'All models', 'Credits', 'Most urgent']
 
-# ---------------------------------------------------------------- colors (GitHub dark palette, same as github_repo_watch) ----------------------------------------------------------------
-C_BG, C_BG2, C_BG3, C_LINE = '#0d1117', '#161b22', '#21262d', '#30363d'
-C_TEXT, C_MUTED, C_DIM = '#e6edf3', '#8b949e', '#484f58'
+# ---------------------------------------------------------------- colors ----------------------------------------------------------------
+# The card, text and line colors come from the chosen theme (P() below).  These carry meaning - one per limit kind, ok / amber / red - and keep it on
+# every theme: a light card draws them a shade darker (paint() for bars, dots and lines, ink() for text).
 C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = '#3fb950', '#f85149', '#d29922', '#58a6ff', '#bc8cff', '#f778ba'
 C_SESSION, C_WEEKLY, C_MODEL, C_SPEND = C_BLUE, C_PURPLE, C_PINK, C_GREEN                     # one color per category, always next to its label
 C_OK, C_WARN, C_CRIT, C_BUSY = C_GREEN, C_AMBER, C_RED, C_AMBER
 KIND_COLOR = {'session': C_SESSION, 'weekly_all': C_WEEKLY, 'weekly_scoped': C_MODEL, 'spend': C_SPEND}
+MEANING = {C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK}  # the colors paint() / ink() deepen on a light card
+C_MENU_SEL = '#2a62a8'                                           # menu highlight, white text on it
+C_CLOSE = '#c0392b'                                              # a close x under the mouse
+C_SWATCH_EDGE = '#7c8594'                                        # outline of the color chips in the Theme menu
 UI_FONT = 'Segoe UI' if sg.running_windows() else 'DejaVu Sans'
 MONO_FONT = 'Consolas' if sg.running_windows() else 'DejaVu Sans Mono'
+FONT_MENU = (UI_FONT, 10)
+FONT_NAMES = {True: ('segoeuib.ttf', 'DejaVuSans-Bold.ttf'), False: ('segoeui.ttf', 'DejaVuSans.ttf')}     # Pillow fonts (Brightness panel): Windows first, then Linux
+TRANSPARENT = '#010203'                                          # Windows color key: the Brightness panel's rounded corners are see-through
+RADIUS = 18                                                      # the Brightness panel's corner radius in design pixels - the windows get Windows 11's own round corners
+DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWMWA_BORDER_COLOR = 33, 2, 34                     # Windows 11: round a window's corners, color its outline
 SYMBOL = {'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥'}
+
+# --- WIDGET THEMES: the same block in every card widget (master copy in modern_widget_recipe.md) - change it in all of them at once ---
+# card = background, border = outline, track = gauge track / lines, text = main text, dim = labels.   16 dark first, then 16 light: the Theme menu
+# shows them as two columns of color chips.  ForestFloor and CrimsonVelvet come from Mike's dark themes; the other colored darks follow their lead.
+THEMES = {'Toybox':        {'card': '#141821', 'border': '#2f3a4e', 'track': '#1e2430', 'text': '#e6eaf2', 'dim': '#8a93a3'},
+          'Carbon':        {'card': '#121212', 'border': '#2e2e2e', 'track': '#1f1f1f', 'text': '#e0e0e0', 'dim': '#8c8c8c'},
+          'Slate':         {'card': '#2a3140', 'border': '#48526a', 'track': '#363e50', 'text': '#eef1f6', 'dim': '#a3acbd'},
+          'CrimsonVelvet': {'card': '#5e0d1f', 'border': '#8f1530', 'track': '#781429', 'text': '#f9d276', 'dim': '#d6a7a0'},
+          'Ember':         {'card': '#451f11', 'border': '#773c27', 'track': '#5c2f1e', 'text': '#f1e4df', 'dim': '#bd9f93'},
+          'Espresso':      {'card': '#2c2016', 'border': '#594331', 'track': '#423224', 'text': '#f1e7df', 'dim': '#bda693'},
+          'Bronze':        {'card': '#48310f', 'border': '#7b5823', 'track': '#60441b', 'text': '#f1eadf', 'dim': '#bdac93'},
+          'Olive':         {'card': '#2a3013', 'border': '#545f2b', 'track': '#3e4620', 'text': '#eef1df', 'dim': '#b5bd93'},
+          'ForestFloor':   {'card': '#101c0e', 'border': '#2a4424', 'track': '#1b2e18', 'text': '#d0e0c8', 'dim': '#83977d'},
+          'Jade':          {'card': '#113124', 'border': '#29614a', 'track': '#1e4836', 'text': '#dff1ea', 'dim': '#93bdac'},
+          'Lagoon':        {'card': '#0e3434', 'border': '#236767', 'track': '#1a4c4c', 'text': '#dff1f1', 'dim': '#93bdbd'},
+          'Petrol':        {'card': '#0f303e', 'border': '#235a71', 'track': '#1b4456', 'text': '#dfecf1', 'dim': '#93b1bd'},
+          'Cobalt':        {'card': '#132949', 'border': '#294a7a', 'track': '#20395f', 'text': '#dfe6f1', 'dim': '#93a4bd'},
+          'Indigo':        {'card': '#1e1e48', 'border': '#383876', 'track': '#2c2c5d', 'text': '#dfdff1', 'dim': '#9393bd'},
+          'Plum':          {'card': '#341c3f', 'border': '#5a376c', 'track': '#472b54', 'text': '#ebdff1', 'dim': '#af93bd'},
+          'Mulberry':      {'card': '#3f1731', 'border': '#6e3057', 'track': '#552544', 'text': '#f1dfea', 'dim': '#bd93ae'},
+          'Paper':         {'card': '#f5f7fb', 'border': '#c9d1dc', 'track': '#dadfe8', 'text': '#1b2130', 'dim': '#5c6676'},
+          'Fog':           {'card': '#dde2e8', 'border': '#b8c0ca', 'track': '#c5ccd5', 'text': '#1b2028', 'dim': '#545d69'},
+          'Stone':         {'card': '#e1dedb', 'border': '#b9b5b1', 'track': '#c5c2be', 'text': '#2b2117', 'dim': '#63574b'},
+          'Sand':          {'card': '#e7dfcf', 'border': '#c1b6a4', 'track': '#cbc2b3', 'text': '#2b2417', 'dim': '#675942'},
+          'Linen':         {'card': '#f7f2e8', 'border': '#dcd1bd', 'track': '#e4dac9', 'text': '#2b2620', 'dim': '#73685a'},
+          'Butter':        {'card': '#fbf5dc', 'border': '#e3d7a6', 'track': '#e8ddb1', 'text': '#2e2a18', 'dim': '#766c4c'},
+          'Peach':         {'card': '#fce9df', 'border': '#dfbdaa', 'track': '#e6ccbc', 'text': '#2b1e17', 'dim': '#705d51'},
+          'Blush':         {'card': '#faedf0', 'border': '#eccad2', 'track': '#efd1d8', 'text': '#321c22', 'dim': '#80606a'},
+          'Rose':          {'card': '#ecd5dd', 'border': '#c7a9b3', 'track': '#d1b8c0', 'text': '#2b171e', 'dim': '#70515c'},
+          'Orchid':        {'card': '#f4e5f5', 'border': '#d1b6d3', 'track': '#dbc6dc', 'text': '#2a172b', 'dim': '#6e5170'},
+          'Lavender':      {'card': '#f0ecfa', 'border': '#d2c9ec', 'track': '#dad3f0', 'text': '#231e33', 'dim': '#665e80'},
+          'Periwinkle':    {'card': '#e3e6f7', 'border': '#b2b7d6', 'track': '#c3c7df', 'text': '#171a2b', 'dim': '#515670'},
+          'Sky':           {'card': '#e7f0fa', 'border': '#bdd2ea', 'track': '#c7daee', 'text': '#18222f', 'dim': '#53667d'},
+          'Aqua':          {'card': '#ddf2f3', 'border': '#aecfd0', 'track': '#bfd9d9', 'text': '#172a2b', 'dim': '#516f70'},
+          'Mint':          {'card': '#e8f5ee', 'border': '#bcdccb', 'track': '#c5e1d2', 'text': '#1b2a22', 'dim': '#557064'},
+          'Pistachio':     {'card': '#ebf3dd', 'border': '#c4cfaf', 'track': '#cfd9bf', 'text': '#242b17', 'dim': '#657051'}}
+OLD_THEME_NAMES = {'Midnight': 'Carbon', 'VoidBlue': 'Carbon', 'DarkSlate': 'Slate', 'MidnightPurple': 'Plum', 'DeepOceanTeal': 'Lagoon'}   # saved by older versions
+# --- end WIDGET THEMES ---
 
 # ---------------------------------------------------------------- keys ----------------------------------------------------------------
 K_TITLE = '-TITLE-'
+K_VERSION = '-VERSION-'
 K_PLAN = '-PLAN-'
 K_DOT = '-DOT-'
 K_MENU = '-MENU-'
@@ -181,20 +236,23 @@ K_SAVE = '-SAVE-'
 K_CANCEL = '-CANCEL-'
 K_OAUTH = '-OAUTH-'                                              # settings entry holding this widget's own token pair
 K_HISTORY = '-HISTORY-'                                          # settings entry holding the recorded samples
-# menu items ('Edit Me', 'Version' and 'Exit' are the standard right-click entries and keep their plain names)
-M_REFRESH = 'Refresh now::-M REFRESH-'
-M_DETAIL = 'Detail window::-M DETAIL-'
-M_PAUSE = 'Pause / resume polling::-M PAUSE-'
-M_SNAP_TL = 'Top left::-M SNAP TL-'
-M_SNAP_TR = 'Top right::-M SNAP TR-'
-M_SNAP_BL = 'Bottom left::-M SNAP BL-'
-M_SNAP_BR = 'Bottom right::-M SNAP BR-'
-M_SETTINGS = 'Settings...::-M SETTINGS-'
-M_SIGN_IN = 'Sign in to Claude...::-M SIGN IN-'
-M_LOG = 'Open log file::-M LOG-'
-M_TOP = 'Keep on top::-M TOP-'                                # label gets a ✓ while it's on (show_keep_on_top)
-MENU_SNAP = [M_SNAP_TL, M_SNAP_TR, M_SNAP_BL, M_SNAP_BR]
-MENU = ['', [M_REFRESH, M_DETAIL, '---', M_PAUSE, M_TOP, 'Snap to corner', MENU_SNAP, '---', M_SETTINGS, M_SIGN_IN, M_LOG, '---', 'Edit Me', 'Version', 'Exit']]
+K_THEME = '-THEME-'                                              # settings entry for the theme, and the start of the Theme menu's keys
+KT_THEME = lambda name: f'{K_THEME}{name}'
+# every extra window (Detail, Settings, Sign in, Version, Raw JSON)
+K_STRIP = '-STRIP-'                                              # the title strip - drag it to move the window
+K_STRIP_CLOSE = '-STRIP CLOSE-'                                  # its x
+# menu items: make_menu() puts the labels in front ('    Refresh now::-M REFRESH-'); the event is the key after '::'.  'Edit Me', 'Version' and 'Exit' keep
+# their plain keys, as in sg.MENU_RIGHT_CLICK_EDITME_VER_EXIT
+K_M_REFRESH = '-M REFRESH-'
+K_M_DETAIL = '-M DETAIL-'
+K_M_PAUSE = '-M PAUSE-'
+K_M_TOP = '-M TOP-'
+K_M_SETTINGS = '-M SETTINGS-'
+K_M_SIGN_IN = '-M SIGN IN-'
+K_M_LOG = '-M LOG-'
+KT_M_SNAP = lambda corner: f'-M SNAP {corner}-'
+SNAP_CORNERS = {'TL': 'Top left', 'TR': 'Top right', 'BL': 'Bottom left', 'BR': 'Bottom right'}
+SNAP_KEYS = {KT_M_SNAP(corner): corner for corner in SNAP_CORNERS}
 
 AUTH_CLAUDE_CODE = 'Claude Code token (read-only)'
 AUTH_OWN = "This widget's own sign-in"
@@ -393,6 +451,443 @@ def bind_click(window, widgets, target):
     window.TKroot.bind('<ButtonRelease-1>', on_release, add='+')
 
 
+# ================================================================ themes ================================================================
+class G:
+    """State the shared WIDGET THEMES / BRIGHTNESS blocks and the menus use"""
+    theme = 'Toybox'                                             # the chosen theme (settings entry K_THEME)
+    bright = 0                                                   # its Brightness level (K_BRIGHT)
+    tuned = {}                                                   # (theme, level) -> its five colors at that level
+    swatches = {}                                                # (theme, level) -> Theme menu chip - tk keeps an image only while someone holds it
+    fonts = {}                                                   # (bold, px) -> Pillow font
+    scale = 1.0                                                  # display scale, 2.0 on a 200% screen - the Brightness panel and the x are drawn at it
+    window = None                                                # the widget window
+    app = None                                                   # the App - redraw() recolors its widget
+
+
+def mix(c1, c2, f):
+    """Blend two hex colors, f=0 -> c1, f=1 -> c2"""
+    return '#%02x%02x%02x' % tuple(round(a + (b - a) * f) for a, b in zip(channels(c1), channels(c2)))
+
+
+def is_light(color):
+    """True for a light color - a light card gets deeper meaning colors"""
+    r, g, b = channels(color)
+    return 0.299 * r + 0.587 * g + 0.114 * b > 140
+
+
+def font(bold, px):
+    """A Segoe UI (Windows) / DejaVu (Linux) Pillow font of px pixels, cached"""
+    key = (bold, px)
+    if key not in G.fonts:
+        f = None
+        for name in FONT_NAMES[bold]:
+            try:
+                f = ImageFont.truetype(name, px)
+                break
+            except OSError:
+                continue
+        if f is None:
+            try:
+                f = ImageFont.load_default(size=px)
+            except TypeError:
+                f = ImageFont.load_default()
+        G.fonts[key] = f
+    return G.fonts[key]
+
+
+def P():
+    """Every color the windows are drawn with: the theme at the Brightness setting (theme_colors) and what this program works out from it -
+       pane = the Detail window's body, a touch lifted; faint = the faintest text; strip = title strips; input = text boxes"""
+    t = theme_colors()
+    light = is_light(t['card'])
+    return dict(t, light=light, pane=mix(t['card'], t['text'], 0.04), faint=mix(t['dim'], t['card'], 0.4), strip=mix(t['card'], t['border'], 0.4 if light else 0.3),
+                input='#ffffff' if light else t['track'])
+
+
+def ink(color):
+    """A meaning color as TEXT: a deeper shade on a light card (amber text on white needs it).  Theme colors pass through"""
+    return mix(color, '#000000', 0.3) if color in MEANING and P()['light'] else color
+
+
+def paint(color):
+    """A meaning color as a bar, dot or line: a shade darker on a light card.  Theme colors pass through"""
+    return mix(color, '#000000', 0.18) if color in MEANING and P()['light'] else color
+
+
+def sbar():
+    """Scrollbars in the theme's colors, flat - for every window's sbar_ arguments"""
+    p = P()
+    return dict(sbar_trough_color=p['pane'], sbar_background_color=p['border'], sbar_arrow_color=p['dim'], sbar_frame_color=p['pane'], sbar_relief=sg.RELIEF_FLAT)
+
+
+def apply_theme():
+    """The chosen theme as the PySimpleGUI theme too, so buttons, text boxes, combos, sliders and check boxes in every window follow it"""
+    p = P()
+    sg.theme_add_new('ClaudeUsage', {'BACKGROUND': p['card'], 'TEXT': p['text'], 'INPUT': p['input'], 'TEXT_INPUT': p['text'], 'SCROLL': p['border'],
+                                     'BUTTON': (p['text'], p['track']), 'PROGRESS': (paint(C_SESSION), p['pane']), 'BORDER': 0, 'SLIDER_DEPTH': 0, 'PROGRESS_DEPTH': 0})
+    sg.theme('ClaudeUsage')
+
+
+def round_corners(window):
+    """Windows 11 rounds the window's corners and draws its 1-px outline in the theme's border color.  Windows 10, Linux and Mac keep square corners"""
+    if not sg.running_windows():
+        return
+    try:
+        hwnd = ctypes.windll.user32.GetParent(window.TKroot.winfo_id())
+        r, g, b = channels(P()['border'])
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(ctypes.c_int(DWMWCP_ROUND)), 4)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ctypes.byref(ctypes.c_uint(r | g << 8 | b << 16)), 4)     # 0x00BBGGRR
+    except Exception:
+        pass
+
+
+def title_strip(title):
+    """The strip across the top of every extra window: icon, title, version, x (red under the mouse).  Drag it to move the window"""
+    p = P()
+    row = [sg.Image(data=ICON, subsample=2, background_color=p['strip'], pad=((10, 6), 5)),
+           sg.Text(title, font=(UI_FONT, 12, 'bold'), text_color=p['text'], background_color=p['strip'], pad=(0, 5)),
+           sg.Text(f'v{VERSION}', font=(UI_FONT, 9), text_color=p['dim'], background_color=p['strip'], pad=((6, 0), (8, 4))),
+           sg.Push(background_color=p['strip']),
+           sg.Text('  ✕  ', key=K_STRIP_CLOSE, font=(UI_FONT, 12), text_color=p['dim'], background_color=p['strip'], enable_events=True, pad=0, tooltip='Close (Escape)')]
+    return [sg.Column([row], key=K_STRIP, background_color=p['strip'], expand_x=True, pad=0)]
+
+
+def drag_by_strip(window, strip, skip=None):
+    """Move a window by dragging its title strip (any of it but `skip`, the close x) - the rest of the window stays put, as in Pip Refresh's Packages window"""
+    start = {}
+
+    def press(e):
+        start['p'] = (e.x_root, e.y_root, window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty())
+
+    def motion(e):
+        p = start.get('p')
+        if p:
+            window.TKroot.geometry(f'+{round(p[2] + e.x_root - p[0])}+{round(p[3] + e.y_root - p[1])}')
+
+    def release(e):
+        start.pop('p', None)
+
+    def bind(w):
+        if w is skip:
+            return
+        w.bind('<ButtonPress-1>', press, add='+')
+        w.bind('<B1-Motion>', motion, add='+')
+        w.bind('<ButtonRelease-1>', release, add='+')
+        for child in w.winfo_children():
+            bind(child)
+
+    bind(strip)
+
+
+def dress(window, escape_key):
+    """What every extra window gets once it is built: moved by its title strip, its x red under the mouse, Escape, round corners on Windows 11"""
+    p, close = P(), window[K_STRIP_CLOSE].Widget
+    close.bind('<Enter>', lambda e: close.configure(bg=C_CLOSE, fg='#ffffff'))
+    close.bind('<Leave>', lambda e: close.configure(bg=p['strip'], fg=p['dim']))
+    drag_by_strip(window, window[K_STRIP].Widget, skip=close)
+    window.bind('<Escape>', escape_key)
+    round_corners(window)
+
+
+def menu_colors():
+    """Right-click menu background and text: the card's own colors (background lifted a touch), so the menu matches the theme"""
+    T = theme_colors()
+    return mix(T['card'], T['text'], 0.04), T['text']
+
+
+def theme_swatch(name):
+    """A tiny card in a theme's colors (card, a line of text, a dim line) shown beside its name in the Theme menu.  Made once and kept - tk drops images nobody holds"""
+    if (name, G.bright) not in G.swatches:                                                      # a set per Brightness level: the chips show what you'd get
+        T, z = theme_colors(name), max(1.0, G.window.TKroot.winfo_fpixels('1i') / 96) * 4           # drawn 4x and shrunk, so the edges are smooth
+        im = Image.new('RGBA', (round(34 * z), round(20 * z)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.rounded_rectangle((0, 0, im.width - 1, im.height - 1), radius=5 * z, fill=T['card'], outline=C_SWATCH_EDGE, width=round(z))
+        d.rounded_rectangle((6 * z, 5.5 * z, 25 * z, 9 * z), radius=1.5 * z, fill=T['text'])
+        d.rounded_rectangle((6 * z, 12 * z, 17 * z, 14.5 * z), radius=1.2 * z, fill=T['dim'])
+        buf = io.BytesIO()
+        im.resize((round(im.width / 4), round(im.height / 4)), Image.LANCZOS).save(buf, 'PNG')
+        G.swatches[(name, G.bright)] = tk.PhotoImage(master=G.window.TKroot, data=base64.b64encode(buf.getvalue()))
+    return G.swatches[(name, G.bright)]
+
+
+def style_menus(window):
+    """tk draws menus Windows-gray and PySimpleGUI colors only the top level: recolor every menu of the window - each element's copy of the right-click
+       menu, the ≡ menu and their sub-menus - flat and compact in the theme's colors, with a chip beside each theme name (the lights in a column of their own)"""
+    bg, fg = menu_colors()
+    for menu in descendants(window.TKroot):
+        if menu.winfo_class() != 'Menu':
+            continue
+        menu.configure(bg=bg, fg=fg, activebackground=C_MENU_SEL, activeforeground='#ffffff', bd=0, activeborderwidth=1, relief='flat', font=FONT_MENU)
+        first_light = True
+        for i in range(menu.index('end') + 1 if menu.index('end') is not None else 0):
+            name = menu.entrycget(i, 'label').lstrip('✓ ') if menu.type(i) == 'command' else None
+            if name in THEMES:
+                menu.entryconfigure(i, image=theme_swatch(name), compound='left')
+                if first_light and is_light(THEMES[name]['card']):
+                    menu.entryconfigure(i, columnbreak=1)                     # the light themes get a column of their own
+                    first_light = False
+
+
+def close_x_images():
+    """The widget's close x: faint, and a red disc with a white x under the mouse.  Drawn 4x and shrunk, so the edges are smooth"""
+    p, z, size, images = P(), G.scale * 4, 18, []
+    for hover in (False, True):
+        im = Image.new('RGBA', (round(size * z), round(size * z)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c, r = size / 2 * z, 3.5 * z
+        if hover:
+            d.ellipse((c - 8 * z, c - 8 * z, c + 8 * z, c + 8 * z), fill=C_CLOSE)
+        color = '#ffffff' if hover else p['faint']
+        d.line((c - r, c - r, c + r, c + r), fill=color, width=round(1.5 * z))
+        d.line((c - r, c + r, c + r, c - r), fill=color, width=round(1.5 * z))
+        buf = io.BytesIO()
+        im.resize((round(size * G.scale), round(size * G.scale)), Image.LANCZOS).save(buf, 'PNG')
+        images.append(tk.PhotoImage(master=G.window.TKroot, data=base64.b64encode(buf.getvalue())))
+    return images
+
+
+def set_close_x(label):
+    """The x's pictures in the current theme"""
+    label.images = close_x_images()
+    label.configure(image=label.images[0], bg=P()['card'])
+
+
+def add_close_x(window, event_key):
+    """The close x overlaid in the window's top-right corner - faint, a red disc under the pointer, closes the widget when clicked"""
+    label = tk.Label(window.TKroot, bd=0, cursor='hand2')
+    set_close_x(label)
+    label.place(relx=1.0, x=-round(5 * G.scale), y=round(3 * G.scale), anchor='ne')
+    label.bind('<Enter>', lambda e: label.configure(image=label.images[1]))
+    label.bind('<Leave>', lambda e: label.configure(image=label.images[0]))
+    label.bind('<ButtonRelease-1>', lambda e: window.write_event_value(event_key, None))
+    return label
+
+
+def redraw(window):
+    """The Brightness panel moved its knob: the widget in the new colors at once (the other windows follow when the panel closes)"""
+    G.app.recolor_widget()
+
+
+# --- BRIGHTNESS: the same block in every card widget (master copy in modern_widget_recipe.md) - the program darkens or lightens its own theme ---
+# Right-click > Brightness... opens a small panel under the card with a slider, and the card changes as the knob moves.  theme_colors() is what the card,
+# its menu and the Theme chips are drawn with: the theme at the chosen level, its text kept readable.  The program supplies redraw(window),
+# font(bold, px), is_light(), RADIUS, TRANSPARENT, THEMES and G.theme / G.scale / G.bright / G.tuned.
+BRIGHT_LEVELS = list(range(-80, 51, 5))                           # the slider's stops, darkest first: -80 = much darker, 0 = as designed, 50 = lighter
+K_BRIGHT = '-BRIGHTNESS-'                                         # settings-file entry, and the right-click item that opens the panel
+K_PANEL_IMAGE, K_PANEL_VALUE, K_PANEL_STEP = '-PANEL IMAGE-', '-PANEL VALUE-', '-PANEL STEP-'      # values: the new level / +1 or -1 stop
+K_PANEL_HOVER, K_PANEL_CLICK = '-PANEL HOVER-', '-PANEL CLICK-'   # values: 'track' | 'reset' | 'done' | None
+K_PANEL_DONE, K_PANEL_CANCEL = '-PANEL DONE-', '-PANEL CANCEL-'   # Enter / Escape
+PANEL_W, PANEL_H = 270, 114                                       # the panel, in design pixels
+TRACK_X0, TRACK_X1, TRACK_Y, TRACK_H = 20, PANEL_W - 20, 52, 10
+PILL_W, PILL_H, PILL_Y = 70, 24, 90                               # Reset (left) and Done (right); PILL_Y is their middle
+C_PANEL_DONE = '#2a62a8'                                          # the Done button
+
+
+def channels(color):
+    return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def shade(c1, c2, f):
+    """c1 moved f of the way toward c2"""
+    return '#%02x%02x%02x' % tuple(round(a + (b - a) * f) for a, b in zip(channels(c1), channels(c2)))
+
+
+def tune(color, level, light, line=False):
+    """A card / border / track color at a Brightness level.  Dark themes: the brightness is scaled - darker is deeper, lighter more vivid, the hue kept;
+       lines darken less, so the border and the gauge track still show at -80.  Light themes: darker turns gently gray (at most 32%), lighter fades to white"""
+    if light and level > 0:
+        return shade(color, '#ffffff', level / 100)
+    f = 1 + level / (250 if light else 100)
+    if line and level < 0 and not light:
+        f **= 0.6
+    return '#%02x%02x%02x' % tuple(min(255, round(v * f)) for v in channels(color))
+
+
+def luminance(color):
+    """WCAG relative luminance, 0 = black .. 1 = white"""
+    return sum(w * (v / 3294.6 if v <= 10.31 else ((v / 255 + 0.055) / 1.055) ** 2.4) for w, v in zip((0.2126, 0.7152, 0.0722), channels(color)))
+
+
+def readable(fg, bg, ratio, pole):
+    """fg moved toward pole (white on a dark card, black on a light one) just far enough to have ratio contrast with bg"""
+    lb = luminance(bg)
+    for i in range(26):
+        c = shade(fg, pole, i / 25)
+        lf = luminance(c)
+        if (max(lf, lb) + 0.05) / (min(lf, lb) + 0.05) >= ratio:
+            return c
+    return pole
+
+
+def theme_colors(name=None):
+    """A theme's five colors at the Brightness setting (the chosen theme if no name) - text keeps 7:1 contrast with the card, dim 4.5:1"""
+    name = name if name in THEMES else G.theme if G.theme in THEMES else 'Toybox'
+    if (name, G.bright) not in G.tuned:
+        T = THEMES[name]
+        if G.bright:
+            light, level = is_light(T['card']), G.bright
+            card, pole = tune(T['card'], level, light), '#000000' if light else '#ffffff'
+            T = {'card': card, 'border': tune(T['border'], level, light, True), 'track': tune(T['track'], level, light, True),
+                 'text': readable(T['text'], card, 7, pole), 'dim': readable(T['dim'], card, 4.5, pole)}
+        G.tuned[(name, G.bright)] = T
+    return G.tuned[(name, G.bright)]
+
+
+def bright_text(level):
+    return 'as designed' if level == 0 else f'{level:+d}%'.replace('-', '\u2212')
+
+
+def knob_x(level):
+    """Design-pixel x of the knob at a level: the middle of that level's band on the track"""
+    return TRACK_X0 + (BRIGHT_LEVELS.index(level) + 0.5) * (TRACK_X1 - TRACK_X0) / len(BRIGHT_LEVELS)
+
+
+def level_at(x):
+    """The level whose band is under panel pixel x"""
+    i = int((x / G.scale - TRACK_X0) / (TRACK_X1 - TRACK_X0) * len(BRIGHT_LEVELS))
+    return BRIGHT_LEVELS[max(0, min(len(BRIGHT_LEVELS) - 1, i))]
+
+
+def panel_part(x, y):
+    """'track', 'reset', 'done' or None at panel pixel (x, y)"""
+    x, y = x / G.scale, y / G.scale
+    if TRACK_X0 - 10 <= x <= TRACK_X1 + 10 and abs(y - TRACK_Y) <= 14:
+        return 'track'
+    if abs(y - PILL_Y) <= PILL_H / 2:
+        if 18 <= x <= 18 + PILL_W:
+            return 'reset'
+        if PANEL_W - 18 - PILL_W <= x <= PANEL_W - 18:
+            return 'done'
+    return None
+
+
+def render_panel(hover):
+    """The Brightness panel, drawn like the card and in its colors (so it changes too).  The track shows the card's own color at every level, darkest
+       on the left; the knob sits on the one in use, the tick under the track marks 'as designed'"""
+    s = G.scale
+    k = s * 2
+    T, base = theme_colors(), THEMES.get(G.theme, THEMES['Toybox'])
+    light = is_light(base['card'])
+    W, H = round(PANEL_W * k), round(PANEL_H * k)
+    im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=(RADIUS if sg.running_windows() else 0) * k, fill=T['card'], outline=T['border'], width=max(1, round(k)))
+    d.text((18 * k, 20 * k), 'BRIGHTNESS', font=font(True, round(13 * k)), fill=T['dim'], anchor='lm')
+    d.text(((PANEL_W - 18) * k, 20 * k), bright_text(G.bright), font=font(True, round(13 * k)), fill=T['text'], anchor='rm')
+    x0, x1, y0, y1 = TRACK_X0 * k, TRACK_X1 * k, (TRACK_Y - TRACK_H / 2) * k, (TRACK_Y + TRACK_H / 2) * k
+    strip = Image.new('RGBA', (round(x1 - x0), round(y1 - y0)))                       # a band per level, in the card color at that level
+    band = strip.width / len(BRIGHT_LEVELS)
+    for i, level in enumerate(BRIGHT_LEVELS):
+        ImageDraw.Draw(strip).rectangle((round(i * band), 0, round((i + 1) * band), strip.height), fill=tune(base['card'], level, light))
+    mask = Image.new('L', strip.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, strip.width - 1, strip.height - 1), radius=strip.height / 2, fill=255)
+    im.paste(strip, (round(x0), round(y0)), mask)
+    d.rounded_rectangle((x0, y0, x1, y1), radius=(y1 - y0) / 2, outline=T['dim'] if hover == 'track' else T['border'], width=max(1, round(k)))
+    zx = knob_x(0) * k
+    d.line((zx, y1 + 3 * k, zx, y1 + 7 * k), fill=T['dim'], width=max(1, round(1.2 * k)))
+    kx, ky, r = knob_x(G.bright) * k, TRACK_Y * k, 9 * k                                # the knob, filled with the color in use
+    d.ellipse((kx - r, ky - r, kx + r, ky + r), fill=T['card'], outline=T['text'], width=max(1, round(2 * k)))
+    small = font(False, round(11 * k))
+    d.text((x0, (TRACK_Y + 17) * k), 'darker', font=small, fill=T['dim'], anchor='lm')
+    d.text((x1, (TRACK_Y + 17) * k), 'lighter', font=small, fill=T['dim'], anchor='rm')
+    for part, px, fill, color in (('reset', 18, T['track'], T['text'] if G.bright else T['dim']), ('done', PANEL_W - 18 - PILL_W, C_PANEL_DONE, '#ffffff')):
+        if hover == part:
+            fill = shade(fill, '#ffffff', 0.15) if part == 'done' else shade(T['text'], T['card'], 0.78)
+        d.rounded_rectangle((px * k, (PILL_Y - PILL_H / 2) * k, (px + PILL_W) * k, (PILL_Y + PILL_H / 2) * k), radius=PILL_H / 2 * k, fill=fill)
+        d.text(((px + PILL_W / 2) * k, PILL_Y * k), part.capitalize(), font=font(True, round(12 * k)), fill=color, anchor='mm')
+    im = im.resize((round(PANEL_W * s), round(PANEL_H * s)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+def brightness_panel(card, keep_going):
+    """Right-click > Brightness...: the panel under the card.  The card and the panel change as the knob moves (drag, click, arrow keys, mouse wheel,
+       Home / End).  Done or Enter keeps the level, Escape puts back the one it had.  keep_going(card, event, values) handles the card's own events
+       meanwhile (its timer, hover...) and returns False for one that should close the panel - a menu choice, the close x.  That event is returned so the
+       main loop can handle it; None otherwise"""
+    start = G.bright
+    x, y = card.current_location()
+    below, height = y + card.size[1] + 6, round(PANEL_H * G.scale)
+    py = below if below + height <= card.TKroot.winfo_screenheight() else max(0, y - height - 6)    # under the card, or above it near the bottom
+    panel = sg.Window('Brightness', [[sg.Image(data=render_panel(None), key=K_PANEL_IMAGE, background_color=TRANSPARENT, pad=(0, 0))]], no_titlebar=True,
+                      keep_on_top=True, margins=(0, 0), element_padding=(0, 0), background_color=TRANSPARENT, location=(x, py), finalize=True,
+                      transparent_color=TRANSPARENT if sg.running_windows() else None)  # no grab_anywhere: it would move the panel as the knob is dragged
+    widget, mouse = panel[K_PANEL_IMAGE].Widget, {'drag': False, 'press': None, 'hover': None}
+
+    def press(e):
+        part = panel_part(e.x, e.y)
+        if part == 'track':                                                             # the knob jumps to the mouse and follows it
+            mouse['drag'] = True
+            panel.write_event_value(K_PANEL_VALUE, level_at(e.x))
+        else:
+            mouse['press'] = (e.x_root, e.y_root, part, panel.TKroot.winfo_x(), panel.TKroot.winfo_y())
+
+    def drag(e):
+        p = mouse['press']
+        if mouse['drag']:
+            panel.write_event_value(K_PANEL_VALUE, level_at(e.x))
+        elif p:                                                                         # anywhere off the track drags the panel
+            panel.TKroot.geometry(f'+{p[3] + e.x_root - p[0]}+{p[4] + e.y_root - p[1]}')
+
+    def release(e):
+        if mouse['drag']:
+            mouse['drag'] = False
+            return
+        p, mouse['press'] = mouse['press'], None
+        if p and p[2] in ('reset', 'done') and math.hypot(e.x_root - p[0], e.y_root - p[1]) < 4:        # a click, not a drag of the panel
+            panel.write_event_value(K_PANEL_CLICK, p[2])
+
+    def hover(part):
+        if part != mouse['hover']:
+            mouse['hover'] = part
+            panel.write_event_value(K_PANEL_HOVER, part)
+
+    widget.bind('<ButtonPress-1>', press, add='+')
+    widget.bind('<B1-Motion>', drag, add='+')
+    widget.bind('<ButtonRelease-1>', release, add='+')
+    widget.bind('<Motion>', lambda e: hover(panel_part(e.x, e.y)), add='+')
+    widget.bind('<Leave>', lambda e: hover(None), add='+')
+    widget.bind('<MouseWheel>', lambda e: panel.write_event_value(K_PANEL_STEP, 1 if e.delta > 0 else -1), add='+')   # Windows
+    widget.bind('<Button-4>', lambda e: panel.write_event_value(K_PANEL_STEP, 1), add='+')                            # Linux wheel
+    widget.bind('<Button-5>', lambda e: panel.write_event_value(K_PANEL_STEP, -1), add='+')
+    for seq, n in (('<Left>', -1), ('<Down>', -1), ('<Right>', 1), ('<Up>', 1)):
+        panel.TKroot.bind(seq, lambda e, n=n: panel.write_event_value(K_PANEL_STEP, n))
+    panel.TKroot.bind('<Home>', lambda e: panel.write_event_value(K_PANEL_VALUE, BRIGHT_LEVELS[0]))
+    panel.TKroot.bind('<End>', lambda e: panel.write_event_value(K_PANEL_VALUE, BRIGHT_LEVELS[-1]))
+    panel.bind('<Return>', K_PANEL_DONE)
+    panel.bind('<Escape>', K_PANEL_CANCEL)
+    panel.force_focus()
+    pending = None
+    while True:
+        win, event, values = sg.read_all_windows()
+        if win is card:                                                                 # the card keeps going while the panel is open
+            if keep_going(card, event, values):
+                continue
+            pending = (event, values)
+            break
+        if event in (sg.WINDOW_CLOSED, K_PANEL_CANCEL):
+            G.bright = start
+            break
+        if event == K_PANEL_DONE or (event == K_PANEL_CLICK and values[event] == 'done'):
+            break
+        level = G.bright
+        if event == K_PANEL_VALUE:
+            level = values[event]
+        elif event == K_PANEL_STEP:
+            level = BRIGHT_LEVELS[max(0, min(len(BRIGHT_LEVELS) - 1, BRIGHT_LEVELS.index(G.bright) + values[event]))]
+        elif event == K_PANEL_CLICK and values[event] == 'reset':
+            level = 0
+        if level != G.bright:
+            G.bright = level
+            redraw(card)
+        panel[K_PANEL_IMAGE].update(data=render_panel(mouse['hover']))
+    panel.close()
+    redraw(card)
+    return pending
+# --- end BRIGHTNESS ---
+
+
 # ================================================================ tokens ================================================================
 class UsageError(Exception):
     pass
@@ -500,26 +995,6 @@ def refresh_own_token():
     tokens = {'access_token': data['access_token'], 'refresh_token': data.get('refresh_token', tokens['refresh_token']), 'expires_at': utcnow().timestamp() + data.get('expires_in', 3600)}
     save_own_tokens(tokens)
     return tokens
-
-
-def add_close_x(window, event_key):
-    """A faint ✕ overlaid in the window's top-right corner - brightens under the pointer, closes the widget when clicked."""
-    label = tk.Label(window.TKroot, text='✕', font=(UI_FONT, 9), fg=C_DIM, bg=C_BG, bd=0, cursor='hand2')
-    label.place(relx=1.0, x=-3, y=1, anchor='ne')
-    label.bind('<Enter>', lambda e: label.config(fg=C_CRIT))
-    label.bind('<Leave>', lambda e: label.config(fg=C_DIM))
-    label.bind('<ButtonRelease-1>', lambda e: window.write_event_value(event_key, None))
-
-
-def show_keep_on_top(window, on):
-    """Tick the 'Keep on top' entries in the window's menus (every right-click menu and the ≡ menu) when it's on.
-    Only the label changes - the event the item sends stays M_TOP."""
-    for w in descendants(window.TKroot):
-        if w.winfo_class() != 'Menu' or w.index('end') is None:
-            continue
-        for i in range(w.index('end') + 1):
-            if w.type(i) == 'command' and w.entrycget(i, 'label').lstrip('✓ ') == 'Keep on top':
-                w.entryconfigure(i, label=('✓ ' if on else '') + 'Keep on top')
 
 
 def resolve_token():
@@ -694,9 +1169,9 @@ class Poller(threading.Thread):
 # ================================================================ the app ================================================================
 class App:
     def __init__(self):
-        self.scale = dpi_scale()
+        G.app, self.scale = self, dpi_scale()
         self.snap, self.busy, self.detail, self.settings_win, self.signin_win, self.snap_pending = None, False, None, None, None, ''
-        self.pkce, self.current_alpha, self.last_redraw = ('', '', ''), None, datetime.now()
+        self.pkce, self.current_alpha, self.last_redraw, self.cards, self.close_x = ('', '', ''), None, datetime.now(), [], None
         self.history = [h for h in (sg.user_settings_get_entry(K_HISTORY, []) or []) if isinstance(h, dict)]
         if DEMO and len(self.history) < 5:
             self.history = demo_history()
@@ -713,7 +1188,7 @@ class App:
 
     def level_color(self, pct):
         if pct is None:
-            return C_DIM
+            return P()['faint']
         return C_CRIT if pct >= int(cfg(K_CRIT)) else C_WARN if pct >= int(cfg(K_WARN)) else C_OK
 
     def level_word(self, pct):
@@ -738,50 +1213,165 @@ class App:
     def draw_bar(self, graph, pct, color, pace=None):
         graph.erase()
         w, h = graph.CanvasSize
-        graph.draw_rectangle((0, h), (w, 0), fill_color=C_BG3, line_color=C_BG3)
+        p, color = P(), paint(color)
+        graph.draw_rectangle((0, h), (w, 0), fill_color=p['track'], line_color=p['track'])
         fill = max(0.0, min(100.0, pct or 0)) / 100 * w
         if fill >= 1:
             graph.draw_rectangle((0, h), (fill, 0), fill_color=color, line_color=color)
         if pace is not None:
             x = max(1, min(w - 1, pace / 100 * w))
-            graph.draw_line((x, h), (x, 0), color=C_TEXT if abs(x - fill) > 2 else C_BG, width=1)
+            graph.draw_line((x, h), (x, 0), color=p['text'] if abs(x - fill) > 2 else p['card'], width=1)
 
     # ---------------------------------------------------------------- widget window ----------------------------------------------------------------
     def build_widget(self):
-        f, bar = self.fonts(), (int(150 * self.scale), int(10 * self.scale))
-        rows = [[sg.Text('●', font=f['dot'], text_color=C_DIM, key=K_DOT, pad=((8, 4), (4, 0)), tooltip='Green ok · amber getting high or checking · red near limit / problem'),
-                 sg.Text('Claude', font=f['name'], text_color=C_TEXT, key=K_TITLE, pad=((0, 6), (4, 0))),
-                 sg.Text('', font=f['small'], text_color=C_MUTED, key=K_PLAN, pad=((0, 8), (6, 0))),
-                 sg.Text('v' + VERSION, font=f['small'], text_color=C_DIM, pad=((0, 16), (6, 0)), tooltip=__file__)]]
+        f, bar, p = self.fonts(), (int(150 * self.scale), int(10 * self.scale)), P()
+        rows = [[sg.Text('●', font=f['dot'], text_color=p['faint'], key=K_DOT, pad=((8, 4), (4, 0)), tooltip='Green ok · amber getting high or checking · red near limit / problem'),
+                 sg.Text('Claude', font=f['name'], text_color=p['text'], key=K_TITLE, pad=((0, 6), (4, 0))),
+                 sg.Text('', font=f['small'], text_color=p['dim'], key=K_PLAN, pad=((0, 8), (6, 0))),
+                 sg.Text('v' + VERSION, font=f['small'], text_color=p['faint'], key=K_VERSION, pad=((0, 26), (6, 0)), tooltip=__file__)]]
         for i in range(MAX_BARS):
             row = [sg.Text('', size=(12, 1), font=f['body'], key=KT_LABEL(i), pad=((10, 6), 1)),
-                   sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=KT_BAR(i), pad=((0, 6), 1)),
+                   sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=KT_BAR(i), pad=((0, 6), 1)),
                    sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=KT_PCT(i), pad=(0, 1)),
-                   sg.Text('', size=(10, 1), font=f['small'], text_color=C_MUTED, key=KT_RESET(i), pad=((6, 8), 1))]
-            rows.append([sg.Column([row], key=KT_ROW(i), pad=0, visible=False, background_color=C_BG)])
-        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=C_SPEND, key=K_SPEND_LABEL, pad=((10, 6), 1)),
-                                 sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=K_SPEND_BAR, pad=((0, 6), 1)),
+                   sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=KT_RESET(i), pad=((6, 8), 1))]
+            rows.append([sg.Column([row], key=KT_ROW(i), pad=0, visible=False, background_color=p['card'])])
+        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=ink(C_SPEND), key=K_SPEND_LABEL, pad=((10, 6), 1)),
+                                 sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_SPEND_BAR, pad=((0, 6), 1)),
                                  sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_SPEND_PCT, pad=(0, 1)),
-                                 sg.Text('', size=(10, 1), font=f['small'], text_color=C_MUTED, key=K_SPEND_LEFT, pad=((6, 8), 1))],
-                                [sg.Text('', font=f['small'], text_color=C_MUTED, key=K_SPEND_TEXT, pad=((10, 8), (0, 3)))]],
-                               key=K_SPEND_ROW, pad=0, visible=False, background_color=C_BG)])
+                                 sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=K_SPEND_LEFT, pad=((6, 8), 1))],
+                                [sg.Text('', font=f['small'], text_color=p['dim'], key=K_SPEND_TEXT, pad=((10, 8), (0, 3)))]],
+                               key=K_SPEND_ROW, pad=0, visible=False, background_color=p['card'])])
         graph_size = (int(280 * self.scale), int(46 * self.scale))
         rows.append([sg.Column([[sg.Text('', size=(12, 1), font=f['small'], key=K_GRAPH_NAME, pad=((10, 6), 1)),
-                                 sg.Graph(graph_size, (0, 0), graph_size, background_color=C_BG, key=K_GRAPH, pad=((0, 8), (3, 2)), tooltip='Solid: checks so far · dashed: at the current rate · dotted line: the reset')]],
-                               key=K_GRAPH_ROW, pad=0, visible=False, background_color=C_BG)])
-        rows.append([sg.Text('', font=f['small'], text_color=C_DIM, key=K_FORECAST, pad=((10, 8), (0, 2)))])
-        rows.append([sg.Text('starting…', font=f['small'], text_color=C_DIM, key=K_STATUS, pad=((10, 0), (0, 3))), sg.Push(background_color=C_BG),
-                     sg.ButtonMenu('≡', MENU, key=K_MENU, font=f['name'], button_color=(C_MUTED, C_BG), border_width=0, pad=((0, 6), (0, 2)), tooltip='Menu (or right-click anywhere)')])
+                                 sg.Graph(graph_size, (0, 0), graph_size, background_color=p['card'], key=K_GRAPH, pad=((0, 8), (3, 2)),
+                                          tooltip='Solid: checks so far · dashed: at the current rate · dotted line: the reset')]],
+                               key=K_GRAPH_ROW, pad=0, visible=False, background_color=p['card'])])
+        rows.append([sg.Text('', font=f['small'], text_color=p['faint'], key=K_FORECAST, pad=((10, 8), (0, 2)))])
+        rows.append([sg.Text('starting…', font=f['small'], text_color=p['faint'], key=K_STATUS, pad=((10, 0), (0, 3))), sg.Push(background_color=p['card']),
+                     sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=f['name'], button_color=(p['dim'], p['card']), border_width=0, pad=((0, 8), (0, 3)),
+                                   tooltip='Menu (or right-click anywhere)')])
+        menu_bg, menu_text = menu_colors()
         self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100, auto_save_location=True,
-                                right_click_menu=MENU, right_click_menu_background_color=C_BG2, right_click_menu_text_color=C_TEXT, right_click_menu_selected_colors=(C_TEXT, C_BG3),
-                                margins=(2, 2), background_color=C_BG, finalize=True)
+                                right_click_menu=self.make_menu(), right_click_menu_background_color=menu_bg, right_click_menu_text_color=menu_text,
+                                right_click_menu_selected_colors=('#ffffff', C_MENU_SEL), right_click_menu_font=FONT_MENU, margins=(2, 2), background_color=p['card'], finalize=True)
+        G.window, G.scale, G.swatches = self.widget, max(1.0, self.widget.TKroot.winfo_fpixels('1i') / 96), {}
+        style_menus(self.widget)
+        round_corners(self.widget)
         self.current_alpha = int(cfg(K_OPACITY)) / 100
         bind_click(self.widget, set(descendants(self.widget.TKroot)) - {self.widget[K_MENU].Widget}, 'widget')
-        add_close_x(self.widget, K_CLOSE_X)                 # added after the click map, so clicking it can't also open the detail window
-        show_keep_on_top(self.widget, bool(cfg(K_KEEP_ON_TOP)))
+        self.close_x = add_close_x(self.widget, K_CLOSE_X)  # added after the click map, so clicking it can't also open the detail window
+        self.widget.bind('<Escape>', 'Exit')
+        self.widget.timer_start(1000)                       # the countdowns tick each second - a timer, so they keep going while the Brightness panel is open
         self.snap_pending = 'TR' if sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME) is None else ''
         if self.snap_pending:
             self.snap_to(self.snap_pending)
+
+    def make_menu(self):
+        """The right-click / ≡ menu with a ✓ on the current choices - every label starts with a ✓ or the same width of spaces, so they line up"""
+        tick = lambda on: '✓ ' if on else '    '
+        theme = lambda n: f'{tick(n == G.theme)}{n}::{KT_THEME(n)}'
+        paused = getattr(self, 'poller', None) is not None and self.poller.paused
+        return ['', [f'    Refresh now::{K_M_REFRESH}', f'    Detail window::{K_M_DETAIL}', '---',
+                     f'{tick(paused)}Pause polling::{K_M_PAUSE}', f'{tick(cfg(K_KEEP_ON_TOP))}Keep on top::{K_M_TOP}',
+                     '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
+                     f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
+                     '    Snap to corner', [f'    {name}::{KT_M_SNAP(corner)}' for corner, name in SNAP_CORNERS.items()], '---',
+                     f'    Settings...::{K_M_SETTINGS}', f'    Sign in to Claude...::{K_M_SIGN_IN}', f'    Open log file::{K_M_LOG}', '---',
+                     '    Edit Me::Edit Me', '    Version::Version', '    Exit::Exit']]
+
+    def rebuild_menus(self):
+        """After any choice: every element's copy of the right-click menu (PySimpleGUI makes one per element) and the ≡ menu rebuilt - new ✓ marks,
+           chips at the new Brightness - then styled"""
+        menu, first = self.make_menu(), True
+        for element in self.widget.element_list():
+            if element.TKRightClickMenu is not None:
+                element.set_right_click_menu(menu, propogate_to_window=first)
+                first = False
+        old, p = self.widget[K_MENU].TKMenu, P()
+        self.widget[K_MENU].update(menu_definition=menu, button_color=(p['dim'], p['card']))     # without button_color, update() puts back the colors it was built with
+        old.destroy()
+        style_menus(self.widget)
+
+    def recolor_widget(self):
+        """The widget in the theme at the current Brightness, in place (the Brightness panel holds on to this window): backgrounds, the fixed text colors,
+           the x, the outline - refresh_widget() repaints the rest"""
+        p, w = P(), self.widget
+        for tkw in descendants(w.TKroot):
+            if tkw.winfo_class() != 'Menu':
+                try:
+                    tkw.configure(bg=p['card'])
+                except tk.TclError:
+                    pass
+        for key in [KT_BAR(i) for i in range(MAX_BARS)] + [K_SPEND_BAR]:
+            w[key].Widget.configure(bg=p['track'])
+        for key, color in [(K_TITLE, p['text']), (K_PLAN, p['dim']), (K_VERSION, p['faint']), (K_SPEND_TEXT, p['dim']), (K_SPEND_LABEL, ink(C_SPEND))] + \
+                          [(KT_RESET(i), p['dim']) for i in range(MAX_BARS)]:
+            w[key].update(text_color=color)
+        w[K_MENU].Widget.configure(fg=p['dim'], activeforeground=p['text'], activebackground=p['card'])
+        set_close_x(self.close_x)
+        round_corners(w)
+        self.refresh_widget()
+
+    def retheme(self):
+        """A new theme or Brightness: the PySimpleGUI theme, the widget and its menus at once; open windows reopen in place in the new colors
+           (the Detail window keeps its scroll position, Settings and Sign in what was typed)"""
+        apply_theme()
+        self.recolor_widget()
+        self.rebuild_menus()
+        self.forget_closed()
+        if self.detail is not None:
+            spot, top = self.detail.current_location(), self.detail[K_D_PANE].Widget.canvas.yview()[0]
+            self.close_detail()
+            self.open_detail(spot)
+            self.detail[K_D_PANE].Widget.canvas.yview_moveto(top)
+        if self.settings_win is not None:
+            spot, values = self.settings_win.current_location(), self.settings_win.read(timeout=0)[1]
+            self.settings_win.close()
+            self.settings_win = None
+            self.open_settings(values, spot)
+        if self.signin_win is not None:
+            spot, code = self.signin_win.current_location(), self.signin_win[K_CODE].get()
+            self.signin_win.close()
+            self.signin_win = None
+            self.open_signin(spot, code)
+        old, self.cards = self.cards, []
+        for card in old:
+            spot = card.current_location()
+            card.close()
+            self.text_card(card.metadata['title'], card.metadata['text'], card.metadata['size'], spot)
+
+    def forget_closed(self):
+        """Let go of windows that were closed while the Brightness panel had the event loop"""
+        gone = lambda win: win is not None and win.was_closed()
+        if gone(self.detail):
+            self.detail = None
+        if gone(self.settings_win):
+            self.settings_win = None
+        if gone(self.signin_win):
+            self.signin_win = None
+        self.cards = [card for card in self.cards if not gone(card)]
+
+    def keep_going(self, window, event, values):
+        """While the Brightness panel is open the widget keeps counting down and taking poll results; anything else closes the panel and goes to the main loop"""
+        if event == sg.EVENT_TIMER:
+            self.tick()
+        elif event in (K_POLL_BUSY, K_POLL_RESULT):
+            self.widget_event(event, values)
+        else:
+            return False
+        return True
+
+    def text_card(self, title, text, size, spot=(None, None)):
+        """Version and Raw JSON: the text on a themed card with a title strip, no OS title bar.  The main loop closes it (x, Close, Escape, Alt-F4)"""
+        p = P()
+        layout = [title_strip(title),
+                  [sg.Multiline(text, size=size, font=(MONO_FONT, 10), disabled=True, background_color=p['pane'], text_color=p['text'], border_width=0, pad=((10, 10), (8, 4)),
+                                expand_x=True, expand_y=True)],
+                  [sg.Push(), sg.Button('Close', key=K_CLOSE, pad=((0, 4), (4, 10))), sg.Sizegrip(background_color=p['card'])]]
+        card = sg.Window(title, layout, no_titlebar=True, keep_on_top=True, finalize=True, margins=(0, 0), resizable=True, location=spot, background_color=p['card'],
+                         metadata={'title': title, 'text': text, 'size': size}, **sbar())
+        dress(card, K_CLOSE)
+        self.cards.append(card)
 
     def snap_to(self, corner):
         sw, sh = self.widget.get_screen_size()
@@ -793,14 +1383,14 @@ class App:
     def set_keep_on_top(self, on):
         sg.user_settings_set_entry(K_KEEP_ON_TOP, on)
         self.widget.keep_on_top_set() if on else self.widget.keep_on_top_clear()
-        show_keep_on_top(self.widget, on)
+        self.rebuild_menus()                                # the ✓ beside Keep on top
 
     def refresh_widget(self):
         snap, f = self.snap, self.fonts()
         buckets = snap['buckets'] if snap and snap.get('ok') else []
         cb = self.credit_bucket() if cfg(K_SHOW_SPEND) else None
         worst = max([b['percent'] for b in buckets] + ([cb['percent']] if cb else []), default=None)
-        self.widget[K_DOT].update(text_color=C_BUSY if self.busy else C_CRIT if snap and not snap.get('ok') else self.level_color(worst))
+        self.widget[K_DOT].update(text_color=paint(C_BUSY if self.busy else C_CRIT if snap and not snap.get('ok') else self.level_color(worst)))
         self.widget[K_PLAN].update(snap['plan'] if snap and snap.get('ok') and snap['plan'] else ('demo' if DEMO else ''))
         for i in range(MAX_BARS):
             self.widget[KT_ROW(i)].update(visible=i < len(buckets))
@@ -808,8 +1398,8 @@ class App:
                 continue
             b = buckets[i]
             color = KIND_COLOR.get(b['kind'], C_WEEKLY)
-            self.widget[KT_LABEL(i)].update(b['label'], text_color=color)
-            self.widget[KT_PCT(i)].update(f'{round(b["percent"])}%', text_color=self.level_color(b['percent']))
+            self.widget[KT_LABEL(i)].update(b['label'], text_color=ink(color))
+            self.widget[KT_PCT(i)].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
             self.widget[KT_RESET(i)].update(reset_short(b['resets_at']))
             self.draw_bar(self.widget[KT_BAR(i)], b['percent'], color, self.pace(b))
             tip = f'{b["label"]} · {round(b["percent"])}% used ({self.level_word(b["percent"])}) · {reset_long(b["resets_at"])}'
@@ -823,10 +1413,10 @@ class App:
             if cb:
                 left = max(0.0, spend['limit_num'] - spend['used_num'])
                 self.draw_bar(self.widget[K_SPEND_BAR], cb['percent'], C_SPEND, self.pace(cb))
-                self.widget[K_SPEND_PCT].update(f'{round(cb["percent"])}%', text_color=self.level_color(cb['percent']))
-                self.widget[K_SPEND_LEFT].update(f'{spend["symbol"]}{left:,.2f} left', text_color=C_CRIT if left <= 0 else C_MUTED)
+                self.widget[K_SPEND_PCT].update(f'{round(cb["percent"])}%', text_color=ink(self.level_color(cb['percent'])))
+                self.widget[K_SPEND_LEFT].update(f'{spend["symbol"]}{left:,.2f} left', text_color=ink(C_CRIT) if left <= 0 else P()['dim'])
             else:
-                self.widget[K_SPEND_LEFT].update('no limit', text_color=C_MUTED)
+                self.widget[K_SPEND_LEFT].update('no limit', text_color=P()['dim'])
             self.widget[K_SPEND_TEXT].update(self.spend_line(spend, fc))
             tip = self.credit_forecast_text(cb, fc) if cb else (self.spend_forecast_text(spend) or 'the spending rate appears after a few checks')
             self.widget[K_SPEND_LABEL].set_tooltip(tip)
@@ -843,7 +1433,7 @@ class App:
         shown = self.widget_bucket()
         self.widget[K_GRAPH_ROW].update(visible=bool(shown) and bool(cfg(K_SHOW_GRAPH)))
         if shown and cfg(K_SHOW_GRAPH):
-            self.widget[K_GRAPH_NAME].update(shown['label'], text_color=KIND_COLOR.get(shown['kind'], C_WEEKLY))
+            self.widget[K_GRAPH_NAME].update(shown['label'], text_color=ink(KIND_COLOR.get(shown['kind'], C_WEEKLY)))
             self.draw_graph(self.widget[K_GRAPH], shown, full=False)
         if not buckets:
             self.widget[K_FORECAST].update('')
@@ -853,17 +1443,17 @@ class App:
         danger = [(b, fc) for b, fc in casts if fc['runs_out'] and fc['hit']]
         if danger:
             b, fc = min(danger, key=lambda x: x[1]['hit'])
-            self.widget[K_FORECAST].update('⚠ ' + self.forecast_text(b, fc, short=True), text_color=C_CRIT if (fc['hit'] - utcnow()).total_seconds() < 3600 else C_WARN)
+            self.widget[K_FORECAST].update('⚠ ' + self.forecast_text(b, fc, short=True), text_color=ink(C_CRIT if (fc['hit'] - utcnow()).total_seconds() < 3600 else C_WARN))
         elif any(fc['rate'] is not None for _, fc in casts):
             worst = max((fc['at_reset'] or 0 for _, fc in casts), default=0)
-            self.widget[K_FORECAST].update(f'at this rate nothing runs out before its reset (worst: {round(worst)}%)', text_color=C_OK)
+            self.widget[K_FORECAST].update(f'at this rate nothing runs out before its reset (worst: {round(worst)}%)', text_color=ink(C_OK))
         else:
-            self.widget[K_FORECAST].update('forecast after a few more checks', text_color=C_DIM)
+            self.widget[K_FORECAST].update('forecast after a few more checks', text_color=P()['faint'])
 
     def refresh_status(self):
         snap = self.snap
         if snap and not snap.get('ok'):
-            self.widget[K_STATUS].update(snap['error'][:64], text_color=C_CRIT)
+            self.widget[K_STATUS].update(snap['error'][:64], text_color=ink(C_CRIT))
             self.widget[K_STATUS].set_tooltip(snap['error'])
             return
         if self.busy:
@@ -875,7 +1465,7 @@ class App:
             text = f'checked {clock(snap["at"].astimezone())}' + (f' · next {clock(nxt)}' if nxt else '')
         else:
             text = 'first check…'
-        self.widget[K_STATUS].update(('DEMO · ' if DEMO else '') + text, text_color=C_DIM)
+        self.widget[K_STATUS].update(('DEMO · ' if DEMO else '') + text, text_color=P()['faint'])
 
     # ---------------------------------------------------------------- history ----------------------------------------------------------------
     def record(self, snap):
@@ -1057,8 +1647,8 @@ class App:
         'full' adds axis labels; the widget's version keeps only what fits."""
         graph.erase()
         w, h = graph.CanvasSize
-        now, fc = utcnow(), self.forecast(bucket)
-        color, level = KIND_COLOR.get(bucket['kind'], C_WEEKLY), self.level_color(bucket['percent'])
+        now, fc, p = utcnow(), self.forecast(bucket), P()
+        color, level = paint(KIND_COLOR.get(bucket['kind'], C_WEEKLY)), paint(self.level_color(bucket['percent']))
         span, dollars = span_of(bucket) or 86400, bucket['kind'] == 'spend'
         t1 = bucket['resets_at'] or now + timedelta(seconds=span / 4)
         t0 = min(now - timedelta(seconds=span), fc['points'][0][0] if fc['points'] else now)
@@ -1070,35 +1660,35 @@ class App:
         tx = lambda dt: left + (dt - t0).total_seconds() / max(1, (t1 - t0).total_seconds()) * pw
         ty = lambda v: bottom + max(0.0, min(100.0, v)) / 100 * ph
         small = (UI_FONT, 9)
-        graph.draw_rectangle((left, ph + bottom), (left + pw, bottom), fill_color=C_BG3, line_color=C_BG3)
+        graph.draw_rectangle((left, ph + bottom), (left + pw, bottom), fill_color=p['track'], line_color=p['track'])
         for v in (25, 50, 75, 100):
-            graph.draw_line((left, ty(v)), (left + pw, ty(v)), color=C_LINE if v < 100 else C_DIM, width=1)
+            graph.draw_line((left, ty(v)), (left + pw, ty(v)), color=p['border'] if v < 100 else p['faint'], width=1)
             if full and v in (50, 100):
-                graph.draw_text(yl(v), (left - 4, ty(v)) if dollars else (left - 14, ty(v)), color=C_MUTED, font=small,
+                graph.draw_text(yl(v), (left - 4, ty(v)) if dollars else (left - 14, ty(v)), color=p['dim'], font=small,
                                 text_location=sg.TEXT_LOCATION_RIGHT if dollars else sg.TEXT_LOCATION_CENTER)
         xn = tx(now)
         if full:
-            graph.draw_text(yl(0), (left - 4, ty(0) + 5) if dollars else (left - 12, ty(0) + 5), color=C_MUTED, font=small,
+            graph.draw_text(yl(0), (left - 4, ty(0) + 5) if dollars else (left - 12, ty(0) + 5), color=p['dim'], font=small,
                             text_location=sg.TEXT_LOCATION_RIGHT if dollars else sg.TEXT_LOCATION_CENTER)
             for tick, label in time_ticks(t0, t1):
                 x = tx(tick)
-                graph.draw_line((x, bottom), (x, bottom + 4), color=C_DIM, width=1)
+                graph.draw_line((x, bottom), (x, bottom + 4), color=p['faint'], width=1)
                 if abs(x - xn) > 40 * self.scale:                # leave room for the 'now' label on the axis
-                    graph.draw_text(label, (x, bottom - 7), color=C_DIM, font=small)
-            graph.draw_text('now', (xn, bottom - 7), color=C_TEXT, font=small)
+                    graph.draw_text(label, (x, bottom - 7), color=p['faint'], font=small)
+            graph.draw_text('now', (xn, bottom - 7), color=p['text'], font=small)
         if bucket['resets_at']:
             x = tx(bucket['resets_at'])
-            dashed(graph, (x, bottom), (x, bottom + ph), C_MUTED, width=1, dash=3, gap=3)
+            dashed(graph, (x, bottom), (x, bottom + ph), p['dim'], width=1, dash=3, gap=3)
             if full:
                 local = bucket['resets_at'].astimezone()
-                graph.draw_text(f'resets {local:%b} {local.day}' if dollars else 'reset ' + clock(local), (x - 3, bottom + ph - 8), color=C_MUTED, font=small,
+                graph.draw_text(f'resets {local:%b} {local.day}' if dollars else 'reset ' + clock(local), (x - 3, bottom + ph - 8), color=p['dim'], font=small,
                                 text_location=sg.TEXT_LOCATION_RIGHT)
-        graph.draw_line((xn, bottom), (xn, bottom + ph), color=C_DIM, width=1)
+        graph.draw_line((xn, bottom), (xn, bottom + ph), color=p['faint'], width=1)
         pts = [(tx(t), ty(v)) for t, v in fc['points']]
         for a, b in zip(pts, pts[1:]):
             graph.draw_line(a, b, color=color, width=2)
         if not pts:
-            graph.draw_text('one point per check - collecting…', (left + pw / 2, bottom + ph / 2), color=C_DIM, font=small)
+            graph.draw_text('one point per check - collecting…', (left + pw / 2, bottom + ph / 2), color=p['faint'], font=small)
         last = (xn, ty(bucket['percent']))
         graph.draw_circle(last, 3, fill_color=color, line_color=color)
         if fc['hit'] is not None and fc['rate']:
@@ -1106,45 +1696,50 @@ class App:
             end_v = 100.0 if fc['hit'] <= t1 else bucket['percent'] + fc['rate'] * (t1 - now).total_seconds() / 3600
             dashed(graph, last, (tx(end_t), ty(end_v)), level, width=2)
             if fc['runs_out'] and fc['hit'] <= t1:
-                graph.draw_circle((tx(fc['hit']), ty(100)), 4, fill_color=C_CRIT, line_color=C_CRIT)
+                graph.draw_circle((tx(fc['hit']), ty(100)), 4, fill_color=paint(C_CRIT), line_color=paint(C_CRIT))
                 if full:                                        # bottom-right corner: a line steep enough to hit 100% is never down there
                     hit = fc['hit'].astimezone()
-                    graph.draw_text(f'{yl(100)} ~{hit:%b} {hit.day}' if dollars else f'100% ~{when_text(fc["hit"])}', (left + pw - 6, bottom + 9), color=C_CRIT,
+                    graph.draw_text(f'{yl(100)} ~{hit:%b} {hit.day}' if dollars else f'100% ~{when_text(fc["hit"])}', (left + pw - 6, bottom + 9), color=ink(C_CRIT),
                                     font=(UI_FONT, 9, 'bold'), text_location=sg.TEXT_LOCATION_RIGHT)
 
 
     # ---------------------------------------------------------------- detail window ----------------------------------------------------------------
-    def open_detail(self):
+    def open_detail(self, spot=(None, None)):
         if self.detail is not None:
             self.detail.bring_to_front()
             return
-        f, bar, chart = self.fonts(), (int(440 * self.scale), int(14 * self.scale)), (int(440 * self.scale), int(150 * self.scale))
-        body = [[sg.Text('', font=f['h2'], text_color=C_TEXT, key=K_D_HEAD, pad=((0, 0), (0, 2)), background_color=C_BG2)],
-                [sg.Text('', font=f['small'], text_color=C_MUTED, key=K_D_BREAKDOWN, pad=((0, 0), (0, 8)), background_color=C_BG2)]]
+        f, bar, chart, p = self.fonts(), (int(440 * self.scale), int(14 * self.scale)), (int(440 * self.scale), int(150 * self.scale)), P()
+        pane = p['pane']
+        body = [[sg.Text('', font=f['h2'], text_color=p['text'], key=K_D_HEAD, pad=((0, 0), (0, 2)), background_color=pane)],
+                [sg.Text('', font=f['small'], text_color=p['dim'], key=K_D_BREAKDOWN, pad=((0, 0), (0, 8)), background_color=pane)]]
         for i in range(MAX_BARS):
-            block = [[sg.Text('', font=f['bold'], key=KT_D_LABEL(i), pad=(0, 0), background_color=C_BG2), sg.Push(background_color=C_BG2),
-                      sg.Text('', font=f['big'], key=KT_D_PCT(i), pad=(0, 0), background_color=C_BG2)],
-                     [sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=KT_D_BAR(i), pad=(0, 3))],
-                     [sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=KT_D_META(i), pad=((0, 0), (0, 2)), background_color=C_BG2)],
-                     [sg.Graph(chart, (0, 0), chart, background_color=C_BG2, key=KT_D_GRAPH(i), pad=(0, 2))],
-                     [sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=KT_D_CAST(i), pad=((0, 0), (0, 12)), background_color=C_BG2)]]
-            body.append([sg.Column(block, key=KT_D_ROW(i), pad=0, visible=False, background_color=C_BG2, expand_x=True)])
-        body.append([sg.Text('Usage credits', font=f['bold'], text_color=C_SPEND, pad=((0, 0), (6, 0)), background_color=C_BG2), sg.Push(background_color=C_BG2),
-                     sg.Text('', font=f['big'], key=K_D_CRED_PCT, pad=(0, 0), background_color=C_BG2)])
-        body.append([sg.Graph(bar, (0, 0), bar, background_color=C_BG3, key=K_D_CRED_BAR, pad=(0, 3))])
-        body.append([sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=K_D_SPEND, pad=((0, 0), (0, 2)), background_color=C_BG2)])
-        body.append([sg.Graph(chart, (0, 0), chart, background_color=C_BG2, key=K_D_CRED_GRAPH, pad=(0, 2))])
-        body.append([sg.Text('', font=f['small'], text_color=C_MUTED, size=(60, 2), key=K_D_CRED_CAST, pad=((0, 0), (0, 12)), background_color=C_BG2)])
-        body.append([sg.Text('Account', font=f['bold'], text_color=C_TEXT, pad=((0, 0), (6, 2)), background_color=C_BG2)])
-        body.append([sg.Text('', font=f['small'], text_color=C_MUTED, key=K_D_ACCOUNT, pad=((0, 0), (0, 6)), background_color=C_BG2)])
-        layout = [[sg.Column(body, key=K_D_PANE, scrollable=True, vertical_scroll_only=True, size=(int(560 * self.scale), int(640 * self.scale)), pad=((10, 4), (10, 4)),
-                             background_color=C_BG2, expand_x=True, expand_y=True)],
-                  [sg.Text(KEYS_HINT, font=f['small'], text_color=C_DIM, pad=((12, 0), (0, 4)))],
-                  [sg.Button('Refresh', key=K_REFRESH, font=f['body']), sg.Button('Raw JSON', key=K_RAW, font=f['body']), sg.Button('Copy JSON', key=K_COPY, font=f['body']),
-                   sg.Push(), sg.Button('Close', key=K_CLOSE, font=f['body'], pad=((0, 12), (0, 8)))]]
-        self.detail = sg.Window(f'{APP_NAME} - detail', layout, keep_on_top=True, finalize=True, background_color=C_BG, resizable=True, margins=(0, 0))
+            block = [[sg.Text('', font=f['bold'], key=KT_D_LABEL(i), pad=(0, 0), background_color=pane), sg.Push(background_color=pane),
+                      sg.Text('', font=f['big'], key=KT_D_PCT(i), pad=(0, 0), background_color=pane)],
+                     [sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=KT_D_BAR(i), pad=(0, 3))],
+                     [sg.Text('', font=f['small'], text_color=p['dim'], size=(60, 2), key=KT_D_META(i), pad=((0, 0), (0, 2)), background_color=pane)],
+                     [sg.Graph(chart, (0, 0), chart, background_color=pane, key=KT_D_GRAPH(i), pad=(0, 2))],
+                     [sg.Text('', font=f['small'], text_color=p['dim'], size=(60, 2), key=KT_D_CAST(i), pad=((0, 0), (0, 12)), background_color=pane)]]
+            body.append([sg.Column(block, key=KT_D_ROW(i), pad=0, visible=False, background_color=pane, expand_x=True)])
+        body.append([sg.Text('Usage credits', font=f['bold'], text_color=ink(C_SPEND), pad=((0, 0), (6, 0)), background_color=pane), sg.Push(background_color=pane),
+                     sg.Text('', font=f['big'], key=K_D_CRED_PCT, pad=(0, 0), background_color=pane)])
+        body.append([sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_D_CRED_BAR, pad=(0, 3))])
+        body.append([sg.Text('', font=f['small'], text_color=p['dim'], size=(60, 2), key=K_D_SPEND, pad=((0, 0), (0, 2)), background_color=pane)])
+        body.append([sg.Graph(chart, (0, 0), chart, background_color=pane, key=K_D_CRED_GRAPH, pad=(0, 2))])
+        body.append([sg.Text('', font=f['small'], text_color=p['dim'], size=(60, 2), key=K_D_CRED_CAST, pad=((0, 0), (0, 12)), background_color=pane)])
+        body.append([sg.Text('Account', font=f['bold'], text_color=p['text'], pad=((0, 0), (6, 2)), background_color=pane)])
+        body.append([sg.Text('', font=f['small'], text_color=p['dim'], key=K_D_ACCOUNT, pad=((0, 0), (0, 6)), background_color=pane)])
+        layout = [title_strip(f'{APP_NAME} - detail'),
+                  [sg.Column(body, key=K_D_PANE, scrollable=True, vertical_scroll_only=True, size=(int(560 * self.scale), int(640 * self.scale)), pad=((10, 4), (10, 4)),
+                             background_color=pane, expand_x=True, expand_y=True)],
+                  [sg.Text(KEYS_HINT, font=f['small'], text_color=p['faint'], pad=((12, 0), (0, 4)))],
+                  [sg.Button('Refresh', key=K_REFRESH, font=f['body'], pad=((12, 4), (0, 10))), sg.Button('Raw JSON', key=K_RAW, font=f['body'], pad=(4, (0, 10))),
+                   sg.Button('Copy JSON', key=K_COPY, font=f['body'], pad=(4, (0, 10))), sg.Push(), sg.Button('Close', key=K_CLOSE, font=f['body'], pad=((0, 4), (0, 10))),
+                   sg.Sizegrip(background_color=p['card'])]]
+        self.detail = sg.Window(f'{APP_NAME} - detail', layout, no_titlebar=True, keep_on_top=True, finalize=True, background_color=p['card'], resizable=True, margins=(0, 0),
+                                location=spot, **sbar())
         for seq, key in KEY_BINDS:
             self.detail.bind(seq, key)
+        dress(self.detail, K_KEY_ESC)
         self.wire_detail_wheel()
         self.refresh_detail()
 
@@ -1153,13 +1748,13 @@ class App:
             return
         snap = self.snap
         if not snap or not snap.get('ok'):
-            self.detail[K_D_HEAD].update(snap['error'] if snap else 'waiting for the first check…', text_color=C_CRIT if snap else C_MUTED)
+            self.detail[K_D_HEAD].update(snap['error'] if snap else 'waiting for the first check…', text_color=ink(C_CRIT) if snap else P()['dim'])
             for i in range(MAX_BARS):
                 self.detail[KT_D_ROW(i)].update(visible=False)
             return
         account = snap.get('account') or {}
         who = ' · '.join(x for x in [snap['plan'] or 'Claude', account.get('email') or account.get('display_name') or '', 'DEMO' if DEMO else ''] if x)
-        self.detail[K_D_HEAD].update(who, text_color=C_TEXT)
+        self.detail[K_D_HEAD].update(who, text_color=P()['text'])
         parts = ' · '.join(f'{name} {round(pct)}%' for name, pct in snap.get('breakdown') or [])
         self.detail[K_D_BREAKDOWN].update(f'This week\'s use by app: {parts}' if parts else '')
         for i in range(MAX_BARS):
@@ -1169,8 +1764,8 @@ class App:
                 continue
             b = snap['buckets'][i]
             color, pace = KIND_COLOR.get(b['kind'], C_WEEKLY), self.pace(b)
-            self.detail[KT_D_LABEL(i)].update(b['label'], text_color=color)
-            self.detail[KT_D_PCT(i)].update(f'{round(b["percent"])}%', text_color=self.level_color(b['percent']))
+            self.detail[KT_D_LABEL(i)].update(b['label'], text_color=ink(color))
+            self.detail[KT_D_PCT(i)].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
             self.draw_bar(self.detail[KT_D_BAR(i)], b['percent'], color, pace)
             bits = [self.level_word(b['percent']), reset_long(b['resets_at'])]
             if pace is not None:
@@ -1180,11 +1775,11 @@ class App:
             self.detail[KT_D_META(i)].update(' · '.join(bits))
             fc = self.forecast(b)
             self.draw_graph(self.detail[KT_D_GRAPH(i)], b, full=True)
-            self.detail[KT_D_CAST(i)].update(f'{b["label"]} forecast: ' + self.forecast_text(b, fc), text_color=C_CRIT if fc['runs_out'] else C_MUTED)
+            self.detail[KT_D_CAST(i)].update(f'{b["label"]} forecast: ' + self.forecast_text(b, fc), text_color=ink(C_CRIT) if fc['runs_out'] else P()['dim'])
         spend, cb = snap.get('spend'), self.credit_bucket()
         for key in (K_D_CRED_BAR, K_D_CRED_GRAPH, K_D_CRED_CAST):
             self.detail[key].update(visible=bool(cb))
-        self.detail[K_D_CRED_PCT].update(f'{round(cb["percent"])}%' if cb else '', text_color=self.level_color(cb['percent']) if cb else C_TEXT)
+        self.detail[K_D_CRED_PCT].update(f'{round(cb["percent"])}%' if cb else '', text_color=ink(self.level_color(cb['percent'])) if cb else P()['text'])
         if cb:
             fc, pace, sym = self.forecast(cb), self.pace(cb), spend['symbol']
             self.draw_bar(self.detail[K_D_CRED_BAR], cb['percent'], C_SPEND, pace)
@@ -1196,7 +1791,7 @@ class App:
                 bits.append(f'balance {spend["balance"]}')
             self.detail[K_D_SPEND].update(' · '.join(bits))
             self.draw_graph(self.detail[K_D_CRED_GRAPH], cb, full=True)
-            self.detail[K_D_CRED_CAST].update('Credits forecast: ' + self.credit_forecast_text(cb, fc), text_color=C_CRIT if fc['runs_out'] else C_MUTED)
+            self.detail[K_D_CRED_CAST].update('Credits forecast: ' + self.credit_forecast_text(cb, fc), text_color=ink(C_CRIT) if fc['runs_out'] else P()['dim'])
         elif spend:
             self.detail[K_D_SPEND].update(self.spend_line(spend, None))
         else:
@@ -1249,24 +1844,29 @@ class App:
             self.detail = None
 
     # ---------------------------------------------------------------- sign-in window ----------------------------------------------------------------
-    def open_signin(self):
+    def open_signin(self, spot=(None, None), code=None):
+        """The sign-in window.  code = what was typed in it before it was rebuilt in a new theme - the sign-in URL is kept too"""
         if self.signin_win is not None:
             self.signin_win.bring_to_front()
             return
-        f = self.fonts()
-        verifier, challenge = pkce_pair()
-        state = secrets.token_urlsafe(32)
-        self.pkce = (verifier, state, authorize_url(challenge, state))
-        layout = [[sg.Text('Sign this widget in to Claude', font=f['h2'], pad=((10, 10), (10, 2)))],
-                  [sg.Text('This creates a token that belongs to the widget alone - it never touches the one Claude Code uses.', font=f['small'], text_color=C_MUTED,
+        f, p = self.fonts(), P()
+        if code is None:
+            verifier, challenge = pkce_pair()
+            state = secrets.token_urlsafe(32)
+            self.pkce = (verifier, state, authorize_url(challenge, state))
+        layout = [title_strip(f'{APP_NAME} - sign in'),
+                  [sg.Text('Sign this widget in to Claude', font=f['h2'], pad=((10, 10), (10, 2)))],
+                  [sg.Text('This creates a token that belongs to the widget alone - it never touches the one Claude Code uses.', font=f['small'], text_color=p['dim'],
                            pad=((10, 10), (0, 8)))],
                   [sg.Text('1.  Open this URL and approve the request:', font=f['body'], pad=((10, 10), (4, 2)))],
                   [sg.Multiline(self.pkce[2], size=(70, 3), font=f['mono'], key=K_URL, no_scrollbar=True, pad=((10, 10), 2))],
                   [sg.Button('Open in browser', key=K_OPEN_URL, font=f['body'], pad=((10, 6), 4)), sg.Button('Copy URL', key=K_COPY_URL, font=f['body'], pad=(0, 4))],
                   [sg.Text('2.  Paste the code the callback page shows you:', font=f['body'], pad=((10, 10), (10, 2)))],
-                  [sg.Input('', size=(60, 1), font=f['mono'], key=K_CODE, pad=((10, 10), 2)), sg.Button('Finish', key=K_FINISH, font=f['body'], bind_return_key=True)],
-                  [sg.Text('', font=f['small'], text_color=C_MUTED, key=K_SIGNIN_MSG, size=(70, 2), pad=((10, 10), (6, 10)))]]
-        self.signin_win = sg.Window(f'{APP_NAME} - sign in', layout, keep_on_top=True, finalize=True, background_color=C_BG, modal=False)
+                  [sg.Input(code or '', size=(60, 1), font=f['mono'], key=K_CODE, pad=((10, 10), 2)), sg.Button('Finish', key=K_FINISH, font=f['body'], bind_return_key=True)],
+                  [sg.Text('', font=f['small'], text_color=p['dim'], key=K_SIGNIN_MSG, size=(70, 2), pad=((10, 10), (6, 10)))]]
+        self.signin_win = sg.Window(f'{APP_NAME} - sign in', layout, no_titlebar=True, keep_on_top=True, finalize=True, background_color=p['card'], modal=False,
+                                    margins=(0, 0), location=spot, **sbar())
+        dress(self.signin_win, K_STRIP_CLOSE)
 
     def finish_signin_bg(self, code, window):
         try:
@@ -1278,40 +1878,46 @@ class App:
             window.write_event_value(K_SIGNIN_DONE, (False, str(e)))
 
     # ---------------------------------------------------------------- settings window ----------------------------------------------------------------
-    def open_settings(self):
+    def open_settings(self, values=None, spot=(None, None)):
+        """The settings window.  values = what it showed before it was rebuilt in a new theme (None: the saved settings)"""
         if self.settings_win is not None:
             self.settings_win.bring_to_front()
             return
-        f = self.fonts()
+        f, p = self.fonts(), P()
+        v = lambda key: values[key] if values and key in values else cfg(key)
         token, where, error = ('', 'demo', '') if DEMO else read_claude_code_token()
         found = f'found: {where}' if token else (error or 'not found')
-        layout = [[sg.Text('Where the token comes from', font=f['h2'], pad=((10, 10), (10, 4)))],
-                  [sg.Combo(AUTH_MODES, default_value=cfg(K_AUTH_MODE), readonly=True, size=(30, 1), font=f['body'], key=K_AUTH_MODE, pad=((10, 10), 2)),
-                   sg.Button('Sign in…', key=M_SIGN_IN, font=f['body'])],
-                  [sg.Text(f'Claude Code credentials - {found}', font=f['small'], text_color=C_MUTED if token else C_WARN, size=(64, 2), pad=((10, 10), (0, 6)))],
-                  [sg.Text('Pasted token (only used by the "Pasted token" mode)', font=f['small'], text_color=C_MUTED, pad=((10, 10), (4, 0)))],
-                  [sg.Input(str(cfg(K_TOKEN)), size=(52, 1), font=f['mono'], password_char='•', key=K_TOKEN, pad=((10, 10), (0, 10)))],
+        layout = [title_strip(f'{APP_NAME} - settings'),
+                  [sg.Text('Where the token comes from', font=f['h2'], pad=((10, 10), (10, 4)))],
+                  [sg.Combo(AUTH_MODES, default_value=v(K_AUTH_MODE), readonly=True, size=(30, 1), font=f['body'], key=K_AUTH_MODE, pad=((10, 10), 2)),
+                   sg.Button('Sign in…', key=K_M_SIGN_IN, font=f['body'])],
+                  [sg.Text(f'Claude Code credentials - {found}', font=f['small'], text_color=p['dim'] if token else ink(C_WARN), size=(64, 2), pad=((10, 10), (0, 6)))],
+                  [sg.Text('Pasted token (only used by the "Pasted token" mode)', font=f['small'], text_color=p['dim'], pad=((10, 10), (4, 0)))],
+                  [sg.Input(str(v(K_TOKEN)), size=(52, 1), font=f['mono'], password_char='•', key=K_TOKEN, pad=((10, 10), (0, 10)))],
                   [sg.Text('Widget', font=f['h2'], pad=((10, 10), (6, 4)))],
-                  [sg.Text('Check every', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Combo(INTERVALS, default_value=cfg(K_INTERVAL), readonly=True, size=(10, 1),
+                  [sg.Text('Check every', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Combo(INTERVALS, default_value=v(K_INTERVAL), readonly=True, size=(10, 1),
                                                                                                     font=f['body'], key=K_INTERVAL),
-                   sg.Text('5 min or more is kind to the endpoint', font=f['small'], text_color=C_MUTED)],
-                  [sg.Text('Opacity', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Slider((40, 100), int(cfg(K_OPACITY)), orientation='h', size=(28, 14),
+                   sg.Text('5 min or more is kind to the endpoint', font=f['small'], text_color=p['dim'])],
+                  [sg.Text('Opacity', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Slider((40, 100), int(v(K_OPACITY)), orientation='h', size=(28, 14),
                                                                                                  enable_events=True, key=K_OPACITY, font=f['small'])],
-                  [sg.Text('Font size', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Slider((8, 18), int(cfg(K_FONT_SIZE)), orientation='h', size=(28, 14),
+                  [sg.Text('Font size', size=(14, 1), font=f['body'], pad=((10, 4), 2)), sg.Slider((8, 18), int(v(K_FONT_SIZE)), orientation='h', size=(28, 14),
                                                                                                    key=K_FONT_SIZE, font=f['small'])],
-                  [sg.Text('Amber at', size=(14, 1), font=f['body'], text_color=C_WARN, pad=((10, 4), 2)), sg.Slider((10, 100), int(cfg(K_WARN)), orientation='h', size=(28, 14),
-                                                                                                                     key=K_WARN, font=f['small'])],
-                  [sg.Text('Red at', size=(14, 1), font=f['body'], text_color=C_CRIT, pad=((10, 4), 2)), sg.Slider((10, 100), int(cfg(K_CRIT)), orientation='h', size=(28, 14),
-                                                                                                                   key=K_CRIT, font=f['small'])],
-                  [sg.Checkbox('Show the usage-credits line', bool(cfg(K_SHOW_SPEND)), font=f['body'], key=K_SHOW_SPEND, pad=((10, 10), (8, 0)))],
-                  [sg.Checkbox('Show the even-pace tick on each bar', bool(cfg(K_SHOW_PACE)), font=f['body'], key=K_SHOW_PACE, pad=((10, 10), (0, 0)))],
-                  [sg.Checkbox('Keep the widget on top of other windows', bool(cfg(K_KEEP_ON_TOP)), font=f['body'], key=K_KEEP_ON_TOP, pad=((10, 10), (0, 0)))],
-                  [sg.Checkbox('Show a graph in the widget of', bool(cfg(K_SHOW_GRAPH)), font=f['body'], key=K_SHOW_GRAPH, pad=((10, 4), (0, 0))),
-                   sg.Combo(GRAPH_CHOICES, default_value=cfg(K_GRAPH_OF), readonly=True, size=(14, 1), font=f['body'], key=K_GRAPH_OF, pad=((0, 10), (0, 0)))],
-                  [sg.Text('Favorite models', size=(14, 1), font=f['body'], text_color=C_MODEL, pad=((10, 4), 2)), sg.Input(str(cfg(K_FAVORITE)), size=(24, 1), font=f['body'], key=K_FAVORITE),
-                   sg.Text('name matches, comma-separated - they sort to the top', font=f['small'], text_color=C_MUTED)],
-                  [sg.Push(), sg.Button('Save', key=K_SAVE, font=f['body']), sg.Button('Cancel', key=K_CANCEL, font=f['body'], pad=((6, 12), (4, 10)))]]
-        self.settings_win = sg.Window(f'{APP_NAME} - settings', layout, keep_on_top=True, finalize=True, background_color=C_BG)
+                  [sg.Text('Amber at', size=(14, 1), font=f['body'], text_color=ink(C_WARN), pad=((10, 4), 2)), sg.Slider((10, 100), int(v(K_WARN)), orientation='h',
+                                                                                                                          size=(28, 14), key=K_WARN, font=f['small'])],
+                  [sg.Text('Red at', size=(14, 1), font=f['body'], text_color=ink(C_CRIT), pad=((10, 4), 2)), sg.Slider((10, 100), int(v(K_CRIT)), orientation='h',
+                                                                                                                        size=(28, 14), key=K_CRIT, font=f['small'])],
+                  [sg.Checkbox('Show the usage-credits line', bool(v(K_SHOW_SPEND)), font=f['body'], key=K_SHOW_SPEND, pad=((10, 10), (8, 0)))],
+                  [sg.Checkbox('Show the even-pace tick on each bar', bool(v(K_SHOW_PACE)), font=f['body'], key=K_SHOW_PACE, pad=((10, 10), (0, 0)))],
+                  [sg.Checkbox('Keep the widget on top of other windows', bool(v(K_KEEP_ON_TOP)), font=f['body'], key=K_KEEP_ON_TOP, pad=((10, 10), (0, 0)))],
+                  [sg.Checkbox('Show a graph in the widget of', bool(v(K_SHOW_GRAPH)), font=f['body'], key=K_SHOW_GRAPH, pad=((10, 4), (0, 0))),
+                   sg.Combo(GRAPH_CHOICES, default_value=v(K_GRAPH_OF), readonly=True, size=(14, 1), font=f['body'], key=K_GRAPH_OF, pad=((0, 10), (0, 0)))],
+                  [sg.Text('Favorite models', size=(14, 1), font=f['body'], text_color=ink(C_MODEL), pad=((10, 4), 2)),
+                   sg.Input(str(v(K_FAVORITE)), size=(24, 1), font=f['body'], key=K_FAVORITE),
+                   sg.Text('name matches, comma-separated - they sort to the top', font=f['small'], text_color=p['dim'])],
+                  [sg.Push(), sg.Button('Save', key=K_SAVE, font=f['body'], pad=(6, (4, 10))), sg.Button('Cancel', key=K_CANCEL, font=f['body'], pad=((6, 12), (4, 10)))]]
+        self.settings_win = sg.Window(f'{APP_NAME} - settings', layout, no_titlebar=True, keep_on_top=True, finalize=True, background_color=p['card'], margins=(0, 0),
+                                      location=spot, **sbar())
+        dress(self.settings_win, K_CANCEL)
 
     def save_settings(self, values):
         for key in (K_AUTH_MODE, K_TOKEN, K_INTERVAL, K_SHOW_SPEND, K_SHOW_PACE, K_SHOW_GRAPH, K_GRAPH_OF, K_FAVORITE, K_KEEP_ON_TOP):
@@ -1325,6 +1931,7 @@ class App:
         self.poller.interval = max(60, int(str(cfg(K_INTERVAL)).split()[0]) * 60)
         location = self.widget.current_location()
         self.close_detail()
+        self.widget.timer_stop_all()
         self.widget.close()
         self.build_widget()
         self.widget.move(*location)
@@ -1335,12 +1942,17 @@ class App:
     # ---------------------------------------------------------------- event loop ----------------------------------------------------------------
     def run(self):
         while True:
-            window, event, values = sg.read_all_windows(timeout=1000)
-            if event == sg.TIMEOUT_EVENT:
-                self.tick()
-                continue
+            window, event, values = sg.read_all_windows()
             if window is None:
                 break
+            if window is self.widget and event == sg.EVENT_TIMER:
+                self.tick()
+                continue
+            if window in self.cards:                            # Version / Raw JSON
+                if event in (sg.WIN_CLOSED, K_CLOSE, K_STRIP_CLOSE):
+                    window.close()
+                    self.cards.remove(window)
+                continue
             if window not in (self.widget, self.detail, self.settings_win, self.signin_win):
                 if event == sg.WIN_CLOSED:
                     window.close()                      # a non-blocking popup's X: read_all_windows reports it but leaves the destroy to us
@@ -1357,7 +1969,7 @@ class App:
         self.poller.quit.set()
         self.poller.wake.set()
         self.close_detail()
-        for win in (self.settings_win, self.signin_win, self.widget):
+        for win in self.cards + [self.settings_win, self.signin_win, self.widget]:
             if win is not None:
                 win.close()
 
@@ -1377,7 +1989,8 @@ class App:
 
     def widget_event(self, event, values):
         item = values.get(K_MENU) if event == K_MENU else event
-        if item in ('Exit', sg.WINDOW_CLOSED, K_CLOSE_X):
+        key = item.split('::')[-1] if isinstance(item, str) and '::' in item else item       # a menu choice arrives as its whole 'label::key'
+        if key in ('Exit', sg.WINDOW_CLOSED, K_CLOSE_X):
             return False
         if event == K_POLL_BUSY:
             self.busy = True
@@ -1388,59 +2001,70 @@ class App:
                 self.record(self.snap)
             self.refresh_widget()
             self.refresh_detail()
-        elif event == K_CLICK or item == M_DETAIL:
+        elif event == K_CLICK or key == K_M_DETAIL:
             self.open_detail()
-        elif item == M_REFRESH:
+        elif key == K_M_REFRESH:
             self.poller.wake.set()
-        elif item == M_PAUSE:
+        elif key == K_M_PAUSE:
             self.poller.paused = not self.poller.paused
             self.poller.wake.set()
             self.refresh_status()
-        elif item in MENU_SNAP:
-            self.snap_to({M_SNAP_TL: 'TL', M_SNAP_TR: 'TR', M_SNAP_BL: 'BL', M_SNAP_BR: 'BR'}[item])
-        elif item == M_SETTINGS:
+            self.rebuild_menus()                            # the ✓ beside Pause polling
+        elif key in SNAP_KEYS:
+            self.snap_to(SNAP_KEYS[key])
+        elif key == K_M_SETTINGS:
             self.open_settings()
-        elif item == M_SIGN_IN:
+        elif key == K_M_SIGN_IN:
             self.open_signin()
-        elif item == M_TOP:
+        elif key == K_M_TOP:
             self.set_keep_on_top(not cfg(K_KEEP_ON_TOP))
-        elif item == M_LOG:
+        elif isinstance(key, str) and key.startswith(K_THEME):
+            G.theme = key[len(K_THEME):]
+            sg.user_settings_set_entry(K_THEME, G.theme)
+            self.retheme()
+        elif key == K_BRIGHT:
+            pending = brightness_panel(self.widget, self.keep_going)
+            sg.user_settings_set_entry(K_BRIGHT, G.bright)
+            self.retheme()
+            if pending:                                     # the widget event that closed the panel (a menu choice, the x...)
+                return self.widget_event(*pending)
+        elif key == K_M_LOG:
             path = os.path.join(os.path.dirname(sg.user_settings_filename()), LOG_FILE_NAME)
             if not os.path.exists(path):
                 log('log created')
             os.startfile(path) if hasattr(os, 'startfile') else webbrowser.open('file://' + path)
-        elif item == 'Version':
-            sg.popup_scrolled(f'{APP_NAME} {VERSION}', __file__, sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
-        elif item == 'Edit Me':
+        elif key == 'Version':
+            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__, sg.get_versions()]), (70, 10))
+        elif key == 'Edit Me':
             sg.execute_editor(__file__)
         return True
 
     def detail_event(self, event):
-        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC):
+        if event in (sg.WIN_CLOSED, K_CLOSE, K_KEY_ESC, K_STRIP_CLOSE):
             self.close_detail()
         elif event in SCROLL_KEYS:
             self.scroll(event)
         elif event == K_REFRESH:
             self.poller.wake.set()
         elif event == K_RAW:
-            sg.popup_scrolled(json.dumps(self.snap.get('raw', {}) if self.snap else {}, indent=2), title='Raw usage response', keep_on_top=True, size=(80, 30), font=(MONO_FONT, 10))
+            self.text_card('Raw usage response', json.dumps(self.snap.get('raw', {}) if self.snap else {}, indent=2), (80, 30))
         elif event == K_COPY:
             sg.clipboard_set(json.dumps(self.snap.get('raw', {}) if self.snap else {}, indent=2))
 
     def settings_event(self, event, values):
-        if event in (sg.WIN_CLOSED, K_CANCEL):
+        if event in (sg.WIN_CLOSED, K_CANCEL, K_STRIP_CLOSE):
             self.settings_win.close()
             self.settings_win = None
         elif event == K_OPACITY:
             self.widget.set_alpha(int(values[K_OPACITY]) / 100)
             self.current_alpha = int(values[K_OPACITY]) / 100
-        elif event == M_SIGN_IN:
+        elif event == K_M_SIGN_IN:
             self.open_signin()
         elif event == K_SAVE:
             self.save_settings(values)
 
     def signin_event(self, event, values):
-        if event == sg.WIN_CLOSED:
+        if event in (sg.WIN_CLOSED, K_STRIP_CLOSE):
             self.signin_win.close()
             self.signin_win = None
         elif event == K_OPEN_URL:
@@ -1453,7 +2077,7 @@ class App:
             threading.Thread(target=self.finish_signin_bg, args=(values[K_CODE], self.signin_win), daemon=True).start()
         elif event == K_SIGNIN_DONE:
             ok, message = values[event]
-            self.signin_win[K_SIGNIN_MSG].update(message, text_color=C_OK if ok else C_CRIT)
+            self.signin_win[K_SIGNIN_MSG].update(message, text_color=ink(C_OK if ok else C_CRIT))
             if ok:
                 self.signin_win.close()
                 self.signin_win = None
@@ -1461,16 +2085,18 @@ class App:
 
 
 def main():
-    sg.user_settings_filename(filename=SETTINGS_FILE)
-    sg.theme_add_new('ClaudeUsage', {'BACKGROUND': C_BG, 'TEXT': C_TEXT, 'INPUT': C_BG2, 'TEXT_INPUT': C_TEXT, 'SCROLL': C_LINE, 'BUTTON': (C_TEXT, C_BG3),
-                                     'PROGRESS': (C_SESSION, C_BG2), 'BORDER': 0, 'SLIDER_DEPTH': 0, 'PROGRESS_DEPTH': 0})
-    sg.theme('ClaudeUsage')
+    sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
+    G.theme = sg.user_settings_get_entry(K_THEME, 'Toybox')
+    G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')
+    G.bright = sg.user_settings_get_entry(K_BRIGHT, 0)
+    G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
     sg.set_options(dpi_awareness=True, font=(UI_FONT, 11), tooltip_font=(UI_FONT, 10), icon=ICON)
+    apply_theme()
     try:
         App().run()
-    except Exception:
+    except Exception as e:
         log(traceback.format_exc())
-        raise
+        sg.popup_error_with_traceback(f'{APP_NAME} crashed', e, traceback.format_exc())
 
 
 if __name__ == '__main__':

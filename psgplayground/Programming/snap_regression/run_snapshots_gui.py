@@ -4,6 +4,7 @@ run_snapshots_gui.py
 GUI front-end for running the SNAP_*.py screenshot test scripts.
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-06  v1.7  Claude: FIX: the pointer could stay the sash's double arrow over the two panes - each pane now has its own normal pointer
 2026-11-01  v1.6  Runs with the PyPI psgdnd (6.0.4 has no enable()) - drag & drop is skipped there instead of crashing at startup
 2026-10-29  v1.5  Auto label <YYYY-MM-DD>_<PySimpleGUI version under test> (+ optional Suffix, e.g. VarA) replaces the typed label - version re-probed at run start
 2026-10-29  v1.5  Label's folder already has files (same version, same day) -> asks before the run: Empty Folder First / Keep Files / Cancel Run
@@ -40,7 +41,7 @@ sg.theme('CarbonMolasses')
 
 
 
-VERSION = '1.6'         # Runner version - bump with every change (see CHANGE LOG)
+VERSION = '1.7'         # Runner version - bump with every change (see CHANGE LOG)
 
 DEFAULT_SCREENSHOTS_DIR = os.path.join('output', 'screenshots')
 
@@ -369,6 +370,8 @@ def main():
     sg.cprint_set_output_destination(window, K_LOG)
     # Make the split obvious: wide amber sash, raised, resize cursor on hover, bigger grab handle
     window[K_PANE].PanedWindow.configure(sashwidth=8, sashrelief=sg.RELIEF_RAISED, bg='#c9852f', sashcursor='sb_v_double_arrow', showhandle=True, handlesize=14)
+    for p in window[K_PANE].PaneList:                                                   # each pane keeps the normal pointer - Tk on Windows can leave the sash's ↔ stuck
+        p.TKColFrame.configure(cursor='arrow')
 
     # --- Repack rows so shrinking clips the FLEXIBLE element, never the fixed rows ---
     # tk clips last-packed widgets first.  So: anchor the must-stay-visible rows to the BOTTOM

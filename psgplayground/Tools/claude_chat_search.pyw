@@ -11,6 +11,7 @@ claude_chat_search.pyw - Full-text search of all your Claude chats, using Claude
     Keys:    Enter = search / open the chat in the Claude app    Up Down PgUp PgDn Home End = move through results    Ctrl+F = search box    F5 = reload    Esc = exit
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-06  v1.6  Claude: FIX: the pointer could stay the sash's double arrow over the results and the preview - each pane now has its own normal pointer
 2026-11-04  v1.5  Open in app button: the chat opens in the Claude desktop app (a claude:// link); Enter / double-click on a result do the same
 2026-11-04  v1.5  Open chat is now Open in browser
 2026-10-31  v1.4  Finished exports are moved out of Downloads into an archive folder (one dated subfolder each; the newest 3 kept) and loaded from there
@@ -35,7 +36,7 @@ import zipfile
 
 import PySimpleGUI as sg
 
-VERSION = '1.5'                     # bump with every change, alongside the CHANGE LOG
+VERSION = '1.6'                     # bump with every change, alongside the CHANGE LOG
 APP_NAME = 'Claude Chat Search'
 SETTINGS_FILE = 'claude_chat_search.json'
 DEFAULT_SOURCE = os.path.join(os.path.expanduser('~'), 'Downloads')
@@ -808,6 +809,8 @@ def make_window():
                        auto_save_location=True, size=size)
     pw = window[K_PANE].PanedWindow                 # wide amber sash, raised, resize cursor, big grab handle - same as the SNAP test runner
     pw.configure(sashwidth=8, sashrelief=sg.RELIEF_RAISED, bg='#c9852f', sashcursor='sb_v_double_arrow', showhandle=True, handlesize=14, bd=0)
+    for p in window[K_PANE].PaneList:                                                   # each pane keeps the normal pointer - Tk on Windows can leave the sash's ↔ stuck
+        p.TKColFrame.configure(cursor='arrow')
     for member in (window[K_RESULTS], window[K_PREVIEW]):
         pw.paneconfigure(member.ParentContainer.TKColFrame, stretch='always', minsize=60)      # both halves share window growth; neither can vanish
     sash_y = s('-sash-', None)

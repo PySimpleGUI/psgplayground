@@ -7,12 +7,17 @@ playground.py - Toybox, the PySimpleGUI Playground's app browser.  Run:  psgplay
     Versions:  Version = this copy's VERSION line (a pip app: the installed package).  GitHub = the newest on GitHub, read in the background at start and from
           right-click > Check GitHub for newer versions.  Status (like Pip Refresh's):  ✓ same   ↑ newer = GitHub has a newer one (amber row)   ✓ ahead = newer here
           + install = pip app not installed   … checking   ? couldn't reach GitHub   — no version to compare
-    Keys:  Up/Down PgUp/PgDn Home/End move through the apps    Enter = run    Ctrl+E = edit    Esc = exit
+    Search:  the box above the apps filters every section as you type - name, description, file, packages; every word has to match, name matches come first.
+          The sections show how many of their apps match.  Esc, the ✕ or clicking a section ends the search on the app you picked.
+    Keys:  Up/Down PgUp/PgDn Home/End move through the apps    Enter = run    Ctrl+E = edit    Ctrl+F = search (Down = into the list)    Esc = end the search, else exit
     Edit:  opens the app in your editor (set one in PySimpleGUI's global settings: python -m PySimpleGUI).  Installed apps live in site-packages/psgplayground.
     Run:   starts the app in its own process with the same Python that runs the Toybox (pythonw on Windows, so no console).
     Install missing:  runs  python -m pip install <packages>  and shows the output.
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-06  v1.13 Claude: FIX: the pointer stayed the sash's double arrow over the panes (seen at startup) - each pane now has its own normal pointer
+2026-11-06  v1.13 Claude: Search box above the apps - filters every section as you type (name, description, file, packages); the sections show how many
+                  of their apps match; Ctrl+F jumps to it, Down goes into the list, Enter runs the selected app, Esc / ✕ / a section click end it
 2026-11-05  v1.13 Claude: the Apps table shows each app's Version here, GitHub's newest version and a Status column (✓ same, ↑ newer on GitHub in amber), like
                   Pip Refresh.  GitHub is read in the background at start; right-click > Check GitHub for newer versions reads it again.  The line under the
                   blurb says both versions.  Pane widths are saved under a new name (the Apps pane needs more room), so they start from the defaults once
@@ -117,6 +122,11 @@ K_HEADER = '-HEADER-'
 K_CLOSE = '-CLOSE-'
 K_LAST = '-last app-'
 K_VERSIONS = '-VERSIONS-'                                                            # the version check's answers, from its thread
+K_SEARCH = '-SEARCH-'                                                                # the search box above the apps - filters every section as you type
+K_SEARCH_CLEAR = '-SEARCH CLEAR-'                                                    # the ✕ after it
+K_APPS_HEAD = '-APPS HEAD-'                                                          # 'Apps', or how many the search found
+K_FIND = '-FIND-'                                                                    # Ctrl+F
+SEARCH_HINT = 'Search all apps   Ctrl+F'
 MENU_SHOW, MENU_HIDE = 'Show title bar', 'Hide title bar'
 MENU_CHECK = 'Check GitHub for newer versions'
 BUTTONS = [(K_RUN, 'run', 'Run'), (K_DEMO, 'demo', 'Run demo'), (K_EDIT, 'edit', 'Edit'), (K_FOLDER, 'folder', 'Open folder'), (K_INSTALL, 'install', 'Install'), (K_LINK, 'github', 'GitHub')]
@@ -295,12 +305,15 @@ def start_size(saved):
 
 
 def make_window(catalog, state):
-    sections = [f'{s["name"]}   ({sum(a["section"] == s["name"] for a in catalog["apps"])})' for s in catalog['sections']]
+    sections = section_labels(catalog)
     left = sg.Column([[sg.Text('Sections', font=FONT_BOLD)],
                       [sg.Listbox(sections, key=K_SECTIONS, size=(18, 6), enable_events=True, font=FONT, no_scrollbar=True, select_mode=sg.LISTBOX_SELECT_MODE_SINGLE,
                                   expand_x=True, expand_y=True)],
                       [sg.Text(f'{len(catalog["apps"])} apps', font=FONT_SMALL, text_color=C_DIM)]], vertical_alignment='top', expand_x=True, expand_y=True, pad=((0, 8), 0))
-    middle = sg.Column([[sg.Text('Apps', font=FONT_BOLD)],
+    middle = sg.Column([[sg.Text('Apps', key=K_APPS_HEAD, font=FONT_BOLD, size=(10, 1)),
+                         sg.Input('', key=K_SEARCH, placeholder=SEARCH_HINT, placeholder_text_color=C_DIM, enable_events=True, size=(16, 1), font=FONT_SMALL, expand_x=True,
+                                  pad=((14, 0), 0), tooltip=' Type to search every section - name, description, file, packages.  Esc ends the search '),
+                         sg.Text('✕', key=K_SEARCH_CLEAR, font=FONT_SMALL, text_color=C_DIM, enable_events=True, pad=((4, 0), 0), tooltip=' End the search ')],
                         [sg.Table([], headings=['App', 'Version', 'GitHub', 'Status', 'Needs'], key=K_APPS, col_widths=[24, 8, 8, 9, 10], auto_size_columns=False, num_rows=6, enable_events=True,
                                   justification='left', font=FONT, header_font=FONT_BOLD, select_mode=sg.TABLE_SELECT_MODE_BROWSE, expand_x=True, expand_y=True,
                                   selected_row_colors=('#ffffff', '#2a62a8'), alternating_row_color='#232a38')]], vertical_alignment='top', expand_x=True, expand_y=True, pad=((8, 8), 0))
@@ -381,6 +394,8 @@ def wire_panes(window, state):
         to the width of the right pane, and the sash positions coming back from the last run """
     pane = window[K_PANE].PanedWindow
     pane.configure(sashwidth=7, sashrelief=sg.RELIEF_FLAT, bg=C_SASH, sashcursor='sb_h_double_arrow', showhandle=True, handlesize=10, bd=0, sashpad=0)
+    for p in window[K_PANE].PaneList:                                                   # each pane keeps the normal pointer - Tk on Windows can leave the sash's ↔ stuck
+        p.TKColFrame.configure(cursor='arrow')
     for child, minsize, stretch in zip(pane.panes(), (120, 220, 380), ('never', 'always', 'always')):
         pane.paneconfigure(child, minsize=minsize, stretch=stretch)
     tree = window[K_APPS].Widget
@@ -441,15 +456,84 @@ class State:
         self.github = {}            # app name -> (GitHub's version or None, why not) - filled by the version check
         self.checking = False       # the version check is running
         self.window = None          # the window on show - the check's thread answers to it (a title-bar toggle makes a new window)
+        self.query = ''             # the search box's text - while it isn't empty, apps holds the matches from every section
 
 
-def show_section(window, state, index):
+def show_section(window, state, index, row=0):
     name = state.catalog['sections'][index]['name']
     state.apps = [a for a in state.catalog['apps'] if a['section'] == name]
     rows = app_rows(state)
+    row = row if row < len(rows) else 0
+    window[K_APPS].update(values=rows, select_rows=[row] if rows else None)
+    color_rows(window, state)
+    if rows:
+        window[K_APPS].Widget.see(row + 1)
+    show_app(window, state, row if rows else None)
+
+
+def section_labels(catalog, found=None):
+    """ The Sections list: each name with its number of apps - while searching, how many of them match """
+    labels = []
+    for s in catalog['sections']:
+        total = sum(a['section'] == s['name'] for a in catalog['apps'])
+        labels.append(f'{s["name"]}   ({total})' if found is None else f'{s["name"]}   ({sum(a["section"] == s["name"] for a in found)} of {total})')
+    return labels
+
+
+def app_position(catalog, app):
+    """ (section index, row in that section) of an app """
+    section = next(i for i, s in enumerate(catalog['sections']) if s['name'] == app['section'])
+    return section, [a for a in catalog['apps'] if a['section'] == app['section']].index(app)
+
+
+def search_text(app):
+    """ Everything the search looks in, lower case: name, section, description, file, packages """
+    parts = [app['name'], app['section'], app.get('blurb', ''), app.get('file', ''), app.get('pip', '')]
+    parts += app.get('requires', []) + app.get('optional', []) + app.get('extra_files', [])
+    return ' '.join(str(p) for p in parts if p).lower()
+
+
+def search(window, state, text):
+    """ Filters every section as you type: an app matches when each word is in its name, section, description, file or packages.  Name matches come
+        first, the best match is selected (Enter runs it).  The Sections list shows how many of each section's apps match; none = greyed """
+    state.query = text.strip()
+    if not state.query:
+        end_search(window, state)
+        return
+    words = state.query.lower().split()
+    found = [a for a in state.catalog['apps'] if all(w in search_text(a) for w in words)]
+    found.sort(key=lambda a: not all(w in a['name'].lower() for w in words))                # stable - catalog order within each group
+    state.apps = found
+    window[K_SECTIONS].update(values=section_labels(state.catalog, found))                  # nothing selected while searching
+    for i, s in enumerate(state.catalog['sections']):
+        if not any(a['section'] == s['name'] for a in found):
+            window[K_SECTIONS].Widget.itemconfig(i, foreground=C_DIM)
+    rows = app_rows(state)
     window[K_APPS].update(values=rows, select_rows=[0] if rows else None)
     color_rows(window, state)
+    if rows:
+        window[K_APPS].Widget.see(1)
     show_app(window, state, 0 if rows else None)
+    window[K_APPS_HEAD].update(f'{len(found)} found' if found else 'None found', text_color='#ffc53d' if found else C_MISSING)
+    window[K_SEARCH_CLEAR].update(text_color='#e6eaf2')
+    window[K_STATUS].update('' if found else f'No app matches "{state.query}"')
+
+
+def leave_search(window, state, index=None):
+    """ The search box emptied, the Sections list back to app counts (index = the section to select) """
+    state.query = ''
+    window[K_SEARCH].update('')
+    window[K_SECTIONS].update(values=section_labels(state.catalog), set_to_index=[index] if index is not None else None)
+    window[K_APPS_HEAD].update('Apps', text_color=playground_dark['TEXT'])
+    window[K_SEARCH_CLEAR].update(text_color=C_DIM)
+    window[K_STATUS].update('')
+
+
+def end_search(window, state):
+    """ Back to the sections, staying on the app you picked: its section is selected, it stays selected """
+    section, row = app_position(state.catalog, state.app) if state.app else (0, 0)
+    leave_search(window, state, section)
+    show_section(window, state, section, row)
 
 
 def compare(app, state):
@@ -658,6 +742,9 @@ def start_install(window, state, packages):
 
 def bind_keys(window, state):
     window.bind('<Escape>', K_ESCAPE)
+    window.bind('<Control-f>', K_FIND)
+    window[K_SEARCH].bind('<Down>', '+DOWN')
+    window[K_SEARCH_CLEAR].Widget.configure(cursor='hand2')
     window.bind('<Control-e>', K_EDIT)
     window[K_APPS].bind('<Return>', '+RUN', propagate=False)
     window[K_APPS].bind('<Double-Button-1>', '+RUN')
@@ -708,6 +795,9 @@ def main():
             save_layout(window)
             idx = window[K_SECTIONS].get_indexes()
             section, row = (idx[0] if idx else 0), (window[K_APPS].SelectedRows[0] if window[K_APPS].SelectedRows else 0)
+            if state.query and state.app:                                            # searching: the rows were matches - come back on the same app, in its section
+                section, row = app_position(catalog, state.app)
+            state.query = ''
         if state.app:
             sg.user_settings_set_entry(K_LAST, state.app['name'])                     # come back to this one next time
         window.close()
@@ -721,15 +811,17 @@ def starting_app(catalog):
     app = next((a for a in catalog['apps'] if a['name'] == name), None) or next((a for a in catalog['apps'] if a.get('featured')), None)
     if app is None:
         return 0, 0
-    section = next(i for i, s in enumerate(catalog['sections']) if s['name'] == app['section'])
-    row = [a for a in catalog['apps'] if a['section'] == app['section']].index(app)
-    return section, row
+    return app_position(catalog, app)
 
 
 def event_loop(window, state):
     """ Runs until the window closes.  Returns True when the window should be rebuilt (title bar toggled) """
     while True:
         event, values = window.read()
+        if event in (K_ESCAPE, K_SEARCH_CLEAR) and state.query:                     # Esc ends the search first - only an Esc with no search exits
+            end_search(window, state)
+            window[K_APPS].set_focus()
+            continue
         if event in ('Exit', sg.WINDOW_CLOSED, sg.WINDOW_CLOSE_ATTEMPTED_EVENT, K_ESCAPE, K_CLOSE):
             return False
         if event in (MENU_SHOW, MENU_HIDE):
@@ -751,9 +843,23 @@ def event_loop(window, state):
         elif event == K_THREAD_ERROR:
             state.installing = state.checking = False
             sg.popup_error_with_traceback(*values[event])
+        elif event == K_SEARCH:
+            if values[K_SEARCH].strip() != state.query:
+                search(window, state, values[K_SEARCH])
+        elif event == K_SEARCH + '+DOWN':
+            window[K_APPS].set_focus()                                               # into the list, on the selected match
+            if state.apps:
+                window[K_APPS].Widget.focus(window[K_APPS].Widget.get_children()[state.apps.index(state.app) if state.app in state.apps else 0])
+        elif event == K_FIND:
+            window[K_SEARCH].set_focus()
+            window[K_SEARCH].Widget.select_range(0, 'end')
+        elif event == K_SEARCH_CLEAR:
+            continue                                                                 # ✕ with no search - nothing to end
         elif event == K_SECTIONS:
             idx = window[K_SECTIONS].get_indexes()
             if idx:
+                if state.query:
+                    leave_search(window, state, idx[0])                              # a section click ends the search
                 show_section(window, state, idx[0])
         elif event == K_APPS:
             rows = values[K_APPS]
@@ -787,11 +893,18 @@ def event_loop(window, state):
             window[K_OUTPUT].print('done' if values[event] == 0 else f'pip exited with code {values[event]}', text_color=C_OK if values[event] == 0 else C_MISSING)
             importlib.invalidate_caches()
             state.local = {a['name']: local_version(a) for a in state.catalog['apps']} # a pip app may have just been installed
-            idx = window[K_SECTIONS].get_indexes()
-            row = values[K_APPS][0] if values[K_APPS] else 0
-            show_section(window, state, idx[0] if idx else 0)
-            window[K_APPS].update(select_rows=[row])
-            show_app(window, state, row)
+            if state.query:                                                          # searching: the same matches, the same app selected
+                app = state.app
+                search(window, state, state.query)
+                if app in state.apps:
+                    window[K_APPS].update(select_rows=[state.apps.index(app)])
+                    show_app(window, state, state.apps.index(app))
+            else:
+                idx = window[K_SECTIONS].get_indexes()
+                row = values[K_APPS][0] if values[K_APPS] else 0
+                show_section(window, state, idx[0] if idx else 0)
+                window[K_APPS].update(select_rows=[row])
+                show_app(window, state, row)
 
 
 def run():

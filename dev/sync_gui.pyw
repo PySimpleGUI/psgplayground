@@ -13,6 +13,7 @@ sync_gui.pyw - one-button front end for sync_from_sources.py: copy the apps' wor
     Keys:  Enter = Sync now    F5 = Refresh    Up/Down PgUp/PgDn Home/End scroll the table or log (whichever was clicked)    Esc = close
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-06  v1.8  Claude: FIX: the pointer could stay the sash's double arrow over the table and the log - each pane now has its own normal pointer
 2026-11-02  v1.7  README.md tables edited by hand show as EDITED (red) and Sync asks before replacing them - a copy goes to dev\\readme_copies either way
 2026-11-01  v1.6  README.md is hand-written now - a sync only updates its program tables (wording here: 'update', not 'rebuild')
 2026-11-01  v1.5  Repo renamed to psgplayground (GitHub Desktop fallback message)
@@ -36,7 +37,7 @@ import PySimpleGUI as sg
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sync_from_sources as sync
 
-VERSION = '1.7'
+VERSION = '1.8'
 APP_NAME = 'Playground Sync'
 ICON = b'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAkFBMVEUZtGQnnFsh2WMVLksbesUz6YAdXEAA/wAtzXFf/18A//8Af38em/BV/6oSDyEYT4AUGCEAAAATERsSDBow2XctyXAy5n4dmfoYOS8sx24cWDwty3Aeo/4VJiwchdYtxm8WOFYaSDYhd0skiFIrt2cXR3AgbEYaa60YVYcbc7oA/38pqmIsxW1VqlUtynAeZUNRPuT/AAAAMHRSTlMF/g7////7Ac8CAQL/A////gD///3+/v/7e/ur//7/MP/9/f3+//3///8C/0wDlPs54QN+AAACiElEQVR42r2W2XqjMAxGIUubbjO2JcwSm30pSZq8/9uNbKCTACWZm/lv/GF0LGQkyw43enb4XX282cFaHmhMwkWdVpx/DYDDnTPKO8Jzwlcd8MWTnfTcS7Sgp8KTeOIvBnjhCWKh4Y5YjkR8cef1sNphDYLdE2SIyevBcfhZFsAeENRyzw/O88rztGAPqcSEYkikO3EgBICYrAL5NiQglJdbQIDQQZYFmo0ig0yeLRDBjXlQHz0PEb1jHtwgIsD9BABdkLFnRZAbwDIAkYeDcTfUYgmAujcry2PZecLCEMcM5oDOHss804zpoC57AgrpihkAImuQU5p04bOL+UCsaR7JaAwIbb8+u96CoBw2oNQTAAqzXHbzU6BbxDqGEUCPaKZHfzfCAQlgBOic/OtJlpQSO7kwjgFYFE3TMKrzonCPtM1ZICf/YSbPbflQJmrN5lJjsSD+FRD/EfglTImZ0GZq9e/cAGyjdRy3TfP5WaXp1F6noi+jbw9P0KpePhv7EBu1qbpT4grQfi/1exSPSGnyvYJR0OJTDcj6hhDsnebimV2Ke0LF+rqK2YbmVQUTQKyVrxrjR/lVv1k0pGYd1YgZD6JVMRONsk4oSAOlbffIZoG1n4qBUH7cthszXtuP//TazFP0Nhi7xXZsmPghNbp5SDfqe8cUfZ0Qd3KJIm06D8pvKwZzufQ0OowpGyqTJ1qMXnQVd5r2ky4XJ5kIF3vcU0NhD6a3axrKB7Ws/LGWFeHu+eC8va5wdHr9VNGeceBQJz3Roc5s+fwoeht5MjRtl1OjPqE85lmwpIsrMewaO6cbQbLH7XDAzUpucXfq7xnc3jqS8LxfUphcXU7oOnO4f/3pr0h/AAftsix2AjHLAAAAAElFTkSuQmCC'      # 48 px PNG, base64 - also the icon the launcher shows
 FONT, FONT_MONO = ('Segoe UI', 11), ('Consolas', 10)
@@ -140,6 +141,8 @@ def make_window():
     window.bind('<F5>', K_REFRESH)
     pane = window[K_PANE].PanedWindow
     pane.configure(sashwidth=8, sashrelief=sg.RELIEF_RAISED, bg='#c9852f', sashcursor='sb_v_double_arrow', showhandle=True, handlesize=14, bd=0)
+    for p in window[K_PANE].PaneList:                                                   # each pane keeps the normal pointer - Tk on Windows can leave the sash's ↔ stuck
+        p.TKColFrame.configure(cursor='arrow')
     for child in pane.panes():
         pane.paneconfigure(child, stretch='always', minsize=60)
     window.refresh()
