@@ -2,13 +2,20 @@
 """
 playground.py - Toybox, the PySimpleGUI Playground's app browser.  Run:  psgplayground   or   python -m psgplayground  Browse the apps in catalog.json, see what each one needs, install it, run it, read it.
 
-    Left: the sections.   Middle: the apps in that section.   Right: what the app does, the packages it needs (green = installed) and the buttons.
+    Left: the sections.   Middle: the apps in that section - version here, GitHub's newest, Status.   Right: what the app does, the packages it needs
+          (green = installed) and the buttons.
+    Versions:  Version = this copy's VERSION line (a pip app: the installed package).  GitHub = the newest on GitHub, read in the background at start and from
+          right-click > Check GitHub for newer versions.  Status (like Pip Refresh's):  ✓ same   ↑ newer = GitHub has a newer one (amber row)   ✓ ahead = newer here
+          + install = pip app not installed   … checking   ? couldn't reach GitHub   — no version to compare
     Keys:  Up/Down PgUp/PgDn Home/End move through the apps    Enter = run    Ctrl+E = edit    Esc = exit
     Edit:  opens the app in your editor (set one in PySimpleGUI's global settings: python -m PySimpleGUI).  Installed apps live in site-packages/psgplayground.
     Run:   starts the app in its own process with the same Python that runs the Toybox (pythonw on Windows, so no console).
     Install missing:  runs  python -m pip install <packages>  and shows the output.
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-05  v1.13 Claude: the Apps table shows each app's Version here, GitHub's newest version and a Status column (✓ same, ↑ newer on GitHub in amber), like
+                  Pip Refresh.  GitHub is read in the background at start; right-click > Check GitHub for newer versions reads it again.  The line under the
+                  blurb says both versions.  Pane widths are saved under a new name (the Apps pane needs more room), so they start from the defaults once
 2026-11-02  v1.12 A section's apps can live in a folder named differently from the section (catalog 'folder': System Tray -> Tray/); a section's
                   'warning' shows in amber above each of its apps (Music: lightly tested)
 2026-11-02  v1.11 Opens at a size that fits the screen with room for the screenshot - left to size itself it came up as wide as the longest text and 420 high
@@ -29,16 +36,21 @@ CHANGE LOG (newest first, 1 line per change):
 2026-10-31  v1.1  Lives in the psgplayground package - pip install from the GitHub zipball, run with  psgplayground
 2026-10-30  v1.0  First version
 """
+import concurrent.futures
+import importlib.metadata
 import importlib.util
 import io
 import json
 import math
 import os
+import re
 import struct
 import subprocess
 import sys
 import threading
 import traceback
+import urllib.error
+import urllib.request
 import webbrowser
 
 import PySimpleGUI as sg
@@ -50,6 +62,11 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CATALOG = os.path.join(ROOT, 'catalog.json')
 SHOTS = os.path.join(ROOT, 'screenshots')                                         # <program file name>.png for each app - taken with dev/screenshot_helper.pyw
 GITHUB = 'https://github.com/PySimpleGUI/psgplayground'
+RAW = 'https://raw.githubusercontent.com/PySimpleGUI/psgplayground/main/psgplayground' # each app's newest copy on GitHub: RAW/<section folder>/<file>
+VERSION_RE = re.compile(r'^(?:VERSION|__version__|version)\s*=\s*[\'"]([^\'"]+)[\'"]', re.M) # an app's version line - at the start of a line, so not some function's variable
+SETUP_RE = re.compile(r'^\s*version\s*=\s*[\'"]([^\'"]+)[\'"]', re.M)                # a pip app's version, in its repo's setup.py (indented inside setup())
+VERSION_BYTES = 131072                                                               # the version line is near the top - only this much of each file is read
+STATUS_NEWER = '↑ newer'                                                             # Status when GitHub has a newer version - those rows are amber
 PAGE = 8
 IMPORT_NAMES = {'pywin32': ('win32gui', 'win32api'), 'pillow': ('PIL',), 'deep-translator': ('deep_translator',), 'pymupdf': ('pymupdf', 'fitz'),
                 'pywintrace': ('etw',), 'psgtray': ('psgtray',), 'pystray': ('pystray',), 'watchdog': ('watchdog',), 'keyboard': ('keyboard',),
@@ -93,13 +110,15 @@ K_PIP_LINE = '-PIP LINE-'
 K_PIP_DONE = '-PIP DONE-'
 K_THREAD_ERROR = '-THREAD ERROR-'
 K_PANE = '-PANE-'
-K_SASHES = '-sashes-'
+K_SASHES = '-sashes v1.13-'                                                          # was '-sashes-': the Apps pane got 3 more columns, so the old pane widths are not used
 K_SIZE = '-window size-'                                                             # was '-size-': the sizes saved under it came from the window sizing itself
 K_TITLEBAR = '-titlebar-'
 K_HEADER = '-HEADER-'
 K_CLOSE = '-CLOSE-'
 K_LAST = '-last app-'
+K_VERSIONS = '-VERSIONS-'                                                            # the version check's answers, from its thread
 MENU_SHOW, MENU_HIDE = 'Show title bar', 'Hide title bar'
+MENU_CHECK = 'Check GitHub for newer versions'
 BUTTONS = [(K_RUN, 'run', 'Run'), (K_DEMO, 'demo', 'Run demo'), (K_EDIT, 'edit', 'Edit'), (K_FOLDER, 'folder', 'Open folder'), (K_INSTALL, 'install', 'Install'), (K_LINK, 'github', 'GitHub')]
 BTN_PAD = {'wide': ((0, 8), (6, 8)), 'tall': ((0, 4), (6, 8))}
 
@@ -187,6 +206,58 @@ def missing_packages(app):
     return [p for p in app.get('requires') or [] if not installed(p)]
 
 
+def version_key(v):
+    """ A version as something that compares right: 2.2.9 < 2.2.18, 6.3 == 6.3.0, 6.4rc1 < 6.4.  () when there's no number in it (same rule as Pip Refresh) """
+    m = re.match(r'\s*v?(\d+(?:\.\d+)*)(.*)', v or '')
+    if not m:
+        return ()
+    nums = [int(x) for x in m.group(1).split('.')]
+    while len(nums) > 1 and nums[-1] == 0:
+        nums.pop()
+    return tuple(nums), 0 if m.group(2).strip(' .') else 1
+
+
+def pip_only(app):
+    """ An app that is its own pip package (psghotkey) - no file in the Playground """
+    return bool(app.get('pip')) and not app.get('file')
+
+
+def local_version(app):
+    """ The version of the copy here: the app file's version line, or the installed package's version for a pip app.  None when it has none """
+    if pip_only(app):
+        try:
+            return importlib.metadata.version(app['pip'])
+        except importlib.metadata.PackageNotFoundError:
+            return None
+    try:
+        with open(app_path(app), encoding='utf-8', errors='replace') as f:
+            m = VERSION_RE.search(f.read(VERSION_BYTES))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def github_version(app):
+    """ (GitHub's newest version, None) or (None, why not).  The app's file in this repo, or the setup.py of a pip app's own repo (its 'link').  Network - runs in a thread """
+    repo = re.match(r'https://github\.com/([^/]+/[^/#?]+)', app.get('link') or '')
+    if app.get('file'):
+        url, pattern = f'{RAW}/{os.path.relpath(app_path(app), ROOT).replace(os.sep, "/")}', VERSION_RE
+    elif repo:
+        url, pattern = f'https://raw.githubusercontent.com/{repo.group(1)}/main/setup.py', SETUP_RE
+    else:
+        return None, 'no copy on GitHub'
+    try:
+        request = urllib.request.Request(url, headers={'User-Agent': f'{APP_NAME}/{VERSION}', 'Range': f'bytes=0-{VERSION_BYTES - 1}'})
+        with urllib.request.urlopen(request, timeout=15) as res:
+            text = res.read(VERSION_BYTES).decode('utf-8', 'replace')
+    except urllib.error.HTTPError as e:
+        return None, 'not on GitHub yet' if e.code == 404 else f'GitHub answered {e.code}'
+    except Exception as e:
+        return None, f'could not reach GitHub ({e.__class__.__name__})'
+    m = pattern.search(text)
+    return (m.group(1), None) if m else (None, 'no version line on GitHub')
+
+
 def python_for(path):
     """pythonw for .pyw files on Windows (no console window), otherwise this interpreter"""
     exe = sys.executable
@@ -230,7 +301,7 @@ def make_window(catalog, state):
                                   expand_x=True, expand_y=True)],
                       [sg.Text(f'{len(catalog["apps"])} apps', font=FONT_SMALL, text_color=C_DIM)]], vertical_alignment='top', expand_x=True, expand_y=True, pad=((0, 8), 0))
     middle = sg.Column([[sg.Text('Apps', font=FONT_BOLD)],
-                        [sg.Table([], headings=['App', 'Needs'], key=K_APPS, col_widths=[30, 10], auto_size_columns=False, num_rows=6, enable_events=True,
+                        [sg.Table([], headings=['App', 'Version', 'GitHub', 'Status', 'Needs'], key=K_APPS, col_widths=[24, 8, 8, 9, 10], auto_size_columns=False, num_rows=6, enable_events=True,
                                   justification='left', font=FONT, header_font=FONT_BOLD, select_mode=sg.TABLE_SELECT_MODE_BROWSE, expand_x=True, expand_y=True,
                                   selected_row_colors=('#ffffff', '#2a62a8'), alternating_row_color='#232a38')]], vertical_alignment='top', expand_x=True, expand_y=True, pad=((8, 8), 0))
     right = sg.Column([[sg.Image(key=K_ICON, size=(64, 64)), sg.Text('', key=K_TITLE, font=FONT_TITLE, justification='left', expand_x=True)],
@@ -257,7 +328,7 @@ def make_window(catalog, state):
                sg.Text(f'Python {sys.version.split()[0]}   PySimpleGUI {sg.version.split()[0]}', font=FONT_SMALL, text_color=C_DIM, pad=((0, 12), (4, 8))),
                sg.Sizegrip(background_color=BG) if not titlebar else sg.Text('', pad=(0, (4, 8)))]]
     size = start_size(sg.user_settings_get_entry(K_SIZE, None))
-    menu = ['', [MENU_SHOW if not titlebar else MENU_HIDE, '---', 'Edit Me', 'Version', 'Exit']]
+    menu = ['', [MENU_SHOW if not titlebar else MENU_HIDE, MENU_CHECK, '---', 'Edit Me', 'Version', 'Exit']]
     window = sg.Window(TITLE, layout, size=size, finalize=True, resizable=True, font=FONT, icon=ICON, right_click_menu=menu,
                        auto_save_location=True, margins=(0, 0), no_titlebar=not titlebar, enable_close_attempted_event=True)    # Alt-F4 / X -> an event, window still alive
     window.set_min_size(MIN_SIZE)
@@ -313,7 +384,8 @@ def wire_panes(window, state):
     for child, minsize, stretch in zip(pane.panes(), (120, 220, 380), ('never', 'always', 'always')):
         pane.paneconfigure(child, minsize=minsize, stretch=stretch)
     tree = window[K_APPS].Widget
-    tree.column('Needs', width=90, stretch=False)                                   # extra width goes to the App column
+    for column, width in (('Version', 72), ('GitHub', 72), ('Status', 84), ('Needs', 90)):
+        tree.column(column, width=width, stretch=False)                              # extra width goes to the App column
     tree.column('App', stretch=True)
     right = window[K_OUTPUT].ParentRowFrame.master                                   # the right pane's frame
 
@@ -338,7 +410,7 @@ def wire_panes(window, state):
     window.refresh()
     sashes = sg.user_settings_get_entry(K_SASHES, None)
     if not (isinstance(sashes, (list, tuple)) and len(sashes) == 2 and all(isinstance(v, int) for v in sashes)):
-        sashes = (200, 200 + 7 + 430)
+        sashes = (200, 200 + 7 + 560)                                                # the Apps pane wide enough for its 5 columns
     for i, x in enumerate(sashes):
         pane.sash_place(i, x, 0)
     fit()
@@ -365,14 +437,91 @@ class State:
         self.shot_box = (420, 260)  # room for the screenshot (width, height) - show_shot() measures it each time (shot_room)
         self.shot_job = None        # pending tk after() that redraws the screenshot once a resize settles
         self.shot_key = None        # (file, modified time, box) of the screenshot on show - nothing to redo when it's unchanged
+        self.local = {a['name']: local_version(a) for a in catalog['apps']}       # app name -> the version here (None = no version line / not installed)
+        self.github = {}            # app name -> (GitHub's version or None, why not) - filled by the version check
+        self.checking = False       # the version check is running
+        self.window = None          # the window on show - the check's thread answers to it (a title-bar toggle makes a new window)
 
 
 def show_section(window, state, index):
     name = state.catalog['sections'][index]['name']
     state.apps = [a for a in state.catalog['apps'] if a['section'] == name]
-    rows = [[a['name'], 'ok' if not missing_packages(a) else f'{len(missing_packages(a))} missing'] for a in state.apps]
+    rows = app_rows(state)
     window[K_APPS].update(values=rows, select_rows=[0] if rows else None)
+    color_rows(window, state)
     show_app(window, state, 0 if rows else None)
+
+
+def compare(app, state):
+    """ The Status column, like Pip Refresh's:  ✓ same as GitHub   ↑ newer (GitHub has a newer one)   ✓ ahead (newer here)   + install (pip app not installed)
+        … checking   ? couldn't reach GitHub   — nothing to compare """
+    if state.checking:
+        return '…'
+    local = state.local.get(app['name'])
+    github, why = state.github.get(app['name'], (None, None))
+    if github is None:
+        return '?' if why and why.startswith(('could not', 'GitHub answered')) else '—'
+    if local is None:
+        return '+ install' if pip_only(app) else STATUS_NEWER
+    here, there = version_key(local), version_key(github)
+    return STATUS_NEWER if there > here else '✓ ahead' if here > there else '✓'
+
+
+def app_rows(state):
+    """ One row per app of the section: name, version here, GitHub's newest, Status, Needs """
+    rows = []
+    for a in state.apps:
+        github = '…' if state.checking else state.github.get(a['name'], (None, None))[0] or '—'
+        needs = 'ok' if not missing_packages(a) else f'{len(missing_packages(a))} missing'
+        rows.append([a['name'], state.local.get(a['name']) or '—', github, compare(a, state), needs])
+    return rows
+
+
+def color_rows(window, state):
+    """ Rows GitHub has a newer version of get amber text, like Pip Refresh's amber = newer.  Each row's tk tag is its index - every row is set, so none keeps an old color """
+    tree, normal = window[K_APPS].Widget, window[K_APPS].TextColor
+    for i, a in enumerate(state.apps):
+        tree.tag_configure(i, foreground=C_WIN if compare(a, state) == STATUS_NEWER else normal)
+
+
+def version_note(app, state):
+    """ Both versions, for the file line under the blurb """
+    local, (github, why) = state.local.get(app['name']), state.github.get(app['name'], (None, None))
+    note = f'   ·   version {local}' if local else '   ·   not installed' if pip_only(app) else '   ·   no version line'
+    if state.checking:
+        return note + '   ·   checking GitHub …'
+    if github:
+        status = compare(app, state)
+        return note + f'   ·   GitHub has {github}' + ('  (newer)' if status == STATUS_NEWER else '  (older)' if status == '✓ ahead' else '')
+    return note + (f'   ·   GitHub: {why}' if why else '')
+
+
+def refresh_versions(window, state):
+    """ Redraw the rows and the version line once the check has answered - the same app stays selected and in view """
+    row = state.apps.index(state.app) if state.app in state.apps else None
+    window[K_APPS].update(values=app_rows(state), select_rows=[row] if row is not None else None)
+    color_rows(window, state)
+    if row is not None:
+        window[K_APPS].Widget.see(row + 1)
+    if state.app:
+        path = app_path(state.app)
+        window[K_FILE].update((os.path.relpath(path, ROOT) if path else state.app.get('link', '')) + version_note(state.app, state))
+
+
+def start_version_check(state):
+    """ Reads every app's version line on GitHub, 8 at a time, in a thread - one K_VERSIONS event with all the answers when it's done """
+    state.checking = True
+    apps = list(state.catalog['apps'])
+
+    def run():
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                found = dict(zip([a['name'] for a in apps], pool.map(github_version, apps)))
+            state.window.write_event_value(K_VERSIONS, found)
+        except Exception:
+            state.window.write_event_value(K_THREAD_ERROR, ('Checking GitHub for newer versions failed', traceback.format_exc()))
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def show_app(window, state, row):
@@ -393,7 +542,7 @@ def show_app(window, state, row):
     window[K_WARN].update(f'⚠  {warning}' if warning else '', visible=bool(warning))
     window[K_BLURB].update(app['blurb'])
     path = app_path(app)
-    window[K_FILE].update(os.path.relpath(path, ROOT) if path else app.get('link', ''))
+    window[K_FILE].update((os.path.relpath(path, ROOT) if path else app.get('link', '')) + version_note(app, state))
     window[K_NEEDS].update('')
     reqs = app.get('requires') or []
     if not reqs:
@@ -544,7 +693,10 @@ def main():
     section, row = starting_app(catalog)
     while True:                                                                      # one pass per window; a title-bar toggle rebuilds the window and comes round again
         window = make_window(catalog, state)
+        state.window = window
         bind_keys(window, state)
+        if not state.github and not state.checking:
+            start_version_check(state)                                               # once - a rebuilt window keeps the answers
         window[K_SECTIONS].update(set_to_index=[section])
         show_section(window, state, section)
         if row:
@@ -587,8 +739,17 @@ def event_loop(window, state):
             sg.popup_scrolled(__file__, f'{APP_NAME}  version {VERSION}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
         elif event == 'Edit Me':
             sg.execute_editor(__file__)
+        elif event == MENU_CHECK:
+            if not state.checking:
+                start_version_check(state)
+                refresh_versions(window, state)
+        elif event == K_VERSIONS:
+            state.checking, state.github = False, values[event]
+            refresh_versions(window, state)
+            newer = sum(compare(a, state) == STATUS_NEWER for a in state.catalog['apps'])
+            window[K_STATUS].update(f'GitHub has newer versions of {newer} app{"s" if newer != 1 else ""} (amber rows)' if newer else 'Every app is the same as on GitHub')
         elif event == K_THREAD_ERROR:
-            state.installing = False
+            state.installing = state.checking = False
             sg.popup_error_with_traceback(*values[event])
         elif event == K_SECTIONS:
             idx = window[K_SECTIONS].get_indexes()
@@ -625,6 +786,7 @@ def event_loop(window, state):
             state.installing = False
             window[K_OUTPUT].print('done' if values[event] == 0 else f'pip exited with code {values[event]}', text_color=C_OK if values[event] == 0 else C_MISSING)
             importlib.invalidate_caches()
+            state.local = {a['name']: local_version(a) for a in state.catalog['apps']} # a pip app may have just been installed
             idx = window[K_SECTIONS].get_indexes()
             row = values[K_APPS][0] if values[K_APPS] else 0
             show_section(window, state, idx[0] if idx else 0)
