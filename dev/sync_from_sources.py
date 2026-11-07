@@ -4,6 +4,18 @@ sync_from_sources.py - refresh the Playground from the working copies of the app
     python dev/sync_from_sources.py            copy every source listed in sync_sources.json (next to this script), then update README.md's program tables
     python dev/sync_from_sources.py --readme   only update README.md's program tables
     python dev/sync_from_sources.py --plan     list what a sync would do, change nothing
+    python dev/sync_from_sources.py --release 1.13    set the release number (the Sync GUI's Release version... button) - see THE VERSION NUMBER
+
+THE VERSION NUMBER (psgplayground's, = the Toybox's VERSION in playground.py, read by setup.py):   release.build  =  1.12.4
+    1.12   the release - what the last PyPI release was called.  Every PyPI release is the next number: 1.12 > 1.13 > 1.14 (a fix-only release too);
+           the first number changes only when the Toybox itself breaks old installs (a new PySimpleGUI needed, a new catalog format).
+    .4     the build - how many syncs changed something since that release.  Every sync that changes a file in the repo adds one: 1.12 > 1.12.1 > 1.12.2 ...
+           so a GitHub copy is never called the same as a PyPI copy it differs from, and a Toybox installed from PyPI sees GitHub is newer.
+    A sync does the build number by itself (dev/build.json remembers every file's hash from the last build - it is committed, so every PC agrees).
+    Release version... (or --release) sets the next release number, resets the build to 0, and lists what changed since the previous release
+    (each app's old > new version, new apps) for the GitHub release notes - that list is kept in build.json too.
+    So: sync (it builds) > commit + push ... > Release version 1.13 > commit + push > build + upload to PyPI.  Sync before every commit, or GitHub gets
+    a changed Toybox with an old number.
 
 sync_sources.json maps repo paths to the local working copies (one PC's paths, so the file is .gitignored):
     {"Widgets/claude_usage_widget.pyw": "D:/Dropbox/2026_PysimpleGUI/Mikes 2026 Demos/claude_usage_widget.pyw",
@@ -18,6 +30,8 @@ Before a sync changes README.md it copies it to dev/readme_copies/README.<date_t
 carries a stamp of the tables the sync wrote - edit the tables by hand and the next sync lists README.md as EDITED (the GUI asks before replacing them).
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-07  v1.14 Claude: the version number is release.build - a sync that changes anything bumps the build (1.12 > 1.12.1 ...) in playground.py's VERSION
+                  and records every file's hash in dev/build.json; --release 1.13 sets the next release number and lists what changed since the last one
 2026-11-02  v1.13 README.md is copied to dev/readme_copies before a sync rewrites it, and the START comment carries a stamp of the tables it wrote:
                   tables edited by hand since then show as EDITED (Mike's Music text sat inside them, where the next sync would have replaced it)
 2026-11-02  v1.12 README tables: icons 40 px, screenshots shrunk to fit 240 x 150 with width AND height given (64 px icons and 400 px-wide shots made every
@@ -50,7 +64,7 @@ import shutil
 import struct
 import sys
 
-VERSION = '1.13'
+VERSION = '1.14'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEV = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.join(ROOT, 'psgplayground')
@@ -66,6 +80,11 @@ START_LINE = '<!-- PROGRAMS START: a sync writes everything from here to PROGRAM
 STAMP = re.compile(r'\(sync ([0-9a-f]{12})\)')                     # in the START line: the fingerprint of the tables the last sync wrote
 COPIES = os.path.join(DEV, 'readme_copies')                         # README.md as it was before each sync that changed it (.gitignored)
 KEEP_COPIES = 20
+PLAYGROUND_PY = os.path.join(PKG, 'playground.py')
+BUILD_FILE = os.path.join(DEV, 'build.json')                        # the last build: version, every file's hash, the apps' versions at the last release
+VERSION_LINE = re.compile(r"^VERSION = '([^']+)'", re.M)            # playground.py's version line = the package version (setup.py reads it the same way)
+APP_VERSION = re.compile(r'^(?:VERSION|__version__|version)\s*=\s*[\'"]([^\'"]+)[\'"]', re.M)      # an app's version line (the Toybox reads it the same way)
+RELEASE_FORMAT = re.compile(r'^\d+\.\d+$')                           # a release number is two numbers: 1.13
 
 from playground_icons import ICONS as EMBEDDED_ICONS      # icons that exist only as base64 (chat search)
 try:
@@ -180,11 +199,186 @@ def plan(catalog, readme_only=False):
                               'anything else below PROGRAMS END'})
     elif text != old:
         steps.append({'status': 'readme', 'rel': 'README.md', 'src': 'catalog.json', 'note': 'program tables updated - the rest stays as you wrote it', 'dst': path, 'data': text})
+    version, changed = build_plan(steps)
+    if version:
+        steps.append({'status': 'build', 'rel': 'psgplayground/playground.py', 'src': '', 'note': f'VERSION {package_version()} > {version}  ({changed})', 'dst': None,
+                      'data': None})
     return steps
 
 
+# ---------- the version number: release.build ----------
+def ignored(rel, name, is_dir):
+    """ Would git ignore this?  The .gitignore's patterns (folder/ = that folder anywhere, a bare name = any file or folder with it, a/b = that path) """
+    for pat in IGNORE_PATTERNS:
+        if pat.endswith('/'):
+            if is_dir and fnmatch.fnmatch(name, pat[:-1]):
+                return True
+        elif '/' in pat:
+            if fnmatch.fnmatch(rel, pat.strip('/')) or rel.startswith(pat.strip('/') + '/'):
+                return True
+        elif fnmatch.fnmatch(name, pat):
+            return True
+    return False
+
+
+def read_ignore():
+    try:
+        with open(os.path.join(ROOT, '.gitignore'), encoding='utf-8') as f:
+            return [ln.strip() for ln in f if ln.strip() and not ln.startswith('#')]
+    except OSError:
+        return []
+
+
+IGNORE_PATTERNS = read_ignore() + ['.git/', 'dev/build.json']
+
+
+def repo_files():
+    """ rel path (with /) -> sha1 of the content, for every file in the repo that git tracks (the .gitignore decides; build.json itself stays out) """
+    out = {}
+    for folder, dirs, files in os.walk(ROOT):
+        rel_dir = os.path.relpath(folder, ROOT).replace(os.sep, '/')
+        rel_dir = '' if rel_dir == '.' else rel_dir + '/'
+        dirs[:] = sorted(d for d in dirs if not ignored(rel_dir + d, d, True))
+        for name in sorted(files):
+            rel = rel_dir + name
+            if not ignored(rel, name, False):
+                with open(os.path.join(folder, name), 'rb') as f:
+                    out[rel] = hashlib.sha1(f.read().replace(b'\r\n', b'\n')).hexdigest()         # line endings don't count - they differ by PC, like git's text=auto
+    return out
+
+
+def package_version():
+    """ The Toybox's VERSION line in playground.py - the package version """
+    with open(PLAYGROUND_PY, encoding='utf-8') as f:
+        m = VERSION_LINE.search(f.read())
+    return m.group(1) if m else ''
+
+
+def set_package_version(version):
+    with open(PLAYGROUND_PY, encoding='utf-8', newline='') as f:
+        text = f.read()
+    with open(PLAYGROUND_PY, 'w', encoding='utf-8', newline='') as f:
+        f.write(VERSION_LINE.sub(f"VERSION = '{version}'", text, count=1))
+
+
+def build_state():
+    """ dev/build.json, or None before the first build """
+    try:
+        with open(BUILD_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def save_build_state(state):
+    state['files'] = repo_files()
+    with open(BUILD_FILE, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(state, f, indent=1)
+        f.write('\n')
+
+
+def split_version(version):
+    """ '1.12.4' -> ('1.12', 4);  '1.12' -> ('1.12', 0) """
+    parts = version.split('.')
+    return '.'.join(parts[:2]), int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+
+def changed_since_build(state):
+    """ The repo files that differ from the last build (new, changed or gone) """
+    now, then = repo_files(), state.get('files', {})
+    return sorted(rel for rel in set(now) | set(then) if now.get(rel) != then.get(rel))
+
+
+def build_plan(steps):
+    """ (the version a build after these steps would get, what changed) - (None, '') when nothing changed since the last build and the steps change nothing """
+    state = build_state()
+    if state is None:
+        return next_build(package_version(), None), 'first build - build.json starts here'
+    changed = changed_since_build(state)
+    todo = [st['rel'] for st in steps if st['status'] in ('new', 'changed', 'icon', 'embed', 'remove', 'readme', 'EDITED')]
+    if not changed and not todo:
+        return None, ''
+    what = ' + '.join(x for x in (f'{len(changed)} file(s) changed since build {state["version"]}' if changed else '', f'{len(todo)} to write now' if todo else '') if x)
+    return next_build(package_version(), state), what
+
+
+def next_build(version, state):
+    release, build = split_version(version)
+    if state and state.get('release') == release:
+        build = max(build, state.get('build', 0))
+    return f'{release}.{build + 1}'
+
+
+def build(log):
+    """ After a sync: when anything in the repo changed since the last build, VERSION becomes the next build and build.json is written """
+    state = build_state()
+    version = package_version()
+    if state is not None and not changed_since_build(state):
+        log['build'] = f'no build - nothing changed since {state["version"]}'
+        return
+    changed = changed_since_build(state) if state else []
+    new = next_build(version, state)
+    set_package_version(new)
+    release, build_no = split_version(new)
+    state = state or {'release': release, 'released': '', 'apps_at_release': {}, 'since_last_release': []}
+    state.update(version=new, release=release, build=build_no, built=datetime.datetime.now().strftime('%Y-%m-%d %H:%M'))
+    save_build_state(state)
+    names = ', '.join(changed[:6]) + (', ...' if len(changed) > 6 else '')
+    log['build'] = f'{new}  ({len(changed)} file(s) changed since build {version}: {names})' if changed else f'{new}  (first build - build.json records every file from here on)'
+
+
+def app_versions(catalog):
+    """ name -> version of every app in the catalog, read from its file ('' when it has no version line) """
+    folders = {s['name']: s.get('folder') or s['name'] for s in catalog['sections']}
+    out = {}
+    for app in catalog['apps']:
+        if not app.get('file'):
+            continue
+        path = os.path.join(PKG, folders.get(app['section'], app['section']), app.get('folder') or '', app['file'])
+        try:
+            with open(path, encoding='utf-8', errors='replace') as f:
+                m = APP_VERSION.search(f.read())
+            out[app['name']] = m.group(1) if m else ''
+        except OSError:
+            out[app['name']] = ''
+    return out
+
+
+def changes_since_release(before, now):
+    """ Lines for the release notes: new apps, apps whose version moved, apps gone """
+    lines = [f'{name}: new ({v})' if v else f'{name}: new' for name, v in now.items() if name not in before]
+    lines += [f'{name}: {before[name] or "?"} > {v or "?"}' for name, v in now.items() if name in before and before[name] != v]
+    lines += [f'{name}: gone' for name in before if name not in now]
+    return lines
+
+
+def release(version, catalog):
+    """ --release 1.13: VERSION becomes 1.13 (build 0), build.json records the apps' versions and what changed since the previous release.
+        Returns the lines to print """
+    if not RELEASE_FORMAT.match(version):
+        return [f'ERROR  a release number is two numbers, like 1.13 - not {version}']
+    state = build_state() or {}
+    current = state.get('release') or split_version(package_version())[0]
+    if [int(x) for x in version.split('.')] < [int(x) for x in current.split('.')]:
+        return [f'ERROR  {version} is lower than the current release {current}']
+    now = app_versions(catalog)
+    before = state.get('apps_at_release') or {}
+    since = changes_since_release(before, now) if before else []
+    set_package_version(version)
+    stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    state.update(version=version, release=version, build=0, released=stamp, built=stamp, apps_at_release=now, since_last_release=since,
+                 previous_release=current if current != version else state.get('previous_release', ''))
+    save_build_state(state)
+    lines = [f'   release  VERSION = {version} in playground.py - commit + push, then build + upload to PyPI']
+    if before:
+        lines += [f'   since    {ln}' for ln in since] or ['   since    no app changed its version since the last release']
+        lines.append(f'   since    {len(since)} line(s) for the GitHub release notes - also in dev/build.json ("since_last_release")')
+    else:
+        lines.append('   since    (first release recorded - the apps\' versions are the baseline from now on)')
+    return lines
+
+
 BTN_START, BTN_END = '# --- BUTTON_IMAGES:', '# --- end BUTTON_IMAGES ---'
-PLAYGROUND_PY = os.path.join(PKG, 'playground.py')
 
 
 def button_steps():
@@ -362,6 +556,10 @@ def load_catalog():
 
 def main():
     catalog = load_catalog()
+    if '--release' in sys.argv:
+        for line in release(sys.argv[sys.argv.index('--release') + 1] if len(sys.argv) > sys.argv.index('--release') + 1 else '', catalog):
+            print(line)
+        return 0
     steps = plan(catalog, readme_only='--readme' in sys.argv)
     if not os.path.isfile(SOURCES) and '--readme' not in sys.argv:
         print(f'No {os.path.basename(SOURCES)} - nothing copied (see the docstring for its format)')
@@ -369,11 +567,13 @@ def main():
         for st in steps:
             print(f'   {st["status"]:8} {st["rel"]}  {st["src"] if st["status"] != "same" else ""}  {st["note"]}')
         return 0
-    log = {'copied': [], 'same': 0, 'missing': [], 'warnings': []}
+    log = {'copied': [], 'same': 0, 'missing': [], 'warnings': [], 'build': ''}
     apply(steps, log)
+    build(log)
     print(f'{len(log["copied"])} file(s) written, {log["same"]} unchanged')
     for p in log['copied']:
         print('   wrote   ', p)
+    print('   build   ', log['build'])
     for p in log['missing']:
         print('   MISSING ', p)
     for w in log['warnings']:

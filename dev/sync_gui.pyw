@@ -4,15 +4,20 @@ sync_gui.pyw - one-button front end for sync_from_sources.py: copy the apps' wor
     The table shows what a sync WOULD do (computed on start and after every sync; Refresh recomputes):
         new / changed = will be copied (green)    icon = an icon will be written, embed = Toybox button pictures go into playground.py (blue)
         remove = a stray file goes, readme = README.md's program tables will be updated (amber)
+        build = the sync will bump the version's build number, 1.12.3 > 1.12.4 (blue) - it does when any file in the repo changed since the last build
         same = up to date (grey)    MISSING = source not found (red)
         EDITED = README.md's program tables were edited by hand since the last sync (red): Sync asks first, and keeps a copy in dev\\readme_copies
     Sync now      does exactly that list;  README only   just updates README.md's program tables from catalog.json
     Open repo     opens the repo folder;   Edit sources opens sync_sources.json in your editor
     GitHub Desktop opens GitHub Desktop with this repo selected, ready to commit
+    Release version... sets the next release number (1.12.7 > 1.13) and lists what changed since the last release, for the GitHub release notes.
+                   The version is release.build: a sync that changes anything adds one to the build; a release is the next number.  Details: the
+                   THE VERSION NUMBER section of sync_from_sources.py's docstring.  Then commit + push, build + upload to PyPI.
     The log shows what was written (green), what was unchanged (count) and what couldn't be found (red).  Then commit in GitHub Desktop.
     Keys:  Enter = Sync now    F5 = Refresh    Up/Down PgUp/PgDn Home/End scroll the table or log (whichever was clicked)    Esc = close
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-07  v1.9  Claude: the version is release.build now - a 'build' row shows the bump a sync will make; Release version... sets the next release number
 2026-11-06  v1.8  Claude: FIX: the pointer could stay the sash's double arrow over the table and the log - each pane now has its own normal pointer
 2026-11-02  v1.7  README.md tables edited by hand show as EDITED (red) and Sync asks before replacing them - a copy goes to dev\\readme_copies either way
 2026-11-01  v1.6  README.md is hand-written now - a sync only updates its program tables (wording here: 'update', not 'rebuild')
@@ -37,12 +42,13 @@ import PySimpleGUI as sg
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sync_from_sources as sync
 
-VERSION = '1.8'
+VERSION = '1.9'
 APP_NAME = 'Playground Sync'
 ICON = b'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAkFBMVEUZtGQnnFsh2WMVLksbesUz6YAdXEAA/wAtzXFf/18A//8Af38em/BV/6oSDyEYT4AUGCEAAAATERsSDBow2XctyXAy5n4dmfoYOS8sx24cWDwty3Aeo/4VJiwchdYtxm8WOFYaSDYhd0skiFIrt2cXR3AgbEYaa60YVYcbc7oA/38pqmIsxW1VqlUtynAeZUNRPuT/AAAAMHRSTlMF/g7////7Ac8CAQL/A////gD///3+/v/7e/ur//7/MP/9/f3+//3///8C/0wDlPs54QN+AAACiElEQVR42r2W2XqjMAxGIUubbjO2JcwSm30pSZq8/9uNbKCTACWZm/lv/GF0LGQkyw43enb4XX282cFaHmhMwkWdVpx/DYDDnTPKO8Jzwlcd8MWTnfTcS7Sgp8KTeOIvBnjhCWKh4Y5YjkR8cef1sNphDYLdE2SIyevBcfhZFsAeENRyzw/O88rztGAPqcSEYkikO3EgBICYrAL5NiQglJdbQIDQQZYFmo0ig0yeLRDBjXlQHz0PEb1jHtwgIsD9BABdkLFnRZAbwDIAkYeDcTfUYgmAujcry2PZecLCEMcM5oDOHss804zpoC57AgrpihkAImuQU5p04bOL+UCsaR7JaAwIbb8+u96CoBw2oNQTAAqzXHbzU6BbxDqGEUCPaKZHfzfCAQlgBOic/OtJlpQSO7kwjgFYFE3TMKrzonCPtM1ZICf/YSbPbflQJmrN5lJjsSD+FRD/EfglTImZ0GZq9e/cAGyjdRy3TfP5WaXp1F6noi+jbw9P0KpePhv7EBu1qbpT4grQfi/1exSPSGnyvYJR0OJTDcj6hhDsnebimV2Ke0LF+rqK2YbmVQUTQKyVrxrjR/lVv1k0pGYd1YgZD6JVMRONsk4oSAOlbffIZoG1n4qBUH7cthszXtuP//TazFP0Nhi7xXZsmPghNbp5SDfqe8cUfZ0Qd3KJIm06D8pvKwZzufQ0OowpGyqTJ1qMXnQVd5r2ky4XJ5kIF3vcU0NhD6a3axrKB7Ws/LGWFeHu+eC8va5wdHr9VNGeceBQJz3Roc5s+fwoeht5MjRtl1OjPqE85lmwpIsrMewaO6cbQbLH7XDAzUpucXfq7xnc3jqS8LxfUphcXU7oOnO4f/3pr0h/AAftsix2AjHLAAAAAElFTkSuQmCC'      # 48 px PNG, base64 - also the icon the launcher shows
 FONT, FONT_MONO = ('Segoe UI', 11), ('Consolas', 10)
 C_OK, C_BAD, C_DIM, C_ICON, C_README = '#2ecc71', '#ff6b6b', '#8a93a3', '#49b4ff', '#e8a33d'
-STATUS_COLORS = {'new': C_OK, 'changed': C_OK, 'icon': C_ICON, 'embed': C_ICON, 'remove': C_README, 'readme': C_README, 'same': C_DIM, 'MISSING': C_BAD, 'EDITED': C_BAD}
+STATUS_COLORS = {'new': C_OK, 'changed': C_OK, 'icon': C_ICON, 'embed': C_ICON, 'build': C_ICON, 'remove': C_README, 'readme': C_README, 'same': C_DIM, 'MISSING': C_BAD,
+                 'EDITED': C_BAD}
 sg.theme('DarkGrey13')
 
 K_SYNC = '-SYNC-'
@@ -61,10 +67,11 @@ K_PLAN = '-PLAN-'
 K_PLAN_FAILED = '-PLAN FAILED-'
 K_TABLE = '-TABLE-'
 K_PANE = '-PANE-'
+K_RELEASE = '-RELEASE-'
 
 
-def run_sync(window, readme_only):
-    """Thread: runs the sync script's main() with --readme when asked, streaming its printed lines to the window"""
+def run_sync(window, readme_only, release=None):
+    """Thread: runs the sync script's main() with --readme when asked, or --release <number>, streaming its printed lines to the window"""
     class Stream(io.TextIOBase):                       # print() writes a line in pieces - collect until the newline
         buf = ''
 
@@ -76,7 +83,7 @@ def run_sync(window, readme_only):
                     window.write_event_value(K_LINE, line)
             return len(text)
     try:
-        sys.argv = [sync.__file__] + (['--readme'] if readme_only else [])
+        sys.argv = [sync.__file__] + (['--release', release] if release else ['--readme'] if readme_only else [])
         with redirect_stdout(Stream()):
             code = sync.main()
         window.write_event_value(K_DONE, code)
@@ -101,6 +108,7 @@ def show_plan(window, steps):
     todo = counts['new'] + counts['changed']
     parts = [f'{todo} file(s) to copy'] + ([f'{counts["icon"]} icon(s) to write'] if counts['icon'] else []) + (['button pictures to embed'] if counts['embed'] else []) \
         + ([f'{counts["remove"]} file(s) to remove'] if counts['remove'] else []) + (['README.md tables to update'] if counts['readme'] else []) \
+        + ([next(st['note'].split('  ')[0].replace('VERSION ', 'version ') for st in steps if st['status'] == 'build')] if counts['build'] else []) \
         + (['README.md tables EDITED BY HAND'] if counts['EDITED'] else []) + [f'{counts["same"]} up to date']
     if counts['MISSING']:
         parts.append(f'{counts["MISSING"]} MISSING')
@@ -131,6 +139,7 @@ def make_window():
                sg.Text(sync.ROOT, text_color=C_DIM, font=('Segoe UI', 10))],
               [sg.Button('Sync now', key=K_SYNC, button_color=('white', '#2a62a8')), sg.Button('Refresh', key=K_REFRESH), sg.Button('README only', key=K_README),
                sg.Button('Open repo', key=K_OPEN), sg.Button('Edit sources', key=K_EDIT_SOURCES), sg.Button('GitHub Desktop', key=K_GITHUB_DESKTOP),
+               sg.Button('Release version...', key=K_RELEASE, tooltip=' Set the next release number (1.12.7 > 1.13) and list what changed since the last release '),
                sg.Push(), sg.Text('Enter = sync   F5 = refresh   Esc = close', text_color=C_DIM, font=('Segoe UI', 9))],
               [sg.Text('What Sync now will do', font=('Segoe UI', 10, 'bold')), sg.Text('', key=K_STATUS, expand_x=True)],
               [sg.Pane([sg.Column([[table]], expand_x=True, expand_y=True, pad=0), sg.Column([[log]], expand_x=True, expand_y=True, pad=0)], key=K_PANE, orientation='v',
@@ -181,9 +190,23 @@ def main():
             busy = True
             window[K_LOG].update('')
             window[K_STATUS].update('Working…', text_color=C_DIM)
-            for k in (K_SYNC, K_README, K_REFRESH):
+            for k in (K_SYNC, K_README, K_REFRESH, K_RELEASE):
                 window[k].update(disabled=True)
             threading.Thread(target=run_sync, args=(window, event == K_README), daemon=True).start()
+        elif event == K_RELEASE and not busy:
+            state = sync.build_state() or {}
+            current = state.get('release') or sync.split_version(sync.package_version())[0]
+            major, minor = current.split('.')[:2]
+            message = (f'The release number - the next after {current}.\nIt goes into playground.py (VERSION) and build.json;  the log lists what changed since {current}.\n'
+                       f'Then commit + push, build + upload to PyPI.')
+            answer = sg.popup_get_text(message, title='Release version', default_text=f'{major}.{int(minor) + 1}', keep_on_top=True, font=FONT)
+            if answer and answer.strip():
+                busy = True
+                window[K_LOG].update('')
+                window[K_STATUS].update('Working…', text_color=C_DIM)
+                for k in (K_SYNC, K_README, K_REFRESH, K_RELEASE):
+                    window[k].update(disabled=True)
+                threading.Thread(target=run_sync, args=(window, False, answer.strip()), daemon=True).start()
         elif event == K_REFRESH and not busy:
             window[K_STATUS].update('working out what a sync would do…', text_color=C_DIM)
             threading.Thread(target=run_plan, args=(window,), daemon=True).start()
@@ -195,11 +218,12 @@ def main():
             sg.popup_error_with_traceback('Plan failed', values[event])
         elif event == K_LINE:
             line = values[event]
-            color = C_OK if line.startswith('   wrote') else C_BAD if line.startswith(('   MISSING', '   WARNING')) else None
+            color = C_OK if line.startswith(('   wrote', '   since')) else C_BAD if line.startswith(('   MISSING', '   WARNING', 'ERROR')) \
+                else C_ICON if line.startswith(('   build', '   release')) else None
             window[K_LOG].print(line, text_color=color)
         elif event in (K_DONE, K_FAILED):
             busy = False
-            for k in (K_SYNC, K_README, K_REFRESH):
+            for k in (K_SYNC, K_README, K_REFRESH, K_RELEASE):
                 window[k].update(disabled=False)
             if event == K_FAILED:
                 window[K_STATUS].update('Failed', text_color=C_BAD)
