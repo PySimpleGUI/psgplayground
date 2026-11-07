@@ -7,9 +7,12 @@ id880_lib.py - shared code for the iD880 thermal printer programs (Setup, Notes,
     Path : USB = RAW job through the Windows printer queue (needs pywin32)      Ethernet = TCP port 9100
     Keep : all the iD880 programs share one PySimpleGUI User Settings file
 
-    Paper: two continuous rolls - 3-1/8" receipt paper and continuous labels (4" wide unless changed in Setup)
+    Paper: two continuous rolls - receipt paper (3-1/8", or 4" since Nov 2026 - pick it in Setup) and continuous labels (4" wide unless changed in Setup)
 
 Install:  python -m pip install --upgrade PySimpleGUI pillow pywin32 pymupdf
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-07  receipt width choice: RECEIPT_WIDTHS + the receipt_width setting (3-1/8" or 4") - media_width(RECEIPT) reads it; Setup has the combo
 """
 import functools
 import io
@@ -28,12 +31,13 @@ sg.user_settings_filename(filename=SETTINGS_FILENAME)              # every iD880
 RECEIPT = 'Receipt paper'                                           # the two rolls - both continuous, so any length prints
 LABELS = 'Labels'
 MEDIA = (RECEIPT, LABELS)
-RECEIPT_WIDTH = 640                                                 # 3-1/8" (80 mm) in dots
+RECEIPT_WIDTH = 640                                                 # 3-1/8" (80 mm) in dots - the width when no receipt_width is set
+RECEIPT_WIDTHS = {'3-1/8" (80 mm)': 640, '4" (102 mm)': 812}
 LABEL_WIDTHS = {'4" (102 mm)': 812, '3" (76 mm)': 609, '2-1/4" (57 mm)': 457, '2" (51 mm)': 406}
 NUDGE_SETTING = {RECEIPT: 'receipt_nudge', LABELS: 'label_nudge'}     # dots to move the print right (+) or left (-) of centered
 
 DEFAULTS = {'connection': 'windows', 'win_printer': '', 'ip': '192.168.1.100', 'port': 9100, 'language': 'ZPL', 'darkness': 15, 'speed': 3,
-            'label_width': '4" (102 mm)', 'receipt_nudge': 0, 'label_nudge': 0}
+            'label_width': '4" (102 mm)', 'receipt_width': '3-1/8" (80 mm)', 'receipt_nudge': 0, 'label_nudge': 0}
 
 GREEN, RED, BLUE, ORANGE = '#2E7D32', '#C62828', '#1565C0', '#EF6C00'   # Print / destructive / setup / warning
 HINT_COLOR = '#A9C7E8'
@@ -66,7 +70,9 @@ def save_setting(name, value):
 
 def media_width(media):
     """Width in dots of the roll named media (RECEIPT or LABELS)"""
-    return RECEIPT_WIDTH if media == RECEIPT else LABEL_WIDTHS.get(setting('label_width'), 812)
+    if media == RECEIPT:
+        return RECEIPT_WIDTHS.get(setting('receipt_width'), RECEIPT_WIDTH)
+    return LABEL_WIDTHS.get(setting('label_width'), 812)
 
 
 def media_offset(media):

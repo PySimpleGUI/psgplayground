@@ -13,7 +13,7 @@ THE WIDGET
     Click a row       ->  "What's new" window: a plain-English digest, every new commit / branch / tag / release / issue / PR,
                           click any commit for a colored diff peek, a 30-day activity chart and rhythm stats.
     Click the chip    ->  Issues window (see ISSUES below)
-    ≡ or right-click  ->  Check now · Mark all read · Pause · Keep on top · Theme · Brightness · Snooze · Snap to corner · Settings · Edit Me · Version · Exit
+    ≡ or right-click  ->  Check now · Mark all read · Pause · Keep on top · Size · Theme · Brightness · Snooze · Snap to corner · Settings · Edit Me · Version · Exit
     Drag it anywhere; its position is remembered.  The faint ✕ in the top-right corner closes it, and so does Esc.
     The other windows are moved by their title strip.
 
@@ -23,6 +23,18 @@ THE WIDGET
       tablefan · 2 comments · Bug                          badge: NEW / COMMENT / CLOSED = news · WAITING = someone is waiting on you
     Click an issue -> the Issues window, open at that issue.  Click the title to step through the watched repos that have issues;
     Settings picks the repo and how many rows show.
+
+SIZES  (right-click > Size, or Ctrl + mouse wheel over the widget - remembered between runs)
+    Tiny     one strip, an orb per repo: its ring is the last 14 days of commits (an arc a day, today just left of the top), its middle what is new -
+             green = new commits / branches / tags / PRs, blue = issues with news, red ! = a problem, else the repo's initial.  A blue dot = issue
+             news as well, an amber dot = someone is waiting on your reply.  Issues view: a pip per issue (blue news · purple closed · amber waiting ·
+             green quiet).  Hover an orb or a pip to see what it says.
+    Small    a line per repo: the news as symbols, 14 days of beads on a string (bigger and greener = busier), how long since the last push
+    Medium   the classic look shown above
+    Large    a card per repo: language, stars / forks / watchers / branches, description, a 5-week calendar (a square a day), a 24-hour clock of when
+             the commits land (the amber hand is now), the news a line per kind with the lines the new commits added and removed, the newest commit.
+             Issues view: a bar of news / waiting / quiet issues, then a card per issue with its labels and how long it has waited.
+             Hover a day, an hour or a news line for its numbers; click a news line to open it.
 
 ISSUES  (the support queue)
     Repos with open issues get their conversations checked as well.  News = a new issue, a comment from someone else, or an issue
@@ -62,6 +74,8 @@ CHANGELOG
     1.5.0 06-Nov-2026   The standard widget themes: right-click > Theme (32, as color chips) and Brightness...; every window themed with no OS title
                         bar (moved by its title strip, round corners on Windows 11) and an icon; flat themed menus; Esc closes the widget; --demo has its
                         own settings and never touches the network
+    1.6.0 06-Nov-2026   Size: Tiny / Small / Medium / Large (right-click > Size or Ctrl + mouse wheel), each its own way of seeing the news - orbs with
+                        activity rings, beads, the classic rows, cards with a calendar and a 24-hour clock - with hover tips on the charts
 
 Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings + unread state live in github_repo_watch.json in PySimpleGUI's
 user-settings folder; problems are logged to github_repo_watch.log in the same folder.
@@ -91,7 +105,7 @@ import PySimpleGUI as sg
 from PIL import Image, ImageDraw, ImageFont
 
 APP_NAME = 'GitHub Repo Watch'
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 SETTINGS_FILE = 'github_repo_watch.json'
 DEMO_SETTINGS_FILE = 'github_repo_watch_demo.json'               # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'github_repo_watch.log'
@@ -308,13 +322,28 @@ K_STRIP = '-STRIP-'                                             # the title stri
 K_STRIP_CLOSE = '-STRIP CLOSE-'                                 # its x
 K_ASK_INPUT = '-ASK INPUT-'                                     # the small question card (Choose repos: which account)
 K_ASK_OK = '-ASK OK-'
+K_SIZE = '-SIZE-'                                               # settings entry: the widget's size, one of SIZES
+SIZES = ('Tiny', 'Small', 'Medium', 'Large')
+SIZE_FONT_STEP = {'Tiny': -2, 'Small': -1, 'Medium': 0, 'Large': 0}       # each size's text size against the Widget text size setting
+KT_M_SIZE = lambda size: f'-M SIZE {size}-'                     # the Size menu's choices
+SIZE_KEYS = {KT_M_SIZE(size): size for size in SIZES}
+K_SIZE_STEP = '-SIZE STEP-'                                     # Ctrl + mouse wheel over the widget - value +1 = a size bigger, -1 = smaller
+K_PIC = '-PIC-';            KT_PIC = lambda row, part: (K_PIC, row, part)   # a picture in a Tiny / Small / Large row - part: orb, counts, beads, cal, clock...
+K_AGE = '-AGE-';            KT_AGE = lambda repo: (K_AGE, repo)             # Small: how long since the last push
+K_DESC = '-DESC-';          KT_DESC = lambda repo: (K_DESC, repo)           # Large: the repo's description
+K_LATEST = '-LATEST-';      KT_LATEST = lambda repo: (K_LATEST, repo)       # Large: the newest commit
+K_HEAD = '-HEAD-'                                               # Large: the summary across the top
+K_IPIPS = '-IPIPS-'                                             # Tiny issues view: the pips
+K_IHEALTH = '-IHEALTH-'                                         # Large issues view: the bar of news / waiting / open
+K_ORB = '-ORB-'                                                 # click target (K_ORB, repo): a Tiny orb - What's new, or the Issues window for issue news
+K_OPEN_ISSUES = '-OPEN ISSUES-'                                 # click target (K_OPEN_ISSUES, repo): the Issues window
 
 HOURS = ['12 AM'] + [f'{h} AM' for h in range(1, 12)] + ['12 PM'] + [f'{h} PM' for h in range(1, 12)]
 INTERVALS = ['1 min', '2 min', '5 min', '10 min', '15 min', '30 min', '60 min']
 HISTORIES = ['14 days', '30 days', '60 days', '90 days']
 DEFAULTS = {K_REPOS: 'jaynabonne/impulsing_ada', K_TOKEN: '', K_INTERVAL: '5 min', K_HISTORY_DAYS: '30 days', K_OPACITY: 94, K_FONT_SIZE: 11,
             K_MARK_ON_CLOSE: True, K_QUIET_ON: False, K_QUIET_FROM: '10 PM', K_QUIET_TO: '7 AM', K_COLLAPSE: True, K_VIEW: VIEW_REPOS, K_ISSUE_ROWS: 6,
-            K_ISSUES_REPO: '', K_KEEP_ON_TOP: True}
+            K_ISSUES_REPO: '', K_KEEP_ON_TOP: True, K_SIZE: 'Medium'}
 
 
 # ================================================================ small helpers ================================================================
@@ -414,7 +443,8 @@ def descendants(widget):
 
 
 def bind_click(window, widget_map):
-    """Fire K_CLICK with the mapped target when a mouse press/release lands on the same spot (so dragging the widget doesn't count as a click)."""
+    """Fire K_CLICK with the mapped target when a mouse press/release lands on the same spot (so dragging the widget doesn't count as a click).
+    A target can be a function of the click event - a picture with parts works out which part was clicked."""
     pressed = {}
 
     def on_press(e):
@@ -424,7 +454,7 @@ def bind_click(window, widget_map):
         x0, y0 = pressed.get('at', (e.x_root, e.y_root))
         target = widget_map.get(e.widget)
         if target is not None and abs(e.x_root - x0) < 6 and abs(e.y_root - y0) < 6:
-            window.write_event_value(K_CLICK, target)
+            window.write_event_value(K_CLICK, target(e) if callable(target) else target)     # a function works out the target from where the click landed
 
     window.TKroot.bind('<ButtonPress-1>', on_press, add='+')
     window.TKroot.bind('<ButtonRelease-1>', on_release, add='+')
@@ -517,6 +547,8 @@ class G:
     scale = 1.0                                                 # display scale, 2.0 on a 200% screen - the Brightness panel and the x are drawn at it
     window = None                                               # the widget window
     app = None                                                  # the App - redraw() recolors its widget
+    zoom = 1.0                                                  # the Widget text size against the usual 11 - the Tiny / Small / Large pictures follow it
+    pz = 1.0                                                    # scale * zoom: what those pictures are drawn at
 
 
 def mix(c1, c2, f):
@@ -760,11 +792,13 @@ def set_close_x(label):
     label.configure(image=label.images[0], bg=C_BG)
 
 
-def add_close_x(window, event_key):
-    """The close x overlaid in the window's top-right corner - faint, a red disc under the pointer, closes the widget when clicked"""
+def add_close_x(window, event_key, where='ne'):
+    """The close x overlaid on the window's right edge - faint, a red disc under the pointer, closes the widget when clicked.
+       where: 'ne' the top-right corner, 'e' the middle of the right end (Tiny's strip), 'se' the bottom-right corner (Small, beside ≡)"""
     label = tk.Label(window.TKroot, bd=0, cursor='hand2')
     set_close_x(label)
-    label.place(relx=1.0, x=-round(5 * G.scale), y=round(3 * G.scale), anchor='ne')
+    rely, y = {'ne': (0.0, round(3 * G.scale)), 'e': (0.5, 0), 'se': (1.0, -round(3 * G.scale))}[where]
+    label.place(relx=1.0, rely=rely, x=-round(5 * G.scale), y=y, anchor=where)
     label.bind('<Enter>', lambda e: label.configure(image=label.images[1]))
     label.bind('<Leave>', lambda e: label.configure(image=label.images[0]))
     label.bind('<ButtonRelease-1>', lambda e: window.write_event_value(event_key, None))
@@ -778,6 +812,7 @@ def redraw(window):
     apply_theme()
     recolor(window, {a: b for a, b in zip(old, palette()) if a != b})
     set_close_x(G.app.close_x)
+    G.app.repaint()                                             # Tiny / Small / Large: their pictures drawn again in the new colors
     round_corners(window)
 
 
@@ -999,6 +1034,491 @@ def brightness_panel(card, keep_going):
     redraw(card)
     return pending
 # --- end BRIGHTNESS ---
+
+
+# ================================================================ widget sizes: the pictures ================================================================
+# Tiny, Small and Large draw their symbols and charts with Pillow (Medium is the classic look: text and a Graph).  Every picture is drawn in the theme's
+# colors, at the screen's scale times the Widget text size (G.pz), so a bigger text size makes the pictures bigger too.  HoverTip says what is under the
+# pointer on a chart: a day, an hour, an issue.
+ORB = 28                                                        # Tiny: a repo's orb (design pixels, square)
+BEAD_PITCH, BEAD_H = 6.0, 14                                    # Small: the 14 days of beads
+CAL_CELL, CAL_GAP, CAL_WEEKS, CAL_TOP, CAL_EDGE = 9, 2, 5, 11, 1.5    # Large: the calendar - a day's square, the gap, weeks shown, weekday letters, margin
+CLOCK, CLOCK_R0, CLOCK_R1 = 74, 6, 25                           # Large: the 24-hour clock - its size, the wedges' inner and outer radius
+NEWS_W, NEWS_PITCH = 244, 16                                    # Large: the news list
+PIP_W, PIP_H, PIP_GAP, PIP_MAX = 7, 16, 3, 18                   # Tiny issues view: one pip per issue
+ISSUE_W = 400                                                   # Large issues view: the health bar and an issue's second line
+DIFF_BLOCKS = 5                                                 # Large: the squares after +adds -dels, like GitHub's diffstat
+WEEKDAYS = 'MTWTFSS'
+
+
+def px(pt):
+    """A font's point size in design pixels"""
+    return pt * 4 / 3
+
+
+def text_w(s, size, bold=False):
+    """How wide text is in design pixels"""
+    return font(bold, max(6, round(size * G.pz))).getlength(s) / G.pz
+
+
+def fit(s, size, bold, width):
+    """The text, cut with … so it is no wider than width design pixels"""
+    if text_w(s, size, bold) <= width:
+        return s
+    while s and text_w(s + '…', size, bold) > width:
+        s = s[:-1]
+    return s.rstrip() + '…'
+
+
+class Pic:
+    """A picture for the widget: shapes drawn 4x and shrunk so their edges are smooth, then the text drawn on at full size so it stays sharp.
+       Sizes are design pixels; text is placed by the middle of its capital letters"""
+    def __init__(self, w, h, bg):
+        self.w, self.h, self.bg, self.s, self.texts = w, h, bg, G.pz, []
+        self.k = self.s * 4
+        self.im = Image.new('RGB', (max(1, round(w * self.k)), max(1, round(h * self.k))), bg)
+        self.d = ImageDraw.Draw(self.im)
+
+    def width(self, width):
+        return max(1, round(width * self.k))
+
+    def disc(self, cx, cy, r, fill=None, outline=None, width=1.0):
+        k = self.k
+        self.d.ellipse(((cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k), fill=fill, outline=outline, width=self.width(width) if outline else 0)
+
+    def ring(self, cx, cy, r, color, width):
+        """A circle line centered on radius r"""
+        self.disc(cx, cy, r + width / 2, outline=color, width=width)
+
+    def arc(self, cx, cy, r, a0, a1, color, width):
+        """Part of a circle line centered on radius r, from angle a0 to a1 (degrees, clockwise from 3 o'clock)"""
+        k, big = self.k, r + width / 2
+        self.d.arc(((cx - big) * k, (cy - big) * k, (cx + big) * k, (cy + big) * k), a0, a1, fill=color, width=self.width(width))
+
+    def rect(self, x0, y0, x1, y1, fill=None, outline=None, width=1.0, r=0):
+        k, r = self.k, max(0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+        self.d.rounded_rectangle((x0 * k, y0 * k, x1 * k, y1 * k), radius=r * k, fill=fill, outline=outline, width=self.width(width) if outline else 0)
+
+    def line(self, points, color, width):
+        """A line through the points, with round ends and joints"""
+        self.d.line([v * self.k for p in points for v in p], fill=color, width=self.width(width), joint='curve')
+        for x, y in (points[0], points[-1]):
+            self.disc(x, y, width / 2, fill=color)
+
+    def poly(self, points, fill):
+        self.d.polygon([v * self.k for p in points for v in p], fill=fill)
+
+    def text(self, x, y, s, color, size, bold=False, anchor='l'):
+        """Text whose capital letters are centered on y; anchor = l, m or r for where x is"""
+        self.texts.append((x, y, s, color, size, bold, anchor))
+
+    def png(self):
+        """The finished picture, base64 PNG - what sg.Image(data=) and its update(data=) take"""
+        im = self.im.resize((max(1, round(self.w * self.s)), max(1, round(self.h * self.s))), Image.LANCZOS)
+        d = ImageDraw.Draw(im)
+        for x, y, s, color, size, bold, anchor in self.texts:
+            f = font(bold, max(6, round(size * self.s)))
+            d.text((x * self.s, y * self.s + f.getbbox('H', anchor='ls')[1] / -2), s, fill=color, font=f, anchor=anchor + 's')
+        buf = io.BytesIO()
+        im.save(buf, 'PNG')
+        return base64.b64encode(buf.getvalue())
+
+
+def blank(w, h, bg):
+    """An empty picture of the right size - the layout's placeholder until the first refresh paints it"""
+    return Pic(w, h, bg).png()
+
+
+def icon(p, kind, cx, cy, r, color):
+    """A small GitHub-style symbol centered on (cx, cy), r = half its size"""
+    w, bg = max(0.9, r * 0.24), p.bg
+    if kind == 'commit':                                        # a ring on a line
+        p.line([(cx - r, cy), (cx + r, cy)], color, w)
+        p.disc(cx, cy, r * 0.48, fill=bg, outline=color, width=w)
+    elif kind in ('issue', 'closed', 'waiting', 'check'):       # a ring with a dot / a tick / clock hands
+        if kind != 'check':
+            p.ring(cx, cy, r * 0.84 - w / 2, color, w)
+        if kind == 'issue':
+            p.disc(cx, cy, r * 0.24, fill=color)
+        elif kind == 'waiting':
+            p.line([(cx, cy - r * 0.46), (cx, cy), (cx + r * 0.34, cy + r * 0.2)], color, w)
+        else:
+            f = 1.25 if kind == 'check' else 1
+            p.line([(cx - r * 0.38 * f, cy + r * 0.02 * f), (cx - r * 0.1 * f, cy + r * 0.3 * f), (cx + r * 0.4 * f, cy - r * 0.3 * f)], color, w * f)
+    elif kind == 'branch':                                      # a trunk and a branch leaving it
+        ax, ty, by, bx, bty = cx - r * 0.42, cy - r * 0.62, cy + r * 0.62, cx + r * 0.46, cy - r * 0.32
+        p.line([(ax, ty), (ax, by)], color, w)
+        p.line([(bx, bty), (bx, cy + r * 0.02), (ax, cy + r * 0.44)], color, w)
+        for x, y in ((ax, ty), (ax, by), (bx, bty)):
+            p.disc(x, y, r * 0.25, fill=bg, outline=color, width=w * 0.9)
+    elif kind == 'tag':
+        pts = [(cx - r * 0.85, cy - r * 0.5), (cx + r * 0.3, cy - r * 0.5), (cx + r * 0.9, cy), (cx + r * 0.3, cy + r * 0.5), (cx - r * 0.85, cy + r * 0.5)]
+        p.line(pts + [pts[0]], color, w)
+        p.disc(cx - r * 0.42, cy, r * 0.14, fill=color)
+    elif kind == 'release':                                     # a four-pointed sparkle
+        a, b = r * 0.95, r * 0.26
+        p.poly([(cx, cy - a), (cx + b, cy - b), (cx + a, cy), (cx + b, cy + b), (cx, cy + a), (cx - b, cy + b), (cx - a, cy), (cx - b, cy - b)], color)
+    elif kind == 'pr':                                          # two commits and the arrow back
+        lx, rx, ty, by = cx - r * 0.45, cx + r * 0.45, cy - r * 0.6, cy + r * 0.6
+        p.line([(lx, ty), (lx, by)], color, w)
+        p.line([(rx, by), (rx, ty), (cx + r * 0.02, ty)], color, w)
+        p.poly([(cx - r * 0.18, ty), (cx + r * 0.14, ty - r * 0.26), (cx + r * 0.14, ty + r * 0.26)], color)
+        for x, y in ((lx, ty), (lx, by), (rx, by)):
+            p.disc(x, y, r * 0.25, fill=bg, outline=color, width=w * 0.9)
+    elif kind == 'star':
+        p.poly([(cx + (r if i % 2 == 0 else r * 0.42) * math.cos(math.radians(-90 + 36 * i)), cy + (r if i % 2 == 0 else r * 0.42) * math.sin(math.radians(-90 + 36 * i)))
+                for i in range(10)], color)
+    elif kind == 'fork':                                        # two tines joining
+        lx, rx, ty, by = cx - r * 0.46, cx + r * 0.46, cy - r * 0.6, cy + r * 0.64
+        p.line([(lx, ty), (lx, cy - r * 0.1), (cx, cy + r * 0.12), (rx, cy - r * 0.1), (rx, ty)], color, w)
+        p.line([(cx, cy + r * 0.12), (cx, by)], color, w)
+        for x, y in ((lx, ty), (rx, ty), (cx, by)):
+            p.disc(x, y, r * 0.25, fill=bg, outline=color, width=w * 0.9)
+    elif kind == 'eye':
+        p.d.ellipse(((cx - r * 0.95) * p.k, (cy - r * 0.55) * p.k, (cx + r * 0.95) * p.k, (cy + r * 0.55) * p.k), outline=color, width=p.width(w))
+        p.disc(cx, cy, r * 0.26, fill=color)
+    elif kind == 'comment':                                     # a speech bubble
+        p.rect(cx - r * 0.9, cy - r * 0.7, cx + r * 0.9, cy + r * 0.42, outline=color, width=w, r=r * 0.3)
+        p.poly([(cx - r * 0.5, cy + r * 0.3), (cx - r * 0.5, cy + r * 0.9), (cx - r * 0.02, cy + r * 0.3)], color)
+    elif kind == 'person':                                      # head and shoulders
+        p.disc(cx, cy - r * 0.38, r * 0.34, fill=color)
+        p.d.chord(((cx - r * 0.75) * p.k, (cy + r * 0.1) * p.k, (cx + r * 0.75) * p.k, (cy + r * 1.3) * p.k), 180, 360, fill=color)
+    elif kind == 'alert':                                       # a triangle with a !
+        p.poly([(cx, cy - r * 0.9), (cx + r, cy + r * 0.8), (cx - r, cy + r * 0.8)], color)
+        p.line([(cx, cy - r * 0.32), (cx, cy + r * 0.2)], bg, w)
+        p.disc(cx, cy + r * 0.52, w * 0.6, fill=bg)
+    elif kind == 'pause':
+        for x in (cx - r * 0.35, cx + r * 0.35):
+            p.rect(x - r * 0.18, cy - r * 0.7, x + r * 0.18, cy + r * 0.7, fill=color, r=r * 0.08)
+
+
+def heat(v, peak, low):
+    """A day's (or an hour's) green: the track color for none, deeper green the busier it was - low = the green of the quietest busy one"""
+    return mix(C_BG3, C_GREEN, low + (1 - low) * v / peak) if v else C_BG3
+
+
+def day_counts(per_day, n):
+    """Commits per day for the last n days, oldest first (today last)"""
+    today = date.today()
+    return [per_day.get((today - timedelta(days=i)).isoformat(), 0) for i in range(n - 1, -1, -1)]
+
+
+def day_name(d):
+    """'today', 'yesterday', 'Tue 4 Nov'"""
+    today = date.today()
+    return 'today' if d == today else 'yesterday' if d == today - timedelta(days=1) else d.strftime('%a %d %b').replace(' 0', ' ')
+
+
+def hour_name(h):
+    """'2 PM - 3 PM'"""
+    return f'{hour12(h)} - {hour12((h + 1) % 24)}'
+
+
+# --- Tiny ---
+def paint_orb(days, center, text, blue, amber, busy):
+    """Tiny: a repo as an orb.  The ring = its last 14 days of commits, one arc a day (oldest at the top, clockwise, today just left of the top);
+       the middle = what is new: green with the number of new commits / branches / tags / PRs, blue with the number of issues with news, red ! for a
+       problem, else the repo's initial (or the quiet-repos count) on the track color.  Blue dot = issue news as well, amber dot = someone is waiting
+       on your reply, amber outline = being checked right now"""
+    p, c = Pic(ORB, ORB, C_BG), ORB / 2
+    peak, step = max(days) or 1, 360 / len(days)
+    for i, v in enumerate(days):
+        a0 = -90 + i * step + 3.5
+        p.arc(c, c, 11.0, a0, a0 + step - 7, heat(v, peak, 0.45), 2.8)
+    fill, ink = {'code': (C_GREEN, C_BG), 'issue': (C_BLUE, C_BG), 'error': (C_RED, C_BG)}.get(center, (C_BG3, C_MUTED))
+    p.disc(c, c, 7.8, fill)
+    if busy:
+        p.ring(c, c, 7.8, C_AMBER, 1.3)
+    if text:
+        p.text(c, c, text, ink, 10 if len(text) == 1 else 8.8 if len(text) == 2 else 7.5, bold=True, anchor='m')
+    for on, color, dy in ((blue, C_BLUE, -1), (amber, C_AMBER, 1)):
+        if on:
+            p.disc(c + 9, c + 9 * dy, 3.6, C_BG)
+            p.disc(c + 9, c + 9 * dy, 2.7, color)
+    return p.png()
+
+
+def paint_pips(colors, extra, ni, nw, bg):
+    """Tiny issues view: one pip per issue, most recent activity first - blue = news, purple = closed with news, amber = waiting on you,
+       green = open and quiet.  Then the counts: issues with news, waiting"""
+    size = px(8.5)
+    items = [(k, n, c) for k, n, c in (('issue', ni, C_BLUE), ('waiting', nw, C_AMBER)) if n]
+    w = len(colors) * (PIP_W + PIP_GAP) + (text_w(f'+{extra}', px(7.5)) + 4 if extra else 0) + sum(17 + text_w(str(n), size, True) for _, n, _ in items) + 4
+    p, cy = Pic(w, ORB, bg), ORB / 2
+    x = 1
+    for color in colors:
+        p.rect(x, cy - PIP_H / 2, x + PIP_W, cy + PIP_H / 2, fill=color, r=2.5)
+        x += PIP_W + PIP_GAP
+    if extra:
+        p.text(x, cy, f'+{extra}', C_DIM, px(7.5))
+        x += text_w(f'+{extra}', px(7.5)) + 4
+    for kind, n, color in items:
+        x += 4
+        icon(p, kind, x + 5, cy, 5, color)
+        p.text(x + 12, cy, str(n), color, size, True)
+        x += 13 + text_w(str(n), size, True)
+    return p.png()
+
+
+def pip_at(x):
+    """Which pip (0, 1, ...) is under x, or None"""
+    i = int((x - 1) // (PIP_W + PIP_GAP))
+    return i if x >= 1 and (x - 1) % (PIP_W + PIP_GAP) <= PIP_W + 1 else None
+
+
+# --- Small ---
+def paint_beads(days, bg):
+    """Small: the last 14 days as beads on a string - the busier the day, the bigger and greener its bead (today on the right)"""
+    w = len(days) * BEAD_PITCH
+    p, cy, peak = Pic(w, BEAD_H, bg), BEAD_H / 2, max(days) or 1
+    p.line([(BEAD_PITCH / 2, cy), (w - BEAD_PITCH / 2, cy)], mix(bg, C_LINE, 0.85), 0.8)
+    for i, v in enumerate(days):
+        cx = BEAD_PITCH * (i + 0.5)
+        if v:
+            p.disc(cx, cy, 1.7 + 1.5 * math.sqrt(v / peak), heat(v, peak, 0.5))
+        else:
+            p.disc(cx, cy, 1.05, C_DIM)
+    return p.png()
+
+
+def paint_counts(items, note, note_color, bg):
+    """Small: the news as symbols and numbers - items = [(icon, number, color)]; note = words instead ('zz' while badges are hidden, 'problem')"""
+    size = px(8.5)
+    if note:
+        w = text_w(note, size, True) + (13 if note_color == C_RED else 0) + 2
+        p = Pic(w, 16, bg)
+        if note_color == C_RED:
+            icon(p, 'alert', 6, 8, 5, note_color)
+        p.text(w - 1, 8, note, note_color, size, True, 'r')
+        return p.png()
+    w = sum(13 + text_w(str(n), size, True) for _, n, _ in items) + 7 * max(0, len(items) - 1) + 2
+    p, x = Pic(w, 16, bg), 1
+    for kind, n, color in items:
+        icon(p, kind, x + 5, 8, 5, color)
+        p.text(x + 12.5, 8, str(n), color, size, True)
+        x += 13 + text_w(str(n), size, True) + 7
+    return p.png()
+
+
+# --- Large ---
+def cal_start():
+    """The Monday the calendar starts on: CAL_WEEKS weeks ending with this one"""
+    today = date.today()
+    return today - timedelta(days=today.weekday() + 7 * (CAL_WEEKS - 1))
+
+
+def cal_size():
+    pitch = CAL_CELL + CAL_GAP
+    return 7 * pitch - CAL_GAP + 2 * CAL_EDGE, CAL_TOP + CAL_WEEKS * pitch - CAL_GAP + 2 * CAL_EDGE
+
+
+def paint_calendar(per_day, history_days, bg):
+    """Large: the last 5 weeks as a calendar, a square a day (Monday first, this week at the bottom), greener the more commits that day - like
+       GitHub's contribution chart.  Days before the activity history are outlines; today has a frame"""
+    (w, h), pitch, today, start = cal_size(), CAL_CELL + CAL_GAP, date.today(), cal_start()
+    p, e = Pic(w, h, bg), CAL_EDGE
+    for i, ch in enumerate(WEEKDAYS):
+        p.text(e + i * pitch + CAL_CELL / 2, 4.5, ch, C_DIM, 7.5, anchor='m')
+    days = [start + timedelta(days=i) for i in range(7 * CAL_WEEKS)]
+    peak = max(per_day.get(d.isoformat(), 0) for d in days) or 1
+    for i, d in enumerate(days):
+        if d > today:
+            continue
+        x, y, v = e + (i % 7) * pitch, e + CAL_TOP + (i // 7) * pitch, per_day.get(d.isoformat(), 0)
+        if (today - d).days >= history_days:
+            p.rect(x + 0.5, y + 0.5, x + CAL_CELL - 0.5, y + CAL_CELL - 0.5, outline=C_BG3, width=1, r=2)
+        else:
+            level = (0.4, 0.6, 0.8, 1.0)[min(3, math.ceil(4 * v / peak) - 1)] if v else 0
+            p.rect(x, y, x + CAL_CELL, y + CAL_CELL, fill=mix(C_BG3, C_GREEN, level) if v else C_BG3, r=2)
+        if d == today:
+            p.rect(x - 1.2, y - 1.2, x + CAL_CELL + 1.2, y + CAL_CELL + 1.2, outline=C_TEXT, width=1, r=3)
+    return p.png()
+
+
+def cal_day_at(x, y):
+    """The calendar day under (x, y), or None"""
+    pitch = CAL_CELL + CAL_GAP
+    col, row = int((x - CAL_EDGE) // pitch), int((y - CAL_EDGE - CAL_TOP) // pitch)
+    if y < CAL_EDGE + CAL_TOP or not (0 <= col < 7 and 0 <= row < CAL_WEEKS):
+        return None
+    d = cal_start() + timedelta(days=row * 7 + col)
+    return d if d <= date.today() else None
+
+
+def paint_clock(hours, bg):
+    """Large: when the commits land - a 24-hour clock (midnight at the top, noon at the bottom), a wedge per hour, longer and greener the more
+       commits in that hour over the activity history.  The amber hand is now"""
+    p, c = Pic(CLOCK, CLOCK, bg), CLOCK / 2
+    p.ring(c, c, CLOCK_R1 + 1.5, C_BG3, 1)
+    peak = max(hours) or 1
+    for h, v in enumerate(hours):
+        if v:
+            a, half = math.radians(h * 15 + 7.5 - 90), math.radians(6.2)
+            r = CLOCK_R0 + (CLOCK_R1 - CLOCK_R0) * (0.3 + 0.7 * v / peak)
+            p.poly([(c + rr * math.cos(t), c + rr * math.sin(t)) for rr, t in ((CLOCK_R0, a - half), (r, a - half), (r, a + half), (CLOCK_R0, a + half))],
+                   heat(v, peak, 0.45))
+    for h in (0, 6, 12, 18):
+        a = math.radians(h * 15 - 90)
+        p.text(c + (CLOCK_R1 + 7) * math.cos(a), c + (CLOCK_R1 + 7) * math.sin(a), str(h), C_DIM, 7.5, anchor='m')
+    now = datetime.now()
+    a = math.radians((now.hour + now.minute / 60) * 15 - 90)
+    p.line([(c, c), (c + (CLOCK_R1 - 1) * math.cos(a), c + (CLOCK_R1 - 1) * math.sin(a))], C_AMBER, 1.3)
+    p.disc(c, c, 2.1, C_AMBER)
+    return p.png()
+
+
+def clock_hour_at(x, y):
+    """The hour (0-23) of the clock wedge under (x, y), or None"""
+    dx, dy = x - CLOCK / 2, y - CLOCK / 2
+    if math.hypot(dx, dy) > CLOCK_R1 + 3:
+        return None
+    return int(((math.degrees(math.atan2(dy, dx)) + 90) % 360) // 15)
+
+
+def news_height(lines):
+    return max(cal_size()[1], NEWS_PITCH * len(lines) + 2)
+
+
+def paint_news(lines, bg):
+    """Large: what is new, a line per kind - its symbol, the number in its color, then the words.  The new commits' line ends with the lines they
+       added and removed: '+603 -177' and five squares split green / red, like GitHub's diffstat.  lines from App.news_lines()"""
+    p, size, small = Pic(NEWS_W, news_height(lines), bg), px(9.5), px(8.5)
+    for i, (kind, n, words, color, _target, churn) in enumerate(lines):
+        cy, x = 1 + NEWS_PITCH * (i + 0.5), 2
+        if kind:
+            icon(p, kind, x + 6, cy, 6, color)
+        x += 18
+        if n != '':
+            p.text(x, cy, str(n), color, size, True)
+            x += text_w(str(n), size, True) + 4
+        words = fit(words, size, False, NEWS_W - x - 2)
+        p.text(x, cy, words, C_TEXT if n != '' else color, size)
+        x += text_w(words, size) + 8
+        if churn:
+            add, dele = churn
+            for words, color in ((f'+{add:,}', C_GREEN), (f'−{dele:,}', C_RED)):
+                p.text(x, cy, words, color, small, True)
+                x += text_w(words, small, True) + 4
+            green = round(DIFF_BLOCKS * add / ((add + dele) or 1)) if add + dele else 0
+            red = DIFF_BLOCKS - green if add + dele else 0
+            for b in range(DIFF_BLOCKS):
+                if x + 7 < NEWS_W:
+                    p.rect(x + 2, cy - 3.2, x + 8, cy + 3.2, fill=C_GREEN if b < green else C_RED if b < green + red else C_BG3, r=1.2)
+                x += 7.5
+    return p.png()
+
+
+def news_line_at(y, lines):
+    """Which news line (0, 1, ...) is under y, or None"""
+    i = int((y - 1) // NEWS_PITCH)
+    return i if 0 <= i < len(lines) and y >= 1 else None
+
+
+def paint_stats(items, bg):
+    """Large: the repo's numbers as symbols - items = [(icon, number)] (stars, forks, watchers, branches)"""
+    size = px(8.5)
+    widths = [13 + text_w(str(n), size) for _, n in items]
+    p, x = Pic(sum(widths) + 9 * (len(items) - 1) + 2, 16, bg), 1
+    for (kind, n), wd in zip(items, widths):
+        icon(p, kind, x + 5, 8, 5, C_MUTED)
+        p.text(x + 12.5, 8, str(n), C_MUTED, size)
+        x += wd + 9
+    return p.png()
+
+
+def paint_pill(text, fg, fill, bg, size):
+    """A rounded label: NEW / COMMENT / CLOSED filled, WAITING outlined (fill None)"""
+    w = text_w(text, size, True) + 14
+    p = Pic(w, 17, bg)
+    if fill:
+        p.rect(0.5, 1.5, w - 0.5, 15.5, fill=fill, r=7)
+    else:
+        p.rect(0.5, 1.5, w - 0.5, 15.5, outline=fg, width=1, r=7)
+    p.text(w / 2, 8.5, text, fg, size, True, 'm')
+    return p.png()
+
+
+def paint_issue_icon(closed, size, bg):
+    """An issue's state: green ring and dot = open, purple ring and tick = closed"""
+    p = Pic(size, size, bg)
+    icon(p, 'closed' if closed else 'issue', size / 2, size / 2, size / 2 - 0.5, C_PURPLE if closed else C_GREEN)
+    return p.png()
+
+
+def paint_health(parts, w, bg):
+    """Large issues view: the repo's issues as one bar - news (blue), waiting on you (amber), the rest open (green) - with a legend under it"""
+    p, total, size = Pic(w, 28, bg), sum(n for _, n, _ in parts) or 1, px(8)
+    p.rect(0, 2, w, 9, fill=C_BG3, r=3.5)
+    x = 0
+    for _, n, color in parts:
+        if n:
+            seg = max(4, w * n / total)
+            p.rect(x, 2, min(w, x + seg), 9, fill=color, r=3.5)
+            x += seg
+    x = 0
+    for words, n, color in parts:
+        p.disc(x + 4, 20, 3.2, color)
+        label = f'{n} {words}'
+        p.text(x + 10, 20, label, C_MUTED, size)
+        x += 10 + text_w(label, size) + 12
+    return p.png()
+
+
+def paint_issue_meta(runs, w, bg):
+    """Large issues view: an issue's second line - runs = [(icon or None, words, color, as_pill)]: who opened it, comments, labels as pills,
+       how long it has waited"""
+    p, x, size = Pic(w, 16, bg), 0, px(8.5)
+    for kind, words, color, pill in runs:
+        if x > w - 20:
+            break
+        if kind:
+            icon(p, kind, x + 5, 8, 5, color)
+            x += 13
+        if pill:
+            tw = min(text_w(words, px(8)), w - x - 12)
+            p.rect(x, 1.5, x + tw + 10, 14.5, fill=C_BG3, r=6.5)
+            p.text(x + 5, 8, fit(words, px(8), False, tw + 1), C_MUTED, px(8))
+            x += tw + 15
+        elif words:
+            s = fit(words, size, False, w - x - 2)
+            p.text(x, 8, s, color, size)
+            x += text_w(s, size) + 10
+    return p.png()
+
+
+class HoverTip:
+    """A small themed tip that follows the pointer over a picture with parts - a day of the calendar, an hour of the clock, an issue pip - and says
+       which part is under it.  text_at(x, y) gets the pointer in design pixels and returns the words ('' = nothing there)"""
+    def __init__(self, widget, text_at):
+        self.widget, self.text_at, self.top, self.label = widget, text_at, None, None
+        widget.bind('<Motion>', self.move, add='+')
+        widget.bind('<Leave>', self.hide, add='+')
+        widget.bind('<ButtonPress>', self.hide, add='+')
+
+    def move(self, e):
+        try:
+            text = self.text_at(e.x / G.pz, e.y / G.pz)
+        except Exception:
+            text = ''
+        if not text:
+            self.hide()
+            return
+        if self.top is None:
+            self.top = tk.Toplevel(self.widget)
+            self.top.wm_overrideredirect(True)
+            self.top.wm_attributes('-topmost', True)
+            self.label = tk.Label(self.top, justify='left', bd=0, padx=8, pady=4, font=(UI_FONT, 9), highlightthickness=1)
+            self.label.pack()
+        self.label.configure(text=text, bg=C_BG3, fg=C_TEXT, highlightbackground=C_LINE)
+        self.top.wm_geometry(f'+{e.x_root + 14}+{e.y_root + 18}')
+
+    def hide(self, e=None):
+        if self.top is not None:
+            try:
+                self.top.destroy()
+            except tk.TclError:
+                pass
+            self.top = None
 
 
 def resolve_token():
@@ -1624,6 +2144,8 @@ class App:
         self.is_title_chars, self.is_meta_chars = 58, 80
         self.visible_rows, self.last_geom = [], None
         self.view, self.issue_rows_shown = cfg(K_VIEW), []
+        self.wsize, self.pics, self.tips, self.tip_texts, self.news_cache = self.size_choice(), {}, [], {}, {}
+        G.scale = max(1.0, self.scale)
         self.poller = None
         self.build_widget()
         self.poller = Poller(self)
@@ -1697,14 +2219,61 @@ class App:
 
     # ---------------------------------------------------------------- widget window ----------------------------------------------------------------
     def build_widget(self):
-        f, sc = self.fonts(), self.scale
-        spark_size = (int(SPARK_DAYS * 6 * sc), int(22 * sc))
-        rows = []
-        self.view = cfg(K_VIEW)
+        """The widget window at its size (Tiny, Small, Medium or Large) and in its view (repos or issues)"""
+        f = self.fonts()
+        self.view, self.wsize = cfg(K_VIEW), self.size_choice()
+        for tip in self.tips:
+            tip.hide()
+        self.pics, self.tips, self.tip_texts, self.news_cache = {}, [], {}, {}
+        G.zoom = int(cfg(K_FONT_SIZE)) / 11                     # the pictures grow with the Widget text size
+        G.pz = G.scale * G.zoom
         if self.view == VIEW_ISSUES:
             self.widget_rows, self.visible_rows = [], []
+        else:
+            self.widget_rows, self.visible_rows = self.repos() + [QUIET_ROW], self.widget_row_ids()
+        rows = {'Tiny': self.tiny_layout, 'Small': self.small_layout, 'Large': self.large_layout}.get(self.wsize, self.medium_layout)(f)
+        first_run = sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME) is None
+        self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100,
+                                auto_save_location=True, margins=(2, 2), background_color=C_BG, finalize=True)
+        G.window, G.scale = self.widget, max(1.0, self.widget.TKroot.winfo_fpixels('1i') / 96)
+        G.pz = G.scale * G.zoom
+        self.wire_menu()
+        round_corners(self.widget)
+        self.widget.bind('<Escape>', 'Exit')
+        root = self.widget.TKroot                               # Ctrl + mouse wheel steps through the sizes
+        root.bind('<Control-MouseWheel>', lambda e: self.widget.write_event_value(K_SIZE_STEP, 1 if e.delta > 0 else -1), add='+')
+        root.bind('<Control-Button-4>', lambda e: self.widget.write_event_value(K_SIZE_STEP, 1), add='+')
+        root.bind('<Control-Button-5>', lambda e: self.widget.write_event_value(K_SIZE_STEP, -1), add='+')
+        self.current_alpha = int(cfg(K_OPACITY)) / 100
+        bind_click(self.widget, self.click_map())
+        self.add_hover_tips()
+        if self.view == VIEW_ISSUES:
+            self.refresh_issue_rows()
+        self.close_x = add_close_x(self.widget, K_CLOSE_X, {'Tiny': 'e', 'Small': 'se'}.get(self.wsize, 'ne'))     # added after the click map: it opens nothing
+        if first_run:
+            self.snap_to('TR')
+        for repo in self.visible_rows:
+            self.refresh_row(repo)
+        self.refresh_status()
+        self.keep_on_screen()
+
+    def status_row(self, status_font, glyph_font, right_pad):
+        """The bottom line: when it last checked, ⇄ (switch view) and ≡ (the menu)"""
+        other = 'issues' if self.view == VIEW_REPOS else 'repos'
+        return [sg.Text('starting…', font=status_font, text_color=C_DIM, key=K_STATUS, pad=((10, 0), (0, 3)), tooltip=f'{APP_NAME} {VERSION}'),
+                sg.Push(background_color=C_BG),
+                sg.Text('⇄', font=glyph_font, text_color=C_MUTED, key=K_VIEW_TOGGLE, pad=((0, 10), (0, 2)), tooltip=f'Switch to the {other} view'),
+                sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=glyph_font, button_color=(C_MUTED, C_BG), border_width=0, pad=((0, right_pad), (0, 3)),
+                              tooltip='Menu (or right-click) · Ctrl + mouse wheel changes the size')]
+
+    def medium_layout(self, f):
+        """Medium - the classic widget: two lines per repo with the issue chip, the news badge and a 14-day bar sparkline (or the issues view's rows)"""
+        sc = self.scale
+        spark_size = (int(SPARK_DAYS * 6 * sc), int(22 * sc))
+        rows = []
+        if self.view == VIEW_ISSUES:
             rows.append([sg.Text('issues', font=f['title'], text_color=C_TEXT, key=K_ITITLE, pad=((8, 6), (3, 2)), tooltip='Click to step through the repos that have issues'),
-                         sg.Push(background_color=C_BG), sg.Text('', font=f['badge'], text_color=C_BLUE, key=K_IUNREAD, pad=((0, 16), (5, 2)))])
+                         sg.Push(background_color=C_BG), sg.Text('', font=f['badge'], text_color=C_BLUE, key=K_IUNREAD, pad=((0, 30), (5, 2)))])
             for i in range(int(cfg(K_ISSUE_ROWS))):
                 row = [sg.Text('●', font=f['dot'], text_color=C_DIM, key=KT_IDOT(i), pad=((8, 4), 0), tooltip='Green: open · Purple: closed'),
                        sg.Column([[sg.Text('', font=f['name'], key=KT_INAME(i), pad=0)],
@@ -1713,8 +2282,6 @@ class App:
                        sg.Text('', size=(9, 1), font=f['badge'], text_color=C_BG, background_color=C_BG, justification='c', key=KT_IBADGE(i), pad=((6, 2), 0)),
                        sg.Text('', size=(4, 1), font=f['meta'], text_color=C_DIM, justification='r', key=KT_IAGE(i), pad=((0, 8), 0))]
                 rows.append([sg.pin(sg.Column([row], key=KT_IROW(i), pad=0, expand_x=True, background_color=C_BG, visible=False), expand_x=True)])
-        else:
-            self.widget_rows, self.visible_rows = self.repos() + [QUIET_ROW], self.widget_row_ids()
         for repo in self.widget_rows:
             owner, name = repo.split('/') if '/' in repo else ('', 'quiet repos')
             tip = 'Click for the full list of watched repos' if repo == QUIET_ROW else f'https://github.com/{repo}'
@@ -1727,41 +2294,133 @@ class App:
                    sg.Graph(spark_size, (0, 0), spark_size, background_color=C_BG, key=KT_SPARK(repo), pad=((0, 10), 0), tooltip=f'Commits per day, last {SPARK_DAYS} days')]
             row_col = sg.Column([row], key=KT_ROW(repo), pad=0, expand_x=True, background_color=C_BG, visible=repo in self.visible_rows)
             rows.append([sg.pin(row_col, expand_x=True)])          # pinned so a row that goes quiet leaves no gap - the widget shrinks instead
-        other = 'issues' if self.view == VIEW_REPOS else 'repos'
-        rows.append([sg.Text('starting…', font=f['status'], text_color=C_DIM, key=K_STATUS, pad=((10, 0), (0, 3)), tooltip=f'{APP_NAME} {VERSION}'),
-                     sg.Push(background_color=C_BG),
-                     sg.Text('⇄', font=f['name'], text_color=C_MUTED, key=K_VIEW_TOGGLE, pad=((0, 10), (0, 2)), tooltip=f'Switch to the {other} view'),
-                     sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=f['name'], button_color=(C_MUTED, C_BG), border_width=0, pad=((0, 8), (0, 3)),
-                                   tooltip='Menu (or right-click)')])
-        first_run = sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME) is None
-        self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100, auto_save_location=True,
-                                margins=(2, 2), background_color=C_BG, finalize=True)
-        G.window, G.scale = self.widget, max(1.0, self.widget.TKroot.winfo_fpixels('1i') / 96)
-        self.wire_menu()
-        round_corners(self.widget)
-        self.widget.bind('<Escape>', 'Exit')
-        self.current_alpha = int(cfg(K_OPACITY)) / 100
-        widget_map = {}
+        rows.append(self.status_row(f['status'], f['name'], 8))
+        return rows
+
+    def tiny_layout(self, f):
+        """Tiny - one strip: an orb and a name per repo (the issues view: the repo's name and a pip per issue), the status sign and ≡; the ✕ at the end"""
+        sf = self.size_fonts()
+        strip = []
+        if self.view == VIEW_ISSUES:
+            strip += [sg.Text('issues', key=K_ITITLE, font=sf['label_b'], text_color=C_TEXT, pad=((8, 6), 0), tooltip='Click to step through the repos that have issues'),
+                      sg.Image(data=blank(10, ORB, C_BG), key=K_IPIPS, background_color=C_BG, pad=((0, 4), 0))]
         for repo in self.widget_rows:
-            for w in descendants(self.widget[KT_ROW(repo)].Widget):
-                widget_map[w] = repo
-            widget_map[self.widget[KT_ICHIP(repo)].Widget] = KT_ICHIP(repo)          # a click on the issue chip opens the Issues window
+            tile = [sg.Image(data=blank(ORB, ORB, C_BG), key=KT_PIC(repo, 'orb'), background_color=C_BG, pad=((0, 3), 0)),
+                    sg.Text('', key=KT_NAME(repo), font=sf['label'], text_color=C_MUTED, pad=0)]
+            strip.append(sg.pin(sg.Column([tile], key=KT_ROW(repo), pad=((6, 4), 1), background_color=C_BG, visible=repo in self.visible_rows)))
+        strip += [sg.Text('', key=K_STATUS, font=sf['label_b'], text_color=C_MUTED, pad=((4, 2), 0)),
+                  sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=sf['glyph'], button_color=(C_MUTED, C_BG), border_width=0, pad=((2, 24), 0))]
+        return [strip]
+
+    def small_layout(self, f):
+        """Small - a line per repo: dot, name, the news as symbols, 14 days of beads, how long since the last push (or a line per issue)"""
+        sf = self.size_fonts()
+        rows = []
         if self.view == VIEW_ISSUES:
+            rows.append([sg.Text('issues', key=K_ITITLE, font=sf['name'], text_color=C_TEXT, pad=((8, 6), (3, 3)), tooltip='Click to step through the repos that have issues'),
+                         sg.Push(background_color=C_BG), sg.Text('', key=K_IUNREAD, font=sf['meta_b'], text_color=C_BLUE, pad=((0, 8), (3, 3)))])
             for i in range(int(cfg(K_ISSUE_ROWS))):
-                for w in descendants(self.widget[KT_IROW(i)].Widget):
-                    widget_map[w] = KT_IROW(i)
-            widget_map[self.widget[K_ITITLE].Widget] = (K_ITITLE, None)
-        widget_map[self.widget[K_VIEW_TOGGLE].Widget] = (K_VIEW_TOGGLE, None)
-        bind_click(self.widget, widget_map)
+                row = [sg.Image(data=blank(14, 14, C_BG), key=KT_PIC(i, 'icon'), background_color=C_BG, pad=((9, 6), 0)),
+                       sg.Text('', key=KT_INAME(i), font=sf['body'], pad=0),
+                       sg.Push(background_color=C_BG),
+                       sg.Image(data=blank(1, 17, C_BG), key=KT_PIC(i, 'badge'), background_color=C_BG, pad=((10, 4), 0)),
+                       sg.Text('', key=KT_IAGE(i), size=(4, 1), font=sf['meta'], text_color=C_DIM, justification='r', pad=((0, 8), 0))]
+                rows.append([sg.pin(sg.Column([row], key=KT_IROW(i), pad=(0, 1), expand_x=True, background_color=C_BG, visible=False), expand_x=True)])
+        for repo in self.widget_rows:
+            row = [sg.Text('●', key=KT_DOT(repo), font=sf['dot'], text_color=C_DIM, pad=((8, 4), 0)),
+                   sg.Text(repo.split('/')[1] if '/' in repo else 'quiet repos', key=KT_NAME(repo), font=sf['name'], pad=0),
+                   sg.Push(background_color=C_BG),
+                   sg.Image(data=blank(1, 16, C_BG), key=KT_PIC(repo, 'counts'), background_color=C_BG, pad=((12, 8), 0)),
+                   sg.Image(data=blank(SPARK_DAYS * BEAD_PITCH, BEAD_H, C_BG), key=KT_PIC(repo, 'beads'), background_color=C_BG, pad=((0, 6), 0)),
+                   sg.Text('', key=KT_AGE(repo), size=(4, 1), font=sf['meta'], text_color=C_DIM, justification='r', pad=((0, 8), 0))]
+            rows.append([sg.pin(sg.Column([row], key=KT_ROW(repo), pad=(0, 1), expand_x=True, background_color=C_BG, visible=repo in self.visible_rows),
+                                expand_x=True)])
+        rows.append(self.status_row(sf['meta'], sf['glyph'], 26))
+        return rows
+
+    def large_layout(self, f):
+        """Large - a card per repo: name, language, stars / forks / watchers / branches, description, a 5-week calendar, a 24-hour clock of when the
+           commits land, the news a line per kind, the newest commit and its +/- lines (the issues view: a health bar, then a two-line card per issue)"""
+        sf, bg = self.size_fonts(), C_BG2
+        rows = []
         if self.view == VIEW_ISSUES:
-            self.refresh_issue_rows()
-        self.close_x = add_close_x(self.widget, K_CLOSE_X)      # added after the click map, so clicking it can't also open a window
-        if first_run:
-            self.snap_to('TR')
-        for repo in self.visible_rows:
-            self.refresh_row(repo)
-        self.refresh_status()
-        self.keep_on_screen()
+            rows.append([sg.Text('issues', key=K_ITITLE, font=sf['h1'], text_color=C_TEXT, pad=((10, 6), (6, 0)), tooltip='Click to step through the repos that have issues'),
+                         sg.Push(background_color=C_BG), sg.Text('', key=K_IUNREAD, font=sf['meta_b'], text_color=C_BLUE, pad=((0, 30), (8, 0)))])
+            rows.append([sg.Image(data=blank(ISSUE_W, 28, C_BG), key=K_IHEALTH, background_color=C_BG, pad=((12, 10), (6, 6)))])
+            for i in range(int(cfg(K_ISSUE_ROWS))):
+                card = [[sg.Image(data=blank(18, 18, bg), key=KT_PIC(i, 'icon'), background_color=bg, pad=((10, 8), (7, 0))),
+                         sg.Text('', key=KT_INAME(i), font=sf['body_b'], background_color=bg, pad=(0, (7, 0))),
+                         sg.Push(background_color=bg),
+                         sg.Image(data=blank(1, 17, bg), key=KT_PIC(i, 'badge'), background_color=bg, pad=((10, 4), (7, 0))),
+                         sg.Text('', key=KT_IAGE(i), size=(4, 1), font=sf['meta'], text_color=C_DIM, background_color=bg, justification='r', pad=((0, 8), (7, 0)))],
+                        [sg.Image(data=blank(ISSUE_W, 16, bg), key=KT_PIC(i, 'meta'), background_color=bg, pad=((36, 10), (3, 8)))]]
+                rows.append([sg.pin(sg.Column(card, key=KT_IROW(i), pad=((8, 8), (0, 6)), expand_x=True, background_color=bg, visible=False), expand_x=True)])
+        else:
+            rows.append([sg.Image(data=ICON, subsample=4 if G.scale < 1.5 else 2, background_color=C_BG, pad=((12, 6), (7, 4))),
+                         sg.Text('Repo Watch', font=sf['body_b'], text_color=C_TEXT, pad=(0, (7, 4))),
+                         sg.Text('', key=K_HEAD, font=sf['meta'], text_color=C_MUTED, pad=((10, 34), (8, 4)))])
+        for repo in self.widget_rows:
+            card = [[sg.Text('●', key=KT_DOT(repo), font=sf['dot'], text_color=C_DIM, background_color=bg, pad=((10, 6), (6, 0))),
+                     sg.Text(repo.split('/')[1] if '/' in repo else 'quiet repos', key=KT_NAME(repo), font=sf['h1'], background_color=bg, pad=(0, (6, 0))),
+                     sg.Text('', key=KT_META(repo), font=sf['meta'], text_color=C_MUTED, background_color=bg, pad=((10, 0), (11, 0))),
+                     sg.Push(background_color=bg),
+                     sg.Image(data=blank(1, 16, bg), key=KT_PIC(repo, 'stats'), background_color=bg, pad=((12, 12), (9, 0)))],
+                    [sg.Text('', key=KT_DESC(repo), font=sf['meta'], text_color=C_MUTED, background_color=bg, pad=((32, 12), (0, 8)))],
+                    [sg.Image(data=blank(*cal_size(), bg), key=KT_PIC(repo, 'cal'), background_color=bg, pad=((30, 14), 0)),
+                     sg.Image(data=blank(CLOCK, CLOCK, bg), key=KT_PIC(repo, 'clock'), background_color=bg, pad=((0, 14), 0)),
+                     sg.Image(data=blank(NEWS_W, cal_size()[1], bg), key=KT_PIC(repo, 'news'), background_color=bg, pad=((0, 12), 0))],
+                    [sg.Text('', key=KT_LATEST(repo), font=sf['meta'], text_color=C_MUTED, background_color=bg, pad=((32, 12), (6, 9)))]]
+            rows.append([sg.pin(sg.Column(card, key=KT_ROW(repo), pad=((8, 8), (0, 6)), expand_x=True, background_color=bg, visible=repo in self.visible_rows),
+                                expand_x=True)])
+        rows.append(self.status_row(sf['meta'], sf['glyph'], 8))
+        return rows
+
+    def click_map(self):
+        """What a click on each part of the widget opens - bind_click's map.  A function there works the target out from where the click landed"""
+        m, w = {}, self.widget
+        for repo in self.widget_rows:
+            target = (K_ORB, repo) if self.wsize == 'Tiny' else repo
+            for wd in descendants(w[KT_ROW(repo)].Widget):
+                m[wd] = target
+            if self.wsize == 'Medium':
+                m[w[KT_ICHIP(repo)].Widget] = KT_ICHIP(repo)          # a click on the issue chip opens the Issues window
+            elif self.wsize == 'Small':
+                m[w[KT_PIC(repo, 'counts')].Widget] = KT_ICHIP(repo)
+            elif self.wsize == 'Large':
+                m[w[KT_PIC(repo, 'news')].Widget] = lambda e, repo=repo: self.news_target(repo, e.y / G.pz)
+        if self.view == VIEW_ISSUES:
+            if self.wsize == 'Tiny':
+                m[w[K_IPIPS].Widget] = lambda e: self.pip_target(e.x / G.pz)
+            else:
+                for i in range(int(cfg(K_ISSUE_ROWS))):
+                    for wd in descendants(w[KT_IROW(i)].Widget):
+                        m[wd] = KT_IROW(i)
+            if self.wsize == 'Large':
+                m[w[K_IHEALTH].Widget] = lambda e: (K_OPEN_ISSUES, self.issue_view_repo())
+            m[w[K_ITITLE].Widget] = (K_ITITLE, None)
+        if K_VIEW_TOGGLE in w.AllKeysDict:
+            m[w[K_VIEW_TOGGLE].Widget] = (K_VIEW_TOGGLE, None)
+        return m
+
+    def hover(self, key, text_at):
+        """A HoverTip on one of the widget's pictures"""
+        self.tips.append(HoverTip(self.widget[key].Widget, text_at))
+
+    def add_hover_tips(self):
+        """The pictures say what is under the pointer: the day, the hour, the issue, what a number means"""
+        for repo in self.widget_rows:
+            if self.wsize == 'Tiny':
+                self.hover(KT_PIC(repo, 'orb'), lambda x, y, repo=repo: self.orb_text(repo))
+            elif self.wsize == 'Small':
+                self.hover(KT_PIC(repo, 'beads'), lambda x, y, repo=repo: self.bead_text(repo, x))
+                self.hover(KT_PIC(repo, 'counts'), lambda x, y, repo=repo: self.counts_text(repo))
+            elif self.wsize == 'Large':
+                self.hover(KT_PIC(repo, 'cal'), lambda x, y, repo=repo: self.cal_text(repo, x, y))
+                self.hover(KT_PIC(repo, 'clock'), lambda x, y, repo=repo: self.clock_text(repo, x, y))
+                self.hover(KT_PIC(repo, 'news'), lambda x, y, repo=repo: self.news_text(repo, y))
+                self.hover(KT_PIC(repo, 'stats'), lambda x, y, repo=repo: self.stats_text(repo))
+        if self.view == VIEW_ISSUES and self.wsize == 'Tiny':
+            self.hover(K_IPIPS, lambda x, y: self.pip_text(x))
 
     def make_menu(self):
         """The right-click / ≡ menu with a ✓ on the current choices - every label starts with a ✓ or the same width of spaces, so they line up"""
@@ -1770,6 +2429,7 @@ class App:
         paused = self.poller is not None and self.poller.paused
         return ['', [f'    Check now::{K_M_CHECK}', f'    Mark all as read::{K_M_READ}', f'    Switch view  (repos ⇄ issues)::{K_M_VIEW}', '---',
                      f'{tick(paused)}Pause polling::{K_M_PAUSE}', f'{tick(cfg(K_KEEP_ON_TOP))}Keep on top::{K_M_TOP}',
+                     '    Size', [f'{tick(size == self.wsize)}{size}::{KT_M_SIZE(size)}' for size in SIZES],
                      '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
                      f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
                      '    Snooze', [f'    {label}::{key}' for key, label in SNOOZES.items()],
@@ -1889,6 +2549,10 @@ class App:
     def refresh_row(self, repo):
         if repo not in self.visible_rows:
             return
+        if self.wsize != 'Medium':
+            self.paint_row(repo)
+            self.refresh_status()
+            return
         if repo == QUIET_ROW:
             self.refresh_summary_row()
             return
@@ -1990,6 +2654,9 @@ class App:
         return items
 
     def refresh_issue_rows(self):
+        if self.wsize != 'Medium':
+            self.paint_issue_rows()
+            return
         repo, n_rows = self.issue_view_repo(), int(cfg(K_ISSUE_ROWS))
         snap = self.snapshots.get(repo)
         name = repo.split('/')[1] if '/' in repo else repo
@@ -2023,6 +2690,363 @@ class App:
             self.widget[K_IUNREAD].update(' · '.join(x for x in [f'{ni} new' if ni else '', f'{nw} waiting' if nw else ''] if x), text_color=C_BLUE if ni else C_AMBER)
         self.refresh_status()
 
+    # ---------------------------------------------------------------- Tiny / Small / Large: what the rows show ----------------------------------------------------------------
+    def size_choice(self):
+        return cfg(K_SIZE) if cfg(K_SIZE) in SIZES else 'Medium'
+
+    def set_size(self, size):
+        """Right-click > Size, or Ctrl + mouse wheel: the widget rebuilt at the new size, remembered between runs"""
+        if size != self.wsize:
+            sg.user_settings_set_entry(K_SIZE, size)
+            self.rebuild_widget()
+
+    def size_fonts(self):
+        """The Tiny / Small / Large widget's fonts - the Widget text size setting, a step or two smaller for Tiny and Small"""
+        fs = int(cfg(K_FONT_SIZE)) + SIZE_FONT_STEP[self.wsize]
+        return {'h1': (UI_FONT, fs + 3, 'bold'), 'name': (UI_FONT, fs, 'bold'), 'body': (UI_FONT, fs), 'body_b': (UI_FONT, fs, 'bold'),
+                'meta': (UI_FONT, max(fs - 1, 7)), 'meta_b': (UI_FONT, max(fs - 1, 7), 'bold'), 'label': (UI_FONT, fs), 'label_b': (UI_FONT, fs, 'bold'),
+                'dot': (UI_FONT, fs + 2), 'glyph': (UI_FONT, fs + 2)}
+
+    def show_pic(self, key, painter, *args, when=None):
+        """Draw a picture into its Image element - only when what it shows, the colors or `when` (the day, the hour) changed, so refreshes never flicker"""
+        sig = (painter.__name__, repr(args), when, palette(), G.pz)
+        if self.pics.get(key) != sig:
+            self.pics[key] = sig
+            self.widget[key].update(data=painter(*args))
+
+    def set_tip(self, key, text):
+        """An element's tooltip, set again only when its text changed"""
+        if text and self.tip_texts.get(key) != text:
+            self.tip_texts[key] = text
+            self.widget[key].set_tooltip(text)
+
+    def repaint(self):
+        """The Brightness knob moved: every picture drawn again in the new colors (Medium has none - recolor() changed its colors in place)"""
+        if self.wsize == 'Medium':
+            return
+        for repo in self.visible_rows:
+            self.refresh_row(repo)
+        if self.view == VIEW_ISSUES:
+            self.refresh_issue_rows()
+
+    def hours_of(self, snap):
+        """Commits per hour of the day (local time) over the activity history - worked out once and kept with the snapshot"""
+        if '_hours' not in snap:
+            hours = [0] * 24
+            for c in snap.get('history', []):
+                if c.get('date'):
+                    hours[parse_iso(c['date']).astimezone().hour] += 1
+            snap['_hours'] = hours
+        return snap['_hours']
+
+    def row_facts(self, repo):
+        """What a Tiny / Small / Large row shows about a repo, or about the quiet repos, worked out in one place.  While badges are snoozed the
+           numbers are 0 and 'snoozed' says there was something"""
+        hist, snooze = int(str(cfg(K_HISTORY_DAYS)).split()[0]), bool(self.snooze_until)
+        if repo == QUIET_ROW:
+            hidden = [r for r in self.repos() if r not in self.visible_rows]
+            ok = [r for r in hidden if (self.snapshots.get(r) or {}).get('ok')]
+            per_day, hours = Counter(), [0] * 24
+            for r in ok:
+                per_day.update(self.snapshots[r].get('per_day', {}))
+                hours = [a + b for a, b in zip(hours, self.hours_of(self.snapshots[r]))]
+            pushes = sorted(((parse_iso(self.snapshots[r]['info']['pushed_at']), r) for r in ok if self.snapshots[r]['info'].get('pushed_at')), reverse=True)
+            busy = next((r for r in hidden if r in self.busy), None)
+            nw = sum(self.issue_counts(self.snapshots.get(r))[1] for r in ok)
+            name = f'{len(hidden)} quiet repo{"s" if len(hidden) != 1 else ""}' if len(ok) == len(hidden) else f'{len(hidden)} repos'
+            return {'repo': repo, 'quiet': True, 'name': name, 'short': 'quiet', 'owner': '', 'count': len(hidden), 'busy_repo': busy,
+                    'state': 'busy' if busy else 'quiet' if ok else 'checking', 'dot': C_AMBER if busy else C_DIM, 'snoozed': snooze and bool(nw),
+                    'nc': 0, 'ni': 0, 'nw': 0 if snooze else nw, 'news': {}, 'per_day': dict(per_day), 'hours': hours, 'days': day_counts(per_day, SPARK_DAYS),
+                    'history_days': hist, 'pushes': pushes, 'pushed': pushes[0][0] if pushes else None, 'error': '', 'info': {}, 'latest': None, 'churn': None,
+                    'commits': sum(len(self.snapshots[r].get('history', [])) for r in ok), 'branches': 0}
+        snap, (owner, name) = self.snapshots.get(repo), repo.split('/')
+        ok, n = bool(snap and snap.get('ok')), self.unread_count(snap)
+        ni, nw = self.issue_counts(snap)
+        state = 'busy' if repo in self.busy else 'checking' if snap is None else 'error' if not ok else 'news' if n and not snooze else 'quiet'
+        x = {'repo': repo, 'quiet': False, 'name': name, 'short': name if len(name) <= 13 else name[:12] + '…', 'owner': owner, 'state': state,
+             'dot': {'busy': C_AMBER, 'error': C_RED, 'news': C_GREEN}.get(state, C_DIM), 'snoozed': snooze and bool(n or nw),
+             'nc': 0 if snooze else n - ni, 'ni': 0 if snooze else ni, 'nw': 0 if snooze else nw, 'news': {}, 'per_day': {}, 'hours': [0] * 24,
+             'days': [0] * SPARK_DAYS, 'history_days': hist, 'pushed': None, 'error': snap.get('error', '') if snap and not ok else '', 'info': {},
+             'latest': None, 'churn': None, 'commits': 0, 'branches': 0}
+        if ok:
+            info = snap['info']
+            x.update(info=info, per_day=snap.get('per_day', {}), hours=self.hours_of(snap), days=day_counts(snap.get('per_day', {}), SPARK_DAYS),
+                     pushed=parse_iso(info.get('pushed_at')), commits=len(snap.get('history', [])), branches=len(snap.get('branches', {})),
+                     news={} if snooze else {'commits': len(snap['new_commits']), 'prs': len(snap['new_prs']), 'branches': len(snap['new_branches']),
+                                             'tags': len(snap['new_tags']), 'releases': len(snap['new_releases'])})
+            newest = (snap['new_commits'] or snap.get('history') or [None])[0]
+            if newest:
+                x['latest'] = (newest['title'], newest.get('login') or newest.get('author') or '?', parse_iso(newest['date']), bool(snap['new_commits']))
+            found = [self.poller.commit_cache.get(c['sha']) for c in snap['new_commits']] if self.poller is not None else []
+            found = [d for d in found if d]
+            if found:
+                x['churn'] = (sum(d.get('add', 0) for d in found), sum(d.get('del', 0) for d in found), len(found))
+        return x
+
+    def paint_row(self, repo):
+        """A Tiny / Small / Large row, or the quiet-repos summary, in its pictures and words"""
+        x, w = self.row_facts(repo), self.widget
+        loud = x['state'] in ('news', 'error') or bool(x['nw'])
+        if self.wsize == 'Tiny':
+            if x['quiet']:
+                center, text = 'quiet', str(x['count'])
+            elif x['state'] == 'error':
+                center, text = 'error', '!'
+            elif x['snoozed']:
+                center, text = 'quiet', 'z'
+            elif x['nc'] or x['ni']:
+                center, n = ('code', x['nc']) if x['nc'] else ('issue', x['ni'])
+                text = str(n) if n < 100 else '99+'
+            else:
+                center, text = 'quiet', x['name'][:1].upper()
+            self.show_pic(KT_PIC(repo, 'orb'), paint_orb, x['days'], center, text, bool(x['nc'] and x['ni']), bool(x['nw']), x['state'] == 'busy')
+            w[KT_NAME(repo)].update(x['short'], text_color=C_RED if x['state'] == 'error' else C_TEXT if loud else C_MUTED)
+            return
+        w[KT_DOT(repo)].update(text_color=x['dot'])
+        if self.wsize == 'Small':
+            w[KT_NAME(repo)].update(x['name'])
+            items = [(kind, n, color) for kind, n, color in (('commit', x['nc'], C_GREEN), ('issue', x['ni'], C_BLUE), ('waiting', x['nw'], C_AMBER)) if n]
+            note, note_color = ('zz', C_MUTED) if x['snoozed'] and not items else ('problem', C_RED) if x['state'] == 'error' else ('', C_MUTED)
+            self.show_pic(KT_PIC(repo, 'counts'), paint_counts, items, note, note_color, C_BG)
+            self.show_pic(KT_PIC(repo, 'beads'), paint_beads, x['days'], C_BG, when=date.today())
+            w[KT_AGE(repo)].update(age_short(x['pushed']) if x['pushed'] else '…' if x['state'] in ('checking', 'busy') else '')
+            self.set_tip(KT_NAME(repo), self.row_tip(x))
+            return
+        bg, info = C_BG2, x['info']
+        w[KT_NAME(repo)].update(x['name'])
+        if x['quiet']:
+            meta, stats = '', []
+            desc = ' · '.join(f'{r.split("/")[1]} {age_short(t)}' for t, r in x['pushes']) or 'first check…'
+            latest = f'newest push: {x["pushes"][0][1].split("/")[1]} · {ago(x["pushes"][0][0])}' if x['pushes'] else ''
+        else:
+            meta = ' · '.join(s for s in (info.get('language'), ('private' if info.get('private') else 'public') if info else '') if s)
+            stats = [('star', info.get('stars', 0)), ('fork', info.get('forks', 0)), ('eye', info.get('watchers', 0)), ('branch', x['branches'])] if info else []
+            desc = x['error'] or info.get('description') or ('checking…' if not info else 'no description')
+            latest = ''
+            if x['latest']:
+                title, who, when, new = x['latest']
+                latest = f'{"newest" if new else "latest"}: {shorten(title, 46)}  ·  {who} · {ago(when) if when else ""}'
+        w[KT_META(repo)].update(meta)
+        w[KT_DESC(repo)].update(shorten(desc, 74), text_color=C_RED if x['error'] else C_MUTED)
+        self.set_tip(KT_DESC(repo), desc if len(desc) > 74 else None)
+        w[KT_LATEST(repo)].update(latest)
+        if stats:
+            self.show_pic(KT_PIC(repo, 'stats'), paint_stats, stats, bg)
+        else:
+            self.show_pic(KT_PIC(repo, 'stats'), blank, 1, 16, bg)
+        self.show_pic(KT_PIC(repo, 'cal'), paint_calendar, x['per_day'], x['history_days'], bg, when=date.today())
+        self.show_pic(KT_PIC(repo, 'clock'), paint_clock, x['hours'], bg, when=(datetime.now().hour, datetime.now().minute // 10))
+        self.news_cache[repo] = lines = self.news_lines(x)
+        self.show_pic(KT_PIC(repo, 'news'), paint_news, lines, bg)
+
+    def row_tip(self, x):
+        """A row's tooltip: the repo, its description, when it was pushed - or what went wrong"""
+        if x['quiet']:
+            return 'Click for the full list of watched repos'
+        if x['error']:
+            return f'{x["repo"]}\n{x["error"]}'
+        parts = [x['repo'], x['info'].get('description', '')]
+        return '\n'.join(p for p in parts + ([f'pushed {ago(x["pushed"])}'] if x['pushed'] else []) if p)
+
+    def news_lines(self, x):
+        """Large: the news list - (icon, number, words, color, what a click on the line opens, (lines added, removed) for the new commits)"""
+        repo, k = x['repo'], x['news']
+        plural = lambda n, word, many=None: word if n == 1 else (many or word + 's')
+        issues = (K_OPEN_ISSUES, repo)
+        history = (None, '', f'{n_of(x["commits"], "commit")} in {x["history_days"]} days', C_DIM, repo, None)
+        if x['quiet']:
+            lines = [('check', '', 'all quiet', C_MUTED, repo, None)]
+            if x['nw']:
+                lines.append(('waiting', x['nw'], 'waiting on you', C_AMBER, (K_OPEN_ISSUES, self.chip_repo(QUIET_ROW)), None))
+            return lines + [history]
+        if x['state'] == 'checking' or (x['state'] == 'busy' and not x['info'] and not x['error']):
+            return [('waiting', '', 'first check…', C_DIM, repo, None)]
+        if x['error']:
+            return [('alert', '', 'GitHub said no - the reason is above', C_RED, repo, None)]
+        if x['snoozed']:
+            return [('pause', '', 'news hidden while snoozed', C_MUTED, repo, None)]
+        lines = []
+        if k.get('commits'):
+            lines.append(('commit', k['commits'], plural(k['commits'], 'new commit'), C_GREEN, repo, x['churn'][:2] if x['churn'] else None))
+        if k.get('prs'):
+            lines.append(('pr', k['prs'], plural(k['prs'], 'pull request'), C_PINK, repo, None))
+        if x['ni']:
+            lines.append(('issue', x['ni'], plural(x['ni'], 'issue with news', 'issues with news'), C_BLUE, issues, None))
+        if x['nw']:
+            lines.append(('waiting', x['nw'], 'waiting on you', C_AMBER, issues, None))
+        refs = [n_of(n, word, many) for n, word, many in ((k.get('branches', 0), 'new branch', 'new branches'), (k.get('tags', 0), 'tag', None),
+                                                         (k.get('releases', 0), 'release', None)) if n]
+        if refs:
+            kind = 'branch' if k.get('branches') else 'tag' if k.get('tags') else 'release'
+            lines.append((kind, '', ' · '.join(refs), C_AMBER if kind == 'branch' else C_PURPLE, repo, None))
+        if not lines:
+            lines.append(('check', '', 'all caught up', C_MUTED, repo, None))
+        return lines + [history] if len(lines) < 4 else lines
+
+    def news_target(self, repo, y):
+        """What a click on a Large news line opens - its line's target (What's new, or the Issues window)"""
+        lines = self.news_cache.get(repo, [])
+        i = news_line_at(y, lines)
+        return lines[i][4] if i is not None and lines[i][4] else repo
+
+    def pip_target(self, x):
+        """What a click on the Tiny issues strip opens - the issue under the pointer, else the Issues window"""
+        i = pip_at(x)
+        return KT_IROW(i) if i is not None and i < len(self.issue_rows_shown) else (K_OPEN_ISSUES, self.issue_view_repo())
+
+    # --- what the pictures say under the pointer ---
+    def orb_text(self, repo):
+        x = self.row_facts(repo)
+        if x['quiet']:
+            lines = [x['name'], f'newest push: {x["pushes"][0][1].split("/")[1]} · {ago(x["pushes"][0][0])}' if x['pushes'] else 'first check…']
+            if x['nw']:
+                lines.append(f'{n_of(x["nw"], "issue")} waiting on you')
+            return '\n'.join(lines + ['ring: their commits per day, last 14 days', 'click for the list'])
+        lines = [f'{x["name"]}  ·  {x["owner"]}']
+        if x['error']:
+            return '\n'.join(lines + [x['error']])
+        news = [f'{x["nc"]} new (commits, branches, tags, PRs)' if x['nc'] else '', f'{n_of(x["ni"], "issue")} with news' if x['ni'] else '',
+                f'{x["nw"]} waiting on you' if x['nw'] else '']
+        lines.append(' · '.join(s for s in news if s) or ('badges hidden (snoozed)' if x['snoozed'] else 'nothing new'))
+        if x['pushed']:
+            lines.append(f'pushed {ago(x["pushed"])}')
+        lines.append(f'ring: commits per day, last 14 days (today {x["days"][-1]})')
+        lines.append('click for the Issues window' if not x['nc'] and (x['ni'] or x['nw']) else "click for What's new")
+        return '\n'.join(lines)
+
+    def bead_text(self, repo, bx):
+        x = self.row_facts(repo)
+        i = int(bx // BEAD_PITCH)
+        if not 0 <= i < SPARK_DAYS:
+            return ''
+        return f'{day_name(date.today() - timedelta(days=SPARK_DAYS - 1 - i))}: {n_of(x["days"][i], "commit")}'
+
+    def counts_text(self, repo):
+        x = self.row_facts(repo)
+        parts = [f'{x["nc"]} new commits / branches / tags / PRs' if x['nc'] else '', f'{n_of(x["ni"], "issue")} with news' if x['ni'] else '',
+                 f'{x["nw"]} waiting on your reply' if x['nw'] else '']
+        text = '\n'.join(p for p in parts if p)
+        return f'{text}\nclick for the Issues window' if x['ni'] or x['nw'] else text
+
+    def cal_text(self, repo, cx, cy):
+        x, d = self.row_facts(repo), cal_day_at(cx, cy)
+        if d is None:
+            return ''
+        if (date.today() - d).days >= x['history_days']:
+            return f'{day_name(d)}: before the {x["history_days"]}-day activity history'
+        return f'{day_name(d)}: {n_of(x["per_day"].get(d.isoformat(), 0), "commit")}'
+
+    def clock_text(self, repo, cx, cy):
+        x, h = self.row_facts(repo), clock_hour_at(cx, cy)
+        if h is None:
+            return ''
+        return f'{hour_name(h)}: {n_of(x["hours"][h], "commit")} in the last {x["history_days"]} days'
+
+    def news_text(self, repo, y):
+        lines = self.news_cache.get(repo, [])
+        i = news_line_at(y, lines)
+        if i is None:
+            return ''
+        kind, n, words, _color, target, churn = lines[i]
+        where = 'the Issues window' if isinstance(target, tuple) and target[0] == K_OPEN_ISSUES else 'the list of repos' if repo == QUIET_ROW else "What's new"
+        lines_changed = f'\nthey added {churn[0]:,} lines and removed {churn[1]:,}' if churn else ''
+        return f'{n} {words}'.strip() + lines_changed + f'\nclick for {where}'
+
+    def stats_text(self, repo):
+        x = self.row_facts(repo)
+        info = x['info']
+        if not info:
+            return ''
+        return f'{n_of(info.get("stars", 0), "star")} · {n_of(info.get("forks", 0), "fork")} · {info.get("watchers", 0)} watching · {n_of(x["branches"], "branch", "branches")}'
+
+    def pip_text(self, px_x):
+        i = pip_at(px_x)
+        if i is None or i >= len(self.issue_rows_shown):
+            return ''
+        rec = self.issue_rows_shown[i]
+        badge = self.issue_badge(rec)[0]
+        return f'#{rec["number"]}  {shorten(rec["title"], 60)}\n{(badge.lower() + " · ") if badge else ""}{rec["user"]} · {n_of(rec["comments"], "comment")} · ' \
+               f'{age_short(parse_iso(rec["date"]))}'
+
+    # --- the issues view at Tiny / Small / Large ---
+    def issue_badge(self, rec):
+        """An issue's badge, as in the Medium issues view: NEW / COMMENT / CLOSED (news), WAITING (someone waits on you) - (words, text color, fill)"""
+        what = rec['news']['what'] if rec['news'] else ''
+        if what:
+            return {'opened': 'NEW', 'commented': 'COMMENT', 'closed': 'CLOSED'}.get(what, 'NEW'), C_BG, C_PURPLE if what == 'closed' else C_BLUE
+        return ('WAITING', C_AMBER, None) if rec['waiting'] else ('', C_BG, None)
+
+    def issue_color(self, rec):
+        """A Tiny pip's color: blue = news, purple = closed, amber = waiting on you, green = open and quiet"""
+        if rec['news']:
+            return C_PURPLE if rec['news']['what'] == 'closed' else C_BLUE
+        return C_PURPLE if rec['state'] == 'closed' else C_AMBER if rec['waiting'] else mix(C_BG3, C_GREEN, 0.55)
+
+    def issue_meta_runs(self, rec):
+        """Large: an issue's second line - who opened it, comments, the news or how long it has waited, its labels"""
+        runs = [('person', rec['user'], C_MUTED, False), ('comment', str(rec['comments']), C_MUTED, False)]
+        news = rec['news']
+        if news and news['what'] in ('commented', 'closed'):
+            runs.append((None, f'{"closed" if news["what"] == "closed" else "comment"} by {news["actor"]}', C_PURPLE if news['what'] == 'closed' else C_BLUE, False))
+        elif rec['waiting'] and rec.get('last'):
+            runs.append(('waiting', f'waiting {span(parse_iso(rec["last"]["at"]))} · last word {rec["last"]["login"]}', C_AMBER, False))
+        return runs + [(None, label, C_MUTED, True) for label in rec['labels'][:3]]
+
+    def paint_issue_rows(self):
+        """The issues view at Tiny (a pip per issue), Small (a line per issue) or Large (a health bar and a card per issue)"""
+        repo = self.issue_view_repo()
+        snap, w = self.snapshots.get(repo), self.widget
+        name = repo.split('/')[1] if '/' in repo else repo
+        everything = self.issue_list(snap) if snap and snap.get('ok') else []
+        ni, nw = (0, 0) if self.snooze_until else self.issue_counts(snap)
+        w[K_ITITLE].update(f'{name} issues' if name else 'issues')
+        self.set_tip(K_ITITLE, f'{repo}\nClick to step through the repos that have issues' if repo else 'No repos yet')
+        if self.wsize == 'Tiny':
+            self.issue_rows_shown = everything[:PIP_MAX]
+            self.show_pic(K_IPIPS, paint_pips, [self.issue_color(r) for r in self.issue_rows_shown], max(0, len(everything) - PIP_MAX), ni, nw, C_BG)
+            self.refresh_status()
+            return
+        large, n_rows = self.wsize == 'Large', int(cfg(K_ISSUE_ROWS))
+        bg = C_BG2 if large else C_BG
+        items = self.issue_rows_shown = everything[:n_rows]
+        for i in range(n_rows):
+            w[KT_IROW(i)].update(visible=i < len(items))
+            if i >= len(items):
+                continue
+            rec = items[i]
+            badge, fg, fill = self.issue_badge(rec)
+            self.show_pic(KT_PIC(i, 'icon'), paint_issue_icon, rec['state'] == 'closed', 18 if large else 14, bg)
+            w[KT_INAME(i)].update(shorten(f'#{rec["number"]}  {rec["title"]}', 54 if large else 40), text_color=C_TEXT if badge else C_MUTED)
+            self.set_tip(KT_INAME(i), f'#{rec["number"]} {rec["title"]}\n{rec["state"]} · updated {local_str(parse_iso(rec["date"]))}')
+            if badge:
+                self.show_pic(KT_PIC(i, 'badge'), paint_pill, badge, fg, fill, bg, px(7.5))
+            else:
+                self.show_pic(KT_PIC(i, 'badge'), blank, 1, 17, bg)
+            w[KT_IAGE(i)].update(age_short(parse_iso(rec['date'])))
+            if large:
+                self.show_pic(KT_PIC(i, 'meta'), paint_issue_meta, self.issue_meta_runs(rec), ISSUE_W, bg)
+        w[K_IUNREAD].update(' · '.join(s for s in [f'{ni} new' if ni else '', f'{nw} waiting' if nw else ''] if s), text_color=C_BLUE if ni else C_AMBER)
+        if large:
+            news = sum(1 for r in everything if r['news'])
+            waiting = sum(1 for r in everything if r['waiting'] and not r['news'])
+            rest = sum(1 for r in everything if r['state'] == 'open' and not r['news'] and not r['waiting'])
+            self.show_pic(K_IHEALTH, paint_health, [('with news', news, C_BLUE), ('more waiting on you' if news else 'waiting on you', waiting, C_AMBER),
+                                                    ('quiet', rest, C_GREEN)], ISSUE_W, C_BG)
+        self.refresh_status()
+
+    def refresh_head(self):
+        """Large: the line across the top - how many repos, and the news in all of them"""
+        snaps = [self.snapshots.get(r) for r in self.repos()]
+        nc = sum(self.unread_count(s) - self.issue_counts(s)[0] for s in snaps)
+        ni = sum(self.issue_counts(s)[0] for s in snaps)
+        nw = sum(self.issue_counts(s)[1] for s in snaps)
+        parts = [f'watching {n_of(len(snaps), "repo")}']
+        if self.snooze_until:
+            parts.append('badges hidden')
+        else:
+            parts += [f'{nc} new' if nc else '', n_of(ni, 'issue') + ' with news' if ni else '', f'{nw} waiting' if nw else '']
+        self.widget[K_HEAD].update(' · '.join(p for p in parts if p))
+
     def draw_spark(self, graph, per_day):
         graph.erase()
         w, h = graph.CanvasSize
@@ -2048,7 +3072,18 @@ class App:
             text = (f'checked {clock(parse_iso(checked).astimezone())}' if checked else 'first check…') + (f' · next {clock(nxt.astimezone())}' if nxt else '') + api
         if self.owner_errors:
             text = ' · '.join(f'{owner}: {shorten(err, 50)}' for owner, err in self.owner_errors.items())
-        self.widget[K_STATUS].update(('DEMO · ' if DEMO else '') + text, text_color=C_RED if self.owner_errors else C_DIM)
+        text, color = ('DEMO · ' if DEMO else '') + text, C_RED if self.owner_errors else C_DIM
+        if self.wsize == 'Tiny':                                # Tiny has room for a sign only - the words are in the ≡ tooltip
+            sign = '!' if self.owner_errors else '⏸' if self.poller.paused else 'zz' if self.snooze_until else ''
+            self.widget[K_STATUS].update(sign, text_color=C_RED if self.owner_errors else C_MUTED)
+            self.set_tip(K_MENU, f'{text}\nMenu (or right-click) · Ctrl + mouse wheel changes the size')
+            return
+        if self.wsize == 'Small':                               # the short form; the whole line is its tooltip
+            self.set_tip(K_STATUS, f'{text}\n{APP_NAME} {VERSION}')
+            text = text if self.owner_errors else text.replace('checked ', '').split(' · API')[0]
+        self.widget[K_STATUS].update(text, text_color=color)
+        if self.wsize == 'Large' and self.view == VIEW_REPOS:
+            self.refresh_head()
 
     def apply_alpha(self):
         alpha = int(cfg(K_OPACITY)) / 100
@@ -3023,6 +4058,13 @@ class App:
                     self.refresh_issue_rows()
                     self.keep_on_screen()
                 return True
+            if isinstance(target, tuple) and target[0] == K_OPEN_ISSUES:
+                if target[1]:
+                    self.open_issues(target[1])
+                return True
+            if isinstance(target, tuple) and target[0] == K_ORB:  # Tiny: an orb showing only issue news opens the Issues window, the rest What's new
+                repo = target[1]
+                target = KT_ICHIP(repo) if repo != QUIET_ROW and not self.row_facts(repo)['nc'] else repo
             if isinstance(target, tuple) and target[0] == K_IROW:
                 if target[1] < len(self.issue_rows_shown):
                     self.open_issues(self.issue_view_repo(), number=self.issue_rows_shown[target[1]]['number'])
@@ -3062,6 +4104,10 @@ class App:
             self.open_settings()
         elif item == K_M_TOP:
             self.set_keep_on_top(not cfg(K_KEEP_ON_TOP))
+        elif item in SIZE_KEYS:
+            self.set_size(SIZE_KEYS[item])
+        elif item == K_SIZE_STEP:
+            self.set_size(SIZES[max(0, min(len(SIZES) - 1, SIZES.index(self.wsize) + values[event]))])
         elif isinstance(item, str) and item.startswith(K_THEME):
             G.theme = item[len(K_THEME):]
             sg.user_settings_set_entry(K_THEME, G.theme)

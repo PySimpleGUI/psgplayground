@@ -9,6 +9,9 @@ iD880 Setup - connect to the iD880 thermal printer, line up your two rolls, test
     Up/Down, PgUp/PgDn, Home/End scroll the log.
 
 Needs id880_lib.py in the same folder.  USB needs pywin32:  python -m pip install pywin32
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-07  Receipt paper width combo (3-1/8" or 4") - the receipt_width setting in id880_lib
 """
 import datetime
 
@@ -29,6 +32,7 @@ K_DARKNESS = '-DARKNESS-'
 K_RECEIPT_NUDGE = '-RECEIPT NUDGE-'
 K_LABEL_NUDGE = '-LABEL NUDGE-'
 K_LABEL_WIDTH = '-LABEL WIDTH-'
+K_RECEIPT_WIDTH = '-RECEIPT WIDTH-'
 K_TEST = '-TEST-'
 KT_TEST = lambda media: (K_TEST, media)
 K_FEED = '-FEED-'
@@ -43,7 +47,7 @@ K_LOG = '-LOG-'
 K_ESCAPE = '-ESCAPE-'
 
 FIELD_SETTINGS = {K_PRINTER: 'win_printer', K_IP: 'ip', K_PORT: 'port', K_LANGUAGE: 'language', K_SPEED: 'speed', K_DARKNESS: 'darkness',
-                  K_RECEIPT_NUDGE: 'receipt_nudge', K_LABEL_NUDGE: 'label_nudge', K_LABEL_WIDTH: 'label_width'}
+                  K_RECEIPT_NUDGE: 'receipt_nudge', K_LABEL_NUDGE: 'label_nudge', K_LABEL_WIDTH: 'label_width', K_RECEIPT_WIDTH: 'receipt_width'}
 
 # Each tool button's commands in both printer languages
 TOOL_COMMANDS = {K_FEED: {'ZPL': f'^XA^MNN^PW{lib.HEAD_DOTS}^LL203^FO0,0^GB8,1,1,W^FS^XZ', 'TSPL': 'FEED 203'},
@@ -154,9 +158,10 @@ def make_window(printers):
                    sg.Text('     Darkness'), sg.Slider((0, 30), lib.setting('darkness'), orientation='h', key=K_DARKNESS, enable_events=True, size=(18, 15))]
     quality = sg.Frame('Printer language and print quality', [quality_row], expand_x=True)
     nudges = list(range(-100, 101))
-    receipt_row = [sg.Text('Receipt paper  3-1/8"', size=(19, 1)), sg.Text('Nudge'),
+    receipt_row = [sg.Text('Receipt paper', size=(19, 1)), sg.Text('Nudge'),
                    sg.Spin(nudges, initial_value=lib.setting('receipt_nudge'), key=K_RECEIPT_NUDGE, size=(4, 1), enable_events=True), sg.Text('dots'),
-                   sg.Button('Test print', key=KT_TEST(lib.RECEIPT))]
+                   sg.Button('Test print', key=KT_TEST(lib.RECEIPT)), sg.Text('   Width'),
+                   sg.Combo(list(lib.RECEIPT_WIDTHS), lib.setting('receipt_width'), key=K_RECEIPT_WIDTH, readonly=True, enable_events=True, size=(14, 1))]
     label_row = [sg.Text('Continuous labels', size=(19, 1)), sg.Text('Nudge'),
                  sg.Spin(nudges, initial_value=lib.setting('label_nudge'), key=K_LABEL_NUDGE, size=(4, 1), enable_events=True), sg.Text('dots'),
                  sg.Button('Test print', key=KT_TEST(lib.LABELS)), sg.Text('   Width'),
