@@ -38,6 +38,9 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.47  09-Nov-2026     Claude: a starter file shows its program's version - a .py / .pyw of a few lines with no version of its own that
+                            imports the real program from beside it (the Playground's playground.pyw -> psgplayground/playground.py, the
+                            Toybox) shows that program's version, and the versions' refresh watches that file too.
     2.2.46  09-Nov-2026     Claude: right-click > Hide after - how long an auto-hide dock waits, once the mouse has left, before it tucks away
                             (0.2 s to 10 s; it was always 0.7 s) - the twin of Fly out, per dock. And the program versions keep themselves
                             up to date: once a minute, while the mouse is off the dock and nothing is going on, a thread looks for program
@@ -217,7 +220,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.46'
+version = '2.2.47'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -302,6 +305,7 @@ class G:
     flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
     hide_delay = 0.7                                    # right-click > Hide after: seconds the mouse is away before an auto-hidden dock tucks away
     version_stamps = {}                                 # the versions' refresh: {program path: its file's mtime at the last look}
+    starters = {}                                       # a starter file's program: {starter path: the source its version came from}
     version_busy = False                                # a refresh thread is reading versions now
     handle_color = None                                 # right-click > Handle colour: '#rrggbb', or None = the theme's
     handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
@@ -696,6 +700,8 @@ def load_blocks():
         sg.popup_error_with_traceback('Error loading saved blocks', e)
 
 VERSION_LINE = re.compile(r"""^(?:VERSION|version|__version__)\s*=\s*(?:__version__\s*=\s*)?['"]v?(\d+(?:\.\d+)*)""")    # at the top level of a source
+IMPORT_LINE = re.compile(r"""^(?:from\s+([\w.]+)\s+import\b|import\s+([\w.]+))""")       # a top-level import (a starter file's program)
+STARTER_LINES = 40                                      # a source this short with no version of its own may be a starter: its imported program's version counts
 
 
 def get_version(filename):
@@ -706,20 +712,40 @@ def get_version(filename):
     if is_link(path):
         return ''
     if path.lower().endswith(('.py', '.pyw')):
-        try:
-            with open(path, 'r', encoding='utf-8', errors='replace') as f:
-                for n, line in enumerate(f):
-                    m = VERSION_LINE.match(line)
-                    if m:
-                        return m.group(1)
-                    if n > 2000:                                        # versions live near the top
-                        break
-        except OSError:
-            pass
-        return ''
+        version, imports, lines = source_version(path)
+        if not version and lines <= STARTER_LINES:                     # a starter (playground.pyw): the version of the program it imports from beside it
+            folder = os.path.dirname(os.path.abspath(path))
+            for mod in imports:
+                base = os.path.join(folder, *mod.split('.'))
+                for p in (base + '.py', base + '.pyw', os.path.join(base, '__init__.py')):
+                    if os.path.isfile(p):
+                        version = source_version(p)[0]
+                        if version:
+                            G.starters[path] = p
+                            return version
+        return version
     if path.lower().endswith('.exe'):
         return pip_script_version(os.path.splitext(re.split(r'[\\/]', path)[-1])[0])
     return ''
+
+
+def source_version(path):
+    """ A .py / .pyw's (version, top-level imports, lines read): its first top-level VERSION line's number ('' when none) """
+    imports, n = [], 0
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            for n, line in enumerate(f, 1):
+                m = VERSION_LINE.match(line)
+                if m:
+                    return m.group(1), imports, n
+                m = IMPORT_LINE.match(line)
+                if m:
+                    imports.append(m.group(1) or m.group(2))
+                if n > 2000:                                            # versions live near the top
+                    break
+    except OSError:
+        pass
+    return '', imports, n
 
 
 def pip_script_version(name):
@@ -3940,10 +3966,13 @@ def version_scan(window, paths):
     try:
         for num, path in paths.items():
             p = path.strip().strip('"')
-            try:
-                stamp = os.stat(p).st_mtime_ns
-            except OSError:
-                stamp = None
+            stamp = []
+            for f in (p, G.starters.get(p)):                            # (a starter file: its program's file counts too)
+                try:
+                    stamp.append(os.stat(f).st_mtime_ns if f else None)
+                except OSError:
+                    stamp.append(None)
+            stamp = tuple(stamp)
             if G.version_stamps.get(p, -1) != stamp:
                 G.version_stamps[p] = stamp
                 if p.lower().endswith('.exe'):
