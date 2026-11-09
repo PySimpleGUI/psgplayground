@@ -38,6 +38,9 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.43  08-Nov-2026     Claude: the hidden dock's handle follows Keep on top - it was always on top of other windows (an auto-hide dock was
+                            always kept on top, and the hide button put the handle on top). With Keep on top off, a dock flying out of its
+                            edge comes out in front of the other windows, but isn't kept there.
     2.2.42  06-Nov-2026     Claude: Ctrl+A in the search box selects what's typed (highlighted, as in a real text box): then a letter or a paste
                             replaces it, Backspace or Delete clears it, Ctrl+C copies it, Ctrl+X cuts it; a click in the box or an arrow
                             key lets go of it. The Panel's box and the Bar's search fly-out both.
@@ -205,7 +208,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.42'
+version = '2.2.43'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -2165,7 +2168,7 @@ def hide_shown():
 
 def hide_now(window):
     """ The hide button: tuck the dock away now.  Auto-hide on: it flies out again when the mouse rests at its edge.  Auto-hide off: its handle
-        stays (on top of other windows) until you click it - then the dock stays out """
+        stays until you click it - then the dock stays out.  The handle is on top of other windows only with Keep on top (2.2.43) """
     if hide_shown() and not G.hidden and G.anim is None:
         G.hover = None
         slide(window, False)
@@ -3779,6 +3782,7 @@ def slide(window, show):
         G.shown_pos = docked_position()                                 # (the list may have changed while it was tucked away)
         start_x, start_y = hidden_position()
         move_to(window, start_x, start_y)
+        bring_forward(window)                                           # (not kept on top: still in front of the other windows as it comes out)
         end_x, end_y = G.shown_pos
     else:
         G.sliding = True
@@ -3796,14 +3800,10 @@ def slide(window, show):
             G.anim = window.TKroot.after(12, step)
             return
         G.anim, G.sliding = None, False
-        if not show:                                                    # tucked away: just the handle shows
+        if not show:                                                    # tucked away: just the handle shows - on top of other windows with Keep on top
             G.hidden, G.pointer, G.hover, G.search, G.search_sel = True, None, None, '', 0          # (a search clears as the dock tucks away)
             present(window, render_handle(), handle=True)
             move_to(window, *handle_position())
-            if not G.autohide:                                          # hidden by hand: the handle stays in sight above other windows
-                dock_above(window, True)
-        elif not G.autohide:
-            dock_above(window, False)
 
     step()
 
@@ -4032,16 +4032,33 @@ def show_edge_preview(window, rect):
 
 
 def dock_above(window, on):
-    """ While a Bar is dragged over its highlight (which stays on top of everything): the dock on top of it.  on=False: back to how it was.
-        Windows' own call, so the Glass surface is left alone """
+    """ While a Bar is dragged over its highlight (which stays on top of everything): the dock on top of it.  on=False: back to how it was
+        (on top only with Keep on top).  Windows' own call, so the Glass surface is left alone """
     if not sg.running_windows():
         return
     try:
         import ctypes
         hwnd = int(window.TKroot.wm_frame(), 16)
-        keep = G.on_top or (G.autohide and G.place != 'Floating')
-        insert = -1 if on or keep else -2                               # HWND_TOPMOST / HWND_NOTOPMOST
+        insert = -1 if on or G.on_top else -2                           # HWND_TOPMOST / HWND_NOTOPMOST
         ctypes.windll.user32.SetWindowPos(hwnd, insert, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)    # no size, no move, no activate
+    except Exception:
+        pass
+
+
+def bring_forward(window):
+    """ A dock that isn't kept on top, flying out of its edge: in front of the other windows - not kept there (the next window you use goes over
+        it again), so it never comes out behind them.  On Windows: on top, then not - a window that isn't the active one can't simply be
+        raised - Windows' own calls, so the Glass surface is left alone """
+    if G.on_top:
+        return
+    try:
+        if sg.running_windows():
+            import ctypes
+            hwnd = int(window.TKroot.wm_frame(), 16)
+            for insert in (-1, -2):                                     # HWND_TOPMOST, then HWND_NOTOPMOST: above every window not kept on top
+                ctypes.windll.user32.SetWindowPos(hwnd, insert, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)    # no size, no move, no activate
+        else:
+            window.TKroot.lift()
     except Exception:
         pass
 
@@ -5186,7 +5203,7 @@ def make_psg_launcher():
     bg = TRANSPARENT if sg.running_windows() else T()['card']
     m_bg, m_fg = T()['menu']
     layout = [[sg.Image(key=K_IMAGE, background_color=bg, pad=(0, 0))]]
-    window = sg.Window(window_title(), layout, icon=dock_icon_64, no_titlebar=True, grab_anywhere=False, keep_on_top=G.on_top or (G.autohide and not floating), margins=(0, 0),
+    window = sg.Window(window_title(), layout, icon=dock_icon_64, no_titlebar=True, grab_anywhere=False, keep_on_top=G.on_top, margins=(0, 0),
                        element_padding=(0, 0), background_color=bg, transparent_color=TRANSPARENT if key_color else None, alpha_channel=0, use_default_focus=False,
                        location=tuple(G.location) if floating and G.location else (None, None), finalize=True, right_click_menu=make_menu(),
                        right_click_menu_background_color=m_bg, right_click_menu_text_color=m_fg, right_click_menu_selected_colors=('#ffffff', C_SELECT),
@@ -6044,7 +6061,7 @@ def main():
                 set_right_click_menu(window, make_menu())
         elif menu_key == K_KEEP_ON_TOP:
             G.on_top = not G.on_top
-            window.keep_on_top_set() if G.on_top or (G.autohide and G.place != 'Floating') else window.keep_on_top_clear()
+            window.keep_on_top_set() if G.on_top else window.keep_on_top_clear()          # the dock and its handle alike (2.2.43)
             if G.glass and G.layered:                                   # in case tk touched the window's layering: set Glass up again
                 glass_free(G.layered)
                 G.layered = glass_setup(window)
