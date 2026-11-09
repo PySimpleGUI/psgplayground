@@ -38,6 +38,15 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.46  09-Nov-2026     Claude: right-click > Hide after - how long an auto-hide dock waits, once the mouse has left, before it tucks away
+                            (0.2 s to 10 s; it was always 0.7 s) - the twin of Fly out, per dock. And the program versions keep themselves
+                            up to date: once a minute, while the mouse is off the dock and nothing is going on, a thread looks for program
+                            files that changed since the last look and reads their versions again; a version that changed glows for a moment.
+    2.2.45  09-Nov-2026     Claude: Ctrl + the scroll wheel over the dock steps its size through T S M L - up = bigger (Mike: a standard hotkey,
+                            with Ctrl+F). A size set by dragging across the letters goes to the next letter that way.
+    2.2.44  09-Nov-2026     Claude: Ctrl+F = search, as in Claude Chat Search (Mike: a standard hotkey for programs with a search). Click the dock,
+                            Ctrl+F: the Panel's search box shows (turned on if it was off) and takes the keys, with what's in it selected so
+                            typing replaces it; on the Bar the search flies out. In the fly-out, Ctrl+F selects what's typed. Not Ctrl+Alt+F.
     2.2.43  08-Nov-2026     Claude: the hidden dock's handle follows Keep on top - it was always on top of other windows (an auto-hide dock was
                             always kept on top, and the hide button put the handle on top). With Keep on top off, a dock flying out of its
                             edge comes out in front of the other windows, but isn't kept there.
@@ -208,7 +217,7 @@ import json
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.43'
+version = '2.2.46'
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
@@ -276,6 +285,7 @@ class G:
     location, legacy_style, default_pt = None, 'Panel', None                                  # this style's floating spot; the style 2.2.19 showed; where the last dock was
     full_size, sliding = None, False                    # the whole dock's size (the window is only its handle while auto-hidden); sliding in / out
     scrub = None                                        # dragging across S M L
+    wheel_size = None                                   # Ctrl + the scroll wheel: the size the notches so far add up to, applied once tk is idle
     tip_shown, scroll_since = False, None               # the Bar's 'rearrange in the Panel' tip was shown; Programs window: held at an edge since
     drag_item = None                                    # Panel: a program / section being dragged to a new place (its list positions, the copy that follows the mouse...)
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
@@ -290,6 +300,9 @@ class G:
     handle_name = False                                 # right-click > Name on the handle: an auto-hidden dock's handle is a tag with its name
     bubble_section = True                               # Bar: right-click > Section name in the bubble
     flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
+    hide_delay = 0.7                                    # right-click > Hide after: seconds the mouse is away before an auto-hidden dock tucks away
+    version_stamps = {}                                 # the versions' refresh: {program path: its file's mtime at the last look}
+    version_busy = False                                # a refresh thread is reading versions now
     handle_color = None                                 # right-click > Handle colour: '#rrggbb', or None = the theme's
     handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
     head_colors = {}                                    # a heading's right-click > Colour: {heading name: '#rrggbb'} - not in it = Automatic (the palette's)
@@ -345,6 +358,8 @@ K_FLOAT_VERTICAL = '-FLOAT VERTICAL-'           # right-click > Floating vertica
 K_HANDLE_NAME = '-HANDLE NAME-'                 # right-click > Name on the handle (settings entry too)
 K_BUBBLE_SECTION = '-BUBBLE SECTION-'           # right-click > Section name in the bubble (Bar): a program's bubble names its section too (settings entry too)
 K_FLYOUT = '-FLY OUT-'                          # right-click > Fly out: how soon an auto-hidden dock comes out (settings entry, and the prefix of the menu keys)
+K_HIDE_DELAY = '-HIDE AFTER-'                   # right-click > Hide after: how long an auto-hidden dock waits before tucking away (settings entry + menu key prefix)
+K_VERSIONS_FOUND = '-VERSIONS FOUND-'           # the versions' refresh thread: programs whose version changed, value = {block_num: version}
 K_HANDLE_COLOR = '-HANDLE COLOR-'               # right-click > Handle colour (settings entry: '#rrggbb' or None = the theme's;  the prefix of the menu keys + the colour's name)
 K_HANDLE_CUSTOM = '-HANDLE CUSTOM-'             # right-click > Handle colour > Custom... (settings entry too: the colour last picked there)
 K_HEAD_COLORS = '-HEADING COLORS-'              # settings entry: {heading name: '#rrggbb'} from a heading's right-click > Colour (each dock its own)
@@ -483,7 +498,8 @@ def make_menu():
              '    Handle colour', [f'{tick(c == G.handle_color)}{n}::{K_HANDLE_COLOR}{n}' for n, c in HANDLE_COLORS.items()] +
                                  ['---', f'{tick(G.handle_color is not None and G.handle_color not in HANDLE_COLORS.values())}{HANDLE_CUSTOM}::{K_HANDLE_CUSTOM}']]
     if G.autohide and G.place != 'Floating':
-        place[1:1] = ['    Fly out', [f'{tick(abs(G.flyout - v) < 0.01)}{n}::{K_FLYOUT}{v}' for n, v in FLYOUTS.items()]]
+        place[1:1] = ['    Fly out', [f'{tick(abs(G.flyout - v) < 0.01)}{n}::{K_FLYOUT}{v}' for n, v in FLYOUTS.items()],
+                      '    Hide after', [f'{tick(abs(G.hide_delay - v) < 0.01)}{n}::{K_HIDE_DELAY}{v}' for n, v in HIDE_DELAYS.items()]]
     if G.style == 'Bar' and G.place == 'Floating':
         place.append(f'{tick(G.float_vertical)}Floating vertically::{K_FLOAT_VERTICAL}')
     sizes = [f'{tick(abs(G.size - v) < 0.005)}{n}  ({round(v * 100)}%)::{KT_SIZE(n)}' for n, v in SIZES.items()]
@@ -2080,6 +2096,9 @@ HANDLE_COLORS = {'The theme\'s': None, 'Gold': '#e8a33d', 'Blue': '#1e9bff', 'Gr
                  'Pink': '#ff6b9a', 'Yellow': '#d9c63a', 'Lime': '#a6e22e', 'Periwinkle': '#8c9eff', 'Silver': '#c0c7d1', 'White': '#f4f6fa'}   # right-click > Handle colour
 HANDLE_CUSTOM = 'Custom...'                                            # its last item: any colour, from the colour picker (G.handle_custom)
 FLYOUTS = {'At once': 0.0, 'After a moment  (0.3 s)': 0.3, 'After half a second': 0.5, 'After a second': 1.0}     # right-click > Fly out (G.flyout)
+HIDE_DELAYS = {'Right away  (0.2 s)': 0.2, 'After a moment  (0.7 s)': 0.7, 'After a second': 1.0, 'After 2 seconds': 2.0, 'After 5 seconds': 5.0,
+               'After 10 seconds': 10.0}                               # right-click > Hide after (G.hide_delay)
+VERSION_CHECK_S, VERSION_RETRY_S = 60, 15                              # the versions' refresh: how often while the dock is idle;  how soon to look again when it's busy
 EDGE_SNAP, EDGE_PULL, EDGE_RAM = 22, 90, 24                           # a dragged dock docks with the mouse this close to an edge, or pushed this far past one;
                                                                        # a docked one pulled this far off its edge leaves it
 KS = lambda name, style: f'-{name} {style}-'                           # a setting each style keeps for itself:  '-PLACE Bar-', '-SIZE Panel-' ...
@@ -2459,11 +2478,12 @@ def toggle_search(window):
 
 def typed(text, keysym, char, state, root, picked=False):
     """ A key for a search box: (the new text, all of it selected?) - None when the key isn't for the text.  Letters (Ctrl+Alt too: AltGr),
-        Backspace (Ctrl: a whole word), Ctrl+V or Shift+Insert: the clipboard's first line.  Ctrl+A selects it all (picked - drawn highlighted,
-        as in a real text box): then a letter or a paste replaces it, Backspace or Delete clears it, Ctrl+C copies it, Ctrl+X cuts it """
+        Backspace (Ctrl: a whole word), Ctrl+V or Shift+Insert: the clipboard's first line.  Ctrl+A (and Ctrl+F in a box that already has the
+        keys) selects it all (picked - drawn highlighted, as in a real text box): then a letter or a paste replaces it, Backspace or Delete clear
+        it, Ctrl+C copies it, Ctrl+X cuts it """
     ctrl, alt = bool(state & 0x4), bool(state & 0x20000)                # (Windows: Alt is 0x20000)
     command, key = ctrl and not alt, keysym.lower()
-    if command and key == 'a':
+    if command and key in ('a', 'f'):
         return text, bool(text)
     if keysym == 'BackSpace' or (keysym == 'Delete' and picked):
         return ('' if picked else re.sub(r'\S*\s*$', '', text) if ctrl else text[:-1]), False
@@ -2488,10 +2508,38 @@ def typed(text, keysym, char, state, root, picked=False):
     return None
 
 
+def is_find_key(e):
+    """ Ctrl+F (not Ctrl+Alt+F: Mike has system-wide Ctrl+Alt hotkeys) """
+    return e.keysym.lower() == 'f' and bool(e.state & 0x4) and not e.state & 0x20008            # (Alt: 0x20000 on Windows, Mod1 0x8 on Linux)
+
+
+def find_shortcut(window):
+    """ Ctrl+F while the dock has the keyboard: the search, as in Claude Chat Search.  Panel: its box shows (turned on if it was off) and takes the
+        keys, with what's in it selected - type to replace it.  Bar: its search flies out (the button is turned on if it was off) """
+    if G.hidden or not program_count():
+        return
+    if not search_on():
+        toggle_search(window)
+    if G.style == 'Panel':
+        try:
+            window.TKroot.focus_force()
+        except Exception:
+            pass
+        G.focus, G.search_all = True, bool(G.search)
+        redraw_soon(window)
+    elif G.stack_open is None:
+        window.write_event_value(K_FIND_OPEN, '')
+
+
 def search_key(window, e):
-    """ A key while the dock has the keyboard.  Panel: its search box takes it - letters, Backspace, Ctrl+V;  the arrows move the pick,
-        Enter starts it, Esc clears.  Bar: a letter opens its search with that letter """
-    if window is not G.window or G.hidden or G.drag_item is not None or not search_on() or not program_count():
+    """ A key while the dock has the keyboard.  Ctrl+F: the search (find_shortcut).  Panel: its search box takes it - letters, Backspace, Ctrl+V;
+        the arrows move the pick, Enter starts it, Esc clears.  Bar: a letter opens its search with that letter """
+    if window is not G.window or G.hidden or G.drag_item is not None or not program_count():
+        return
+    if is_find_key(e):
+        find_shortcut(window)
+        return
+    if not search_on():
         return
     if G.style == 'Bar':
         typing = typed('', e.keysym, e.char, e.state, window.TKroot)
@@ -2686,13 +2734,13 @@ def hint(part):
     if part == 'switch':
         return 'Switch to the Bar - the icons in a row, Mac style' if G.style == 'Panel' else 'Switch to the Panel - names and versions'
     if part == 'search':
-        return 'Hide the search box' if search_row_h() else 'Search - a box that finds your programs as you type'
+        return 'Hide the search box' if search_row_h() else 'Search - a box that finds your programs as you type   (Ctrl+F)'
     if part == 'find':
         return 'Type to find a program   ·   Enter opens it   ·   Esc clears'
     if part == 'clear':
         return 'Clear the search'
     if isinstance(part, tuple) and part[0] == 'size':
-        return f'Size {round(G.size * 100)}%   ·   click T, S, M or L  -  or drag across them for any size'
+        return f'Size {round(G.size * 100)}%   ·   click T, S, M or L  -  or drag across them for any size   ·   Ctrl + wheel steps through them'
     if isinstance(part, tuple) and part[1] in Block.active_blocks:
         b = Block.active_blocks[part[1]]
         if b.kind == KIND_HEADING:
@@ -3308,11 +3356,11 @@ def bar_bubble(im, d, L, part, text=None):
         runs.append(('point at the edge to bring it back' if G.autohide else 'click its handle to bring it back', sub_f, '#9aa3b2'))
     elif part == 'search':
         runs.append(('Search', small, '#eceff6'))
-        runs.append(('find a program by its name  -  or click the bar and type', sub_f, '#9aa3b2'))
+        runs.append(('find a program by its name  -  Ctrl+F, or click the bar and type', sub_f, '#9aa3b2'))
     elif part == 'size':
         runs.append((f'Size {round(G.size * 100)}%', small, '#eceff6'))
         if G.scrub is None:
-            runs.append(('click T S M L  -  or drag across them', sub_f, '#9aa3b2'))
+            runs.append(('click T S M L  -  drag across them, or Ctrl + wheel', sub_f, '#9aa3b2'))
     elif isinstance(part, tuple) and part[1] in Block.active_blocks:
         b = Block.active_blocks[part[1]]
         colors, owner = sections()
@@ -3856,10 +3904,69 @@ def autohide_tick(window):
             G.out_since = None
         else:
             G.out_since = G.out_since or now
-            if now - G.out_since >= AUTOHIDE_DELAY:
+            if now - G.out_since >= G.hide_delay:                       # (right-click > Hide after)
                 G.out_since = None
                 slide(window, False)
     window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
+
+
+def version_tick(window):
+    """ Once a minute, while the dock is idle - the mouse off it, nothing pressed, dragged, typed or flown out - look for program files that
+        changed and read their versions again, in a thread, so the dock never waits for it.  Busy: look again in a little while """
+    if window is not G.window:
+        return
+    idle = (G.press is None and G.scrub is None and G.drag_item is None and G.stack_open is None and G.anim is None and G.drop_index is None
+            and not (G.search and G.focus) and not G.version_busy)
+    if idle:
+        try:
+            px, py = window.TKroot.winfo_pointerxy()
+            wx, wy = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
+            w, h = G.win_size
+            idle = not (wx <= px < wx + w and wy <= py < wy + h)
+        except Exception:
+            idle = False
+    if idle:
+        G.version_busy = True
+        paths = {b.block_num: b.path for b in Block.active_blocks.values() if b.kind != KIND_HEADING and not is_link(b.path)}
+        import threading
+        threading.Thread(target=version_scan, args=(window, paths), daemon=True).start()
+    window.TKroot.after((VERSION_CHECK_S if idle else VERSION_RETRY_S) * 1000, lambda: version_tick(window))
+
+
+def version_scan(window, paths):
+    """ (a thread)  The versions of the programs whose files changed since the last look (the first look reads them all) - the ones that differ
+        from what the dock shows go to the main loop as K_VERSIONS_FOUND.  Only the files' times are checked, so a round costs next to nothing """
+    found = {}
+    try:
+        for num, path in paths.items():
+            p = path.strip().strip('"')
+            try:
+                stamp = os.stat(p).st_mtime_ns
+            except OSError:
+                stamp = None
+            if G.version_stamps.get(p, -1) != stamp:
+                G.version_stamps[p] = stamp
+                if p.lower().endswith('.exe'):
+                    G.scripts = None                                    # (a pip package re-installed: its scripts' versions are read again)
+                found[num] = get_version(path)
+    except Exception:
+        pass
+    G.version_busy = False
+    changed = {num: v for num, v in found.items() if v != G.versions.get(num, '')}
+    if changed and window is G.window:
+        window.write_event_value(K_VERSIONS_FOUND, changed)
+
+
+def versions_found(window, changed):
+    """ The main loop: versions that changed - shown, with a short glow on their rows """
+    now = time.time()
+    for num, v in changed.items():
+        if num in Block.active_blocks:
+            G.versions[num] = v
+            G.flash[num] = now + 0.8
+    if not G.hidden:
+        redraw(window)
+        window.TKroot.after(900, lambda: redraw(window))
 
 
 # ------------------------------------------------------------ Moving a docked dock: along its edge, or (a Bar) to another edge ------------------------------------------------------------
@@ -4291,6 +4398,14 @@ def bind_mouse(window):
     widget.bind('<ButtonRelease-1>', release, add='+')
     widget.bind('<ButtonPress-3>', right_press, add='+')
 
+    def wheel(e, step=None):                                            # Ctrl + the scroll wheel: the size, T S M L (the wheel alone does nothing here)
+        if e.state & 0x4:
+            wheel_size(window, step if step is not None else (1 if e.delta > 0 else -1))
+
+    widget.bind('<MouseWheel>', wheel, add='+')                         # Windows
+    widget.bind('<Button-4>', lambda e: wheel(e, 1), add='+')          # Linux
+    widget.bind('<Button-5>', lambda e: wheel(e, -1), add='+')
+
     def focus(on):                                                      # the search box shows its caret while the dock has the keyboard
         if G.focus != on:
             G.focus = on
@@ -4300,6 +4415,28 @@ def bind_mouse(window):
     window.TKroot.bind('<KeyPress>', lambda e: search_key(window, e), add='+')
     window.TKroot.bind('<FocusIn>', lambda e: focus(True), add='+')
     window.TKroot.bind('<FocusOut>', lambda e: focus(False), add='+')
+
+
+def wheel_size(window, step):
+    """ Ctrl + the scroll wheel over the dock: the next size - up (step > 0) = bigger, through T S M L; a size set by dragging across the letters goes
+        to the next letter that way.  Notches that come in a burst add up and are applied once, when tk is idle """
+    if G.hidden or G.scrub is not None or window is not G.window:
+        return
+    vals = list(SIZE_PRESETS.values())
+    now = G.wheel_size if G.wheel_size is not None else G.size
+    nxt = next((v for v in vals if v > now + 0.005), None) if step > 0 else next((v for v in reversed(vals) if v < now - 0.005), None)
+    if nxt is None:
+        return
+    first = G.wheel_size is None
+    G.wheel_size = nxt
+    if first:
+        window.TKroot.after_idle(lambda: wheel_size_apply(window))
+
+
+def wheel_size_apply(window):
+    size, G.wheel_size = G.wheel_size, None
+    if size is not None and window is G.window and abs(size - G.size) > 0.001:
+        set_size(window, size)
 
 
 def scrub_apply(window):
@@ -5007,6 +5144,9 @@ def open_stack(window, heading_num, by_hover=False):
                 break                                                   # its own stack clicked again: close
             if event == K_HOVER or (event == K_STACK_OPEN and values[event] == heading_num):
                 continue
+            if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the stack stays out)
+                versions_found(window, values[event])
+                continue
             pending = (event, values)
             break
         else:                                                           # every 150 ms: the mouse away from the fly-out and the bar for a while closes it
@@ -5179,6 +5319,9 @@ def open_search(window, text=''):
                 break
             if event in (K_HOVER, K_FIND_OPEN):
                 continue
+            if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the search stays out)
+                versions_found(window, values[event])
+                continue
             pending = (event, values)
             break
     glass_free(surface)
@@ -5243,6 +5386,7 @@ def make_psg_launcher():
     if G.autohide and not floating:
         G.out_since, G.edge_since = None, None
         window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
+    window.TKroot.after(VERSION_CHECK_S * 1000, lambda: version_tick(window))         # the versions keep themselves up to date
     return window
 
 
@@ -5675,6 +5819,8 @@ def load_view_settings():
     G.bubble_section = bool(sg.user_settings_get_entry(K_BUBBLE_SECTION, True))
     G.flyout = sg.user_settings_get_entry(K_FLYOUT, 0.3)
     G.flyout = G.flyout if G.flyout in FLYOUTS.values() else 0.3
+    G.hide_delay = sg.user_settings_get_entry(K_HIDE_DELAY, AUTOHIDE_DELAY)
+    G.hide_delay = G.hide_delay if G.hide_delay in HIDE_DELAYS.values() else AUTOHIDE_DELAY
     G.handle_color = sg.user_settings_get_entry(K_HANDLE_COLOR, None)
     G.handle_color = G.handle_color if G.handle_color in HANDLE_COLORS.values() else hex_color(G.handle_color)      # a preset, or a Custom... colour
     G.handle_custom = hex_color(sg.user_settings_get_entry(K_HANDLE_CUSTOM, None))
@@ -6005,6 +6151,8 @@ def main():
         elif event == K_FIND_OPEN:                                      # a letter typed while the Bar has the keyboard: its search, with that letter
             if G.style == 'Bar' and search_on():
                 pending = open_search(window, values[K_FIND_OPEN])
+        elif event == K_VERSIONS_FOUND:                                 # the versions' refresh found programs whose version changed
+            versions_found(window, values[K_VERSIONS_FOUND])
         elif event == K_DROP:
             files, x_root, y_root = values[K_DROP]
             if G.drop_index is None:
@@ -6126,6 +6274,10 @@ def main():
         elif isinstance(menu_key, str) and menu_key.startswith(K_FLYOUT):   # Fly out > how soon
             G.flyout = float(menu_key[len(K_FLYOUT):])
             sg.user_settings_set_entry(K_FLYOUT, G.flyout)
+            set_right_click_menu(window, make_menu())
+        elif isinstance(menu_key, str) and menu_key.startswith(K_HIDE_DELAY):       # Hide after > how long
+            G.hide_delay = float(menu_key[len(K_HIDE_DELAY):])
+            sg.user_settings_set_entry(K_HIDE_DELAY, G.hide_delay)
             set_right_click_menu(window, make_menu())
         elif isinstance(menu_key, str) and menu_key.startswith(K_HANDLE_COLOR):     # Handle colour > a colour
             G.handle_color = HANDLE_COLORS.get(menu_key[len(K_HANDLE_COLOR):])
