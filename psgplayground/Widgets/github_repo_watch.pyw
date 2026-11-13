@@ -13,8 +13,15 @@ THE WIDGET
     Click a row       ->  "What's new" window: a plain-English digest, every new commit / branch / tag / release / issue / PR,
                           click any commit for a colored diff peek, a 30-day activity chart and rhythm stats.
     Click the chip    ->  Issues window (see ISSUES below)
-    ≡ or right-click  ->  Check now · Mark all read · Pause · Keep on top · Size · Theme · Brightness · Snooze · Snap to corner · Settings · Edit Me · Version · Exit
-    Drag it anywhere; its position is remembered.  The faint ✕ in the top-right corner closes it, and so does Esc.
+    ≡ or right-click  ->  Check now · Mark all read · Pause · Keep on top · Theme · Brightness · Accent · Size · Snooze · Snap to corner · Settings · Edit Me · Version ·
+                          New versions · Restart · Exit
+    Restart starts a fresh copy, back at the same place, size, view, theme and accent.  New versions: when a newer copy of this file is saved over it
+    (Dropbox brings it to every PC), by default the widget restarts by itself once the mouse has been off it 10 s and none of its windows are open -
+    or Ask me first (a small pop-up), or Only say so in this menu ("Restart - x.y.z is ready").  The Version window shows the choice.
+    Start with Windows (right-click, Windows only, off to start): a shortcut, GitHub Repo Watch.lnk, in your Startup folder and its icon, GitHub Repo Watch.ico,
+    beside the settings file; unticking removes the shortcut.  The Version window names it.
+    Accent: the color of the commit charts (sparkline, orb rings, beads, calendar, clock) - GitHub green unless you pick another; remembered.
+    Drag it anywhere; its position is remembered.  The faint ✕ in the top-right corner closes it (Tiny has none), and so do Esc and Alt-F4.
     The other windows are moved by their title strip.
 
     ⇄ (next to ≡) switches to the ISSUES VIEW and back - the choice is remembered:
@@ -28,8 +35,8 @@ SIZES  (right-click > Size, or Ctrl + mouse wheel over the widget - remembered b
     Tiny     one strip, an orb per repo: its ring is the last 14 days of commits (an arc a day, today just left of the top), its middle what is new -
              green = new commits / branches / tags / PRs, blue = issues with news, red ! = a problem, else the repo's initial.  A blue dot = issue
              news as well, an amber dot = someone is waiting on your reply.  Issues view: a pip per issue (blue news · purple closed · amber waiting ·
-             green quiet).  Hover an orb or a pip to see what it says.
-    Small    a line per repo: the news as symbols, 14 days of beads on a string (bigger and greener = busier), how long since the last push
+             green quiet).  Hover an orb or a pip to see what it says.  No ✕ - right-click > Exit, Esc or Alt-F4 close it.
+    Small    a line per repo: the news as symbols, 14 days of beads on a string (bigger and brighter = busier), how long since the last push
     Medium   the classic look shown above
     Large    a card per repo: language, stars / forks / watchers / branches, description, a 5-week calendar (a square a day), a 24-hour clock of when
              the commits land (the amber hand is now), the news a line per kind with the lines the new commits added and removed, the newest commit.
@@ -76,6 +83,10 @@ CHANGELOG
                         own settings and never touches the network
     1.6.0 06-Nov-2026   Size: Tiny / Small / Medium / Large (right-click > Size or Ctrl + mouse wheel), each its own way of seeing the news - orbs with
                         activity rings, beads, the classic rows, cards with a calendar and a 24-hour clock - with hover tips on the charts
+    1.6.1 11-Nov-2026   Accent (right-click > Accent) colors the commit charts, GitHub green by default; no ✕ in Tiny; a size change keeps the top-left
+                        corner and stays on its monitor, Ctrl + wheel keeps the Brightness panel open; Ctrl + Button-4 / 5 only off Windows
+    1.6.2 11-Nov-2026   Start with Windows (right-click, Windows only): a shortcut in your Startup folder, off to start - the STARTUP block (recipe section 7); sub-menu arrows
+    1.6.3 11-Nov-2026   Restart and New versions (right-click, just above Exit) - the UPDATE block: a newer copy of this file restarts it by itself by default
 
 Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings + unread state live in github_repo_watch.json in PySimpleGUI's
 user-settings folder; problems are logged to github_repo_watch.log in the same folder.
@@ -88,11 +99,13 @@ import math
 import os
 import random
 import re
+import struct
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font
 import traceback
 import urllib.error
 import urllib.parse
@@ -100,12 +113,164 @@ import urllib.request
 import webbrowser
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+from tkinter import colorchooser
 
 import PySimpleGUI as sg
 from PIL import Image, ImageDraw, ImageFont
 
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026, block 2) - paste unchanged ---
+# Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
+# a NEWER VERSION saved over it counts once it has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts).
+# Then right-click > New versions decides (remembered, -NEW VERSIONS-; the program sets Update.default for its kind):
+#   'auto'  By itself - hidden in the tray at once, showing once the mouse has been off the window UPDATE_QUIET seconds and nothing of it is open
+#   'ask'   Ask me first - a small pop-up, Restart now / Later (Later by itself after 30 s); hidden in the tray it goes by itself
+#   'menu'  Only say so here - never by itself; the menu reads "Restart - x.y.z is ready"
+# Not the internet: the file itself, which Dropbox brings to every PC.
+# Wiring (Tools\update_block.md):  main() start: Update.default = 'auto' / 'ask' / 'menu';   menu, just above Exit: *update_menu(tick)
+#   each event: if update_event(event): end the loop if Update.restart, else remake the menu
+#   timer (every 2-5 s): if update_tick(window, hidden, busy, colors): remake the menu;  if Update.restart: end the loop
+#   the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+UPDATE_SETTLE = 60
+UPDATE_QUIET = 10
+UPDATE_CHOICES = (('auto', "By itself, while I'm not using it"), ('ask', 'Ask me first'), ('menu', 'Only say so in this menu'))
+
+
+class Update:
+    default = 'ask'                   # the program's kind: 'auto' widgets + tray apps, 'ask' other programs that run all day, 'menu' open-and-close
+    seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
+    ready = ''                        # a newer VERSION saved over this file (settled, compiles)
+    asked = ''                        # the version the pop-up already asked about - not asked again
+    away = None                       # when the mouse left the window (for 'auto')
+    restart = False                   # set -> the main loop ends, then restart_self()
+
+
+def update_mode():
+    mode = sg.user_settings_get_entry('-NEW VERSIONS-', Update.default)
+    return mode if mode in dict(UPDATE_CHOICES) else Update.default
+
+
+def update_check():
+    """ Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only after it changed and settled """
+    try:
+        mtime = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        return ''
+    if Update.seen is None:
+        Update.seen = (mtime, None)
+    if mtime != Update.seen[0]:
+        Update.seen = (mtime, time.time())
+        return ''
+    if Update.seen[1] is None or time.time() - Update.seen[1] < UPDATE_SETTLE:
+        return ''
+    Update.seen = (mtime, None)                                           # looked at: wait for the next change
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            text = f.read()
+        compile(text, __file__, 'exec')
+        found = re.search(r"^VERSION = '([0-9.]+)'", text, re.M)
+    except (OSError, SyntaxError, ValueError):
+        return ''
+    newer = found and tuple(int(x) for x in found.group(1).split('.')) > tuple(int(x) for x in VERSION.split('.'))
+    if newer and found.group(1) != Update.ready:
+        Update.ready = found.group(1)
+        return Update.ready
+    return ''
+
+
+def restart_label():
+    """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
+    return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
+
+
+def update_menu(tick=None, indent='    '):
+    """ The right-click items to put just above Exit: the New versions sub-menu (its choice ticked) and Restart.  tick(on) = the program's own
+        check-mark prefix, so the items line up with its other ones """
+    tick = tick or (lambda on: '✓ ' if on else indent)
+    mode = update_mode()
+    return [f'{indent}New versions', [f'{tick(k == mode)}{text}::-NEW VERSIONS {k}-' for k, text in UPDATE_CHOICES], f'{indent}{restart_label()}::Restart']
+
+
+def update_event(event):
+    """ True when the event was one of this block's: Restart (sets Update.restart) or a New versions choice (saved - remake the menu) """
+    key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event
+    if key == 'Restart':
+        Update.restart = True
+        return True
+    for k, _ in UPDATE_CHOICES:
+        if key == f'-NEW VERSIONS {k}-':
+            sg.user_settings_set_entry('-NEW VERSIONS-', k)
+            return True
+    return False
+
+
+def mouse_away(window):
+    """ True once the mouse has been off the window UPDATE_QUIET seconds in a row """
+    try:
+        root = window.TKroot
+        px, py = root.winfo_pointerxy()
+        x, y, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        inside = x <= px < x + w and y <= py < y + h
+    except Exception:
+        inside = False
+    if inside:
+        Update.away = None
+        return False
+    Update.away = Update.away or time.time()
+    return time.time() - Update.away >= UPDATE_QUIET
+
+
+def update_tick(window, hidden=False, busy=False, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Call on the timer.  hidden = the window is hidden in the tray;  busy = a dialog, panel or edit of the program is open (nothing happens
+        then);  colors = (background, text, button) of the pop-up - the program's own theme.  Sets Update.restart when it is time.
+        Returns True when the menu should be remade (a version became ready, or the pop-up was answered Later) """
+    new = update_check()
+    if not Update.ready or Update.restart:
+        return bool(new)
+    mode = update_mode()
+    if mode == 'menu':
+        return bool(new)
+    if hidden:
+        Update.restart = True
+        return False
+    quiet = mouse_away(window) and not busy
+    if mode == 'auto':
+        Update.restart = quiet
+        return bool(new)
+    if Update.asked != Update.ready and not busy:
+        Update.asked = Update.ready                                       # once per version
+        update_offer(window, Update.ready, colors)
+        return not Update.restart
+    return bool(new)
+
+
+def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  Sets Update.restart """
+    Update.asked = new
+    bg, fg, button = colors
+    try:
+        x, y = window.current_location()
+        spot = (x + 20, y + 20)
+    except Exception:
+        spot = (None, None)
+    name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', '(Right-click > New versions: by itself, ask, or only say so)',
+                      title='New version', custom_text=('Restart now', 'Later'), keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot,
+                      background_color=bg, text_color=fg, button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    Update.restart = answer == 'Restart now'
+
+
+def restart_self(extra=()):
+    """ Start this file again with the same arguments (pythonw on Windows - no console).  Call it LAST: after the window, the tray icon and any
+        socket this program listens on are closed, so a one-copy-at-a-time program's new copy finds the way clear """
+    exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = exe if sys.platform.startswith('win') and os.path.isfile(exe) else sys.executable
+    args = [a for a in sys.argv[1:] if a != '--tray'] + list(extra)
+    subprocess.Popen([exe, os.path.abspath(__file__)] + args, cwd=os.path.dirname(os.path.abspath(__file__)))
+# --- end UPDATE ---
+
+
 APP_NAME = 'GitHub Repo Watch'
-VERSION = '1.6.0'
+VERSION = '1.6.3'
 SETTINGS_FILE = 'github_repo_watch.json'
 DEMO_SETTINGS_FILE = 'github_repo_watch_demo.json'               # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'github_repo_watch.log'
@@ -131,6 +296,7 @@ ROLE_TEXT = {'OWNER': 'owner', 'MEMBER': 'member', 'COLLABORATOR': 'collaborator
 # open / closed / waiting, + / - lines) keep their meaning on every theme: on a light card apply_theme() draws them a shade deeper so they still read.
 MEANING_COLORS = {'green': '#3fb950', 'red': '#f85149', 'amber': '#d29922', 'blue': '#58a6ff', 'purple': '#bc8cff', 'pink': '#f778ba'}
 C_BG = C_BG2 = C_BG3 = C_LINE = C_TEXT = C_MUTED = C_DIM = C_STRIP = ''                         # set by apply_theme()
+C_ACCENT = ''                                                   # the Accent as drawn on this card (accent_on) - the commit charts; set by apply_theme()
 C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = MEANING_COLORS.values()
 KIND_COLOR, STATUS_COLOR = {}, {}                                                                 # filled by apply_theme()
 C_MENU_SEL = '#2a62a8'                                          # menu highlight, white text on it
@@ -536,11 +702,94 @@ def wheel_scrolls_list(window, column_key):
         window.TKroot.bind(seq, on_wheel, add='+')
 
 
+def work_area(window, x, y):
+    """The usable part (no taskbar) of the monitor that point x, y is on: left, top, right, bottom  (as in the SIZE STEPS block of the card widgets)"""
+    if sg.running_windows():
+        try:
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD)]
+            user32 = ctypes.WinDLL('user32')
+            user32.MonitorFromPoint.argtypes, user32.MonitorFromPoint.restype = (wintypes.POINT, wintypes.DWORD), wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.POINTER(MONITORINFO))
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if user32.GetMonitorInfoW(user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2), ctypes.byref(info)):      # 2 = the nearest monitor
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    root = window.TKroot
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
+
+def keep_on_monitor(window):
+    """After a size change: the top-left corner stays where it is, unless the card now runs past its monitor's right or bottom edge - then it slides back"""
+    window.refresh()
+    (x, y), (w, h) = window.current_location(), window.size
+    left, top, right, bottom = work_area(window, x, y)
+    nx, ny = max(left, min(x, right - w)), max(top, min(y, bottom - h))
+    if (nx, ny) != (x, y):
+        window.move(nx, ny)
+
+
 # ================================================================ themes ================================================================
+ACCENTS = {'GitHub': '#3fb950', 'Blue': '#1e9bff', 'Green': '#2ecc71', 'Teal': '#2ad4c8', 'Purple': '#c48cff', 'Orange': '#ff7f50', 'Gold': '#e8a33d'}  # GitHub = before 1.6.1
+ACCENT_DEFAULT = ACCENTS['GitHub']                              # GitHub's green - what the commit charts were always drawn in
+
+
+# --- ACCENT: the same block in every card widget (master copy in modern_widget_recipe.md) - right-click > Accent, remembered (-ACCENT-) ---
+# The accent colors the dot by the title and the widget's main bar / ring / line; colors that carry meaning (load, status, warnings) stay as they are.
+# The program supplies ACCENTS (name -> '#rrggbb', its default first; None = 'Follows load', only where the color can follow a load), ACCENT_DEFAULT,
+# G.accent, mix() and is_light(), and imports colorchooser (from tkinter import colorchooser).
+ACCENT_ANY = 'Any...'                                             # the last Accent item: the color dialog
+K_ACCENT = '-ACCENT-'                                             # settings-file entry ('#rrggbb', None = follows the load), and the start of the Accent menu's keys
+KT_ACCENT = lambda name: f'{K_ACCENT}{name}'
+
+
+def load_accent():
+    """The saved accent - ACCENT_DEFAULT the first time, or if what was saved is not a color"""
+    c = sg.user_settings_get_entry(K_ACCENT, ACCENT_DEFAULT)
+    if c is None:
+        return None if None in ACCENTS.values() else ACCENT_DEFAULT
+    ok = isinstance(c, str) and len(c) == 7 and c[0] == '#' and all(ch in '0123456789abcdefABCDEF' for ch in c[1:])
+    return c if ok else ACCENT_DEFAULT
+
+
+def accent_on(card, color=None):
+    """The accent as drawn on a card of color card (color = what it is right now when it follows the load): a preset - or the load color - a shade
+       darker on a light card, like the other status colors; a color picked in the Any... dialog exactly as picked"""
+    color = color or G.accent
+    return mix(color, '#000000', 0.18) if is_light(card) and G.accent in ACCENTS.values() else color
+
+
+def accent_menu(tick):
+    """The Accent sub-menu for make_menu(): its label and its items - the presets, then Any..., a tick on the one in use"""
+    current = next((n for n, c in ACCENTS.items() if c == G.accent), ACCENT_ANY)
+    return ['    Accent', [f'{tick(n == current)}{n}::{KT_ACCENT(n)}' for n in list(ACCENTS) + [ACCENT_ANY]]]
+
+
+def choose_accent(window, menu_key, now):
+    """Right-click > Accent > an item: G.accent set and saved.  Any... opens the color dialog on now (the color shown at the moment).  False if cancelled"""
+    name = menu_key[len(K_ACCENT):]
+    if name == ACCENT_ANY:
+        picked = colorchooser.askcolor(color=now, parent=window.TKroot, title='Accent color')[1]
+        if not picked:
+            return False
+        G.accent = picked
+    else:
+        G.accent = ACCENTS.get(name, ACCENT_DEFAULT)
+    sg.user_settings_set_entry(K_ACCENT, G.accent)
+    return True
+# --- end ACCENT ---
+
+
 class G:
-    """State the shared WIDGET THEMES / BRIGHTNESS blocks and the menus use"""
+    """State the shared WIDGET THEMES / BRIGHTNESS / ACCENT blocks and the menus use"""
     theme = 'Toybox'                                            # the chosen theme (settings entry K_THEME)
     bright = 0                                                  # its Brightness level (K_BRIGHT)
+    accent = ACCENT_DEFAULT                                     # the Accent (K_ACCENT) - main() loads it; C_ACCENT is it as drawn
     tuned = {}                                                  # (theme, level) -> its five colors at that level
     swatches = {}                                               # (theme, level) -> Theme menu chip - tk keeps an image only while someone holds it
     fonts = {}                                                  # (bold, px) -> Pillow font
@@ -584,18 +833,19 @@ def font(bold, px):
 
 def palette():
     """Every color apply_theme() sets, in a fixed order - redraw() swaps each for its new value"""
-    return (C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK)
+    return (C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK, C_ACCENT)
 
 
 def apply_theme():
     """Work out every color from the chosen theme at its Brightness (theme_colors), and make it the PySimpleGUI theme too, so buttons, text boxes,
        combos, sliders and check boxes follow it.  Windows built after this use the new colors"""
-    global C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK
+    global C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED, C_DIM, C_STRIP, C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK, C_ACCENT
     t = theme_colors()
     light = is_light(t['card'])
     C_BG, C_BG2, C_BG3, C_LINE, C_TEXT, C_MUTED = t['card'], mix(t['card'], t['text'], 0.04), t['track'], t['border'], t['text'], t['dim']
     C_DIM, C_STRIP = mix(t['dim'], t['card'], 0.4), mix(t['card'], t['border'], 0.4 if light else 0.3)
     C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK = (mix(c, '#000000', 0.3) if light else c for c in MEANING_COLORS.values())
+    C_ACCENT = accent_on(t['card'])
     KIND_COLOR.update({'commit': C_GREEN, 'merge': C_GREEN, 'branch': C_AMBER, 'tag': C_PURPLE, 'release': C_PURPLE, 'issue': C_BLUE, 'pr': C_PINK})
     STATUS_COLOR.update({'added': C_GREEN, 'removed': C_RED, 'modified': C_AMBER, 'renamed': C_BLUE, 'copied': C_BLUE, 'changed': C_AMBER})
     sg.theme_add_new('RepoWatch', {'BACKGROUND': C_BG, 'TEXT': C_TEXT, 'INPUT': '#ffffff' if light else C_BG3, 'TEXT_INPUT': C_TEXT, 'SCROLL': C_LINE,
@@ -750,6 +1000,31 @@ def theme_swatch(name):
     return G.swatches[(name, G.bright)]
 
 
+def menu_arrows(menu, dark):
+    """ Windows draws a sub-menu's arrow in Windows' own menu-text color (black, white only on the lit row) whatever the menu's colors, so on a dark
+        menu it can't be seen (Mike, 10-Nov).  This puts a › in the menu's own text color at the right end of each sub-menu's label instead.  Windows
+        and dark menus only - a light menu shows Windows' arrow, and Linux / Mac draw theirs in the menu's colors.  Safe to call again """
+    if not (dark and sg.running_windows()) or menu.index('end') is None:
+        return
+    f = tk.font.Font(root=menu, font=menu.cget('font'))
+    labels = {}
+    for i in range(menu.index('end') + 1):
+        if menu.type(i) in ('command', 'cascade', 'checkbutton', 'radiobutton'):
+            label = menu.entrycget(i, 'label')
+            labels[i] = label.rstrip(' \u2009›') if menu.type(i) == 'cascade' and label.endswith('›') else label
+    cascades = [i for i in labels if menu.type(i) == 'cascade']
+    if not cascades:
+        return
+    end = max(f.measure(text) for text in labels.values()) + f.measure('      ›')       # the arrows line up a little past the longest label
+    for i in cascades:
+        label = labels[i] + '  '
+        while f.measure(label + ' ›') <= end:
+            label += ' '
+        while f.measure(label + '\u2009›') <= end:                                       # thin spaces for the last few pixels
+            label += '\u2009'
+        menu.entryconfigure(i, label=label + '›')
+
+
 def style_menus(window):
     """tk draws menus Windows-gray and PySimpleGUI colors only the top level: recolor every menu of the window - the right-click menu, the ≡ menu and
        their sub-menus - flat and compact in the theme's colors, with a chip beside each theme name (the lights in a column of their own)"""
@@ -766,6 +1041,7 @@ def style_menus(window):
                 if first_light and is_light(THEMES[name]['card']):
                     menu.entryconfigure(i, columnbreak=1)                     # the light themes get a column of their own
                     first_light = False
+        menu_arrows(menu, not is_light(bg))                                   # sub-menu arrows you can see on a dark menu
 
 
 def close_x_images():
@@ -794,7 +1070,7 @@ def set_close_x(label):
 
 def add_close_x(window, event_key, where='ne'):
     """The close x overlaid on the window's right edge - faint, a red disc under the pointer, closes the widget when clicked.
-       where: 'ne' the top-right corner, 'e' the middle of the right end (Tiny's strip), 'se' the bottom-right corner (Small, beside ≡)"""
+       where: 'ne' the top-right corner, 'e' the middle of the right end, 'se' the bottom-right corner (Small, beside ≡).  Tiny has none"""
     label = tk.Label(window.TKroot, bd=0, cursor='hand2')
     set_close_x(label)
     rely, y = {'ne': (0.0, round(3 * G.scale)), 'e': (0.5, 0), 'se': (1.0, -round(3 * G.scale))}[where]
@@ -811,7 +1087,8 @@ def redraw(window):
     old = palette()
     apply_theme()
     recolor(window, {a: b for a, b in zip(old, palette()) if a != b})
-    set_close_x(G.app.close_x)
+    if G.app.close_x is not None:                               # Tiny has no x
+        set_close_x(G.app.close_x)
     G.app.repaint()                                             # Tiny / Small / Large: their pictures drawn again in the new colors
     round_corners(window)
 
@@ -1193,8 +1470,8 @@ def icon(p, kind, cx, cy, r, color):
 
 
 def heat(v, peak, low):
-    """A day's (or an hour's) green: the track color for none, deeper green the busier it was - low = the green of the quietest busy one"""
-    return mix(C_BG3, C_GREEN, low + (1 - low) * v / peak) if v else C_BG3
+    """A day's (or an hour's) color in the accent: the track color for none, the deeper the busier it was - low = the share of the quietest busy one"""
+    return mix(C_BG3, C_ACCENT, low + (1 - low) * v / peak) if v else C_BG3
 
 
 def day_counts(per_day, n):
@@ -1268,7 +1545,7 @@ def pip_at(x):
 
 # --- Small ---
 def paint_beads(days, bg):
-    """Small: the last 14 days as beads on a string - the busier the day, the bigger and greener its bead (today on the right)"""
+    """Small: the last 14 days as beads on a string - the busier the day, the bigger and deeper in the accent its bead (today on the right)"""
     w = len(days) * BEAD_PITCH
     p, cy, peak = Pic(w, BEAD_H, bg), BEAD_H / 2, max(days) or 1
     p.line([(BEAD_PITCH / 2, cy), (w - BEAD_PITCH / 2, cy)], mix(bg, C_LINE, 0.85), 0.8)
@@ -1313,7 +1590,7 @@ def cal_size():
 
 
 def paint_calendar(per_day, history_days, bg):
-    """Large: the last 5 weeks as a calendar, a square a day (Monday first, this week at the bottom), greener the more commits that day - like
+    """Large: the last 5 weeks as a calendar, a square a day (Monday first, this week at the bottom), deeper accent the more commits - like
        GitHub's contribution chart.  Days before the activity history are outlines; today has a frame"""
     (w, h), pitch, today, start = cal_size(), CAL_CELL + CAL_GAP, date.today(), cal_start()
     p, e = Pic(w, h, bg), CAL_EDGE
@@ -1329,7 +1606,7 @@ def paint_calendar(per_day, history_days, bg):
             p.rect(x + 0.5, y + 0.5, x + CAL_CELL - 0.5, y + CAL_CELL - 0.5, outline=C_BG3, width=1, r=2)
         else:
             level = (0.4, 0.6, 0.8, 1.0)[min(3, math.ceil(4 * v / peak) - 1)] if v else 0
-            p.rect(x, y, x + CAL_CELL, y + CAL_CELL, fill=mix(C_BG3, C_GREEN, level) if v else C_BG3, r=2)
+            p.rect(x, y, x + CAL_CELL, y + CAL_CELL, fill=mix(C_BG3, C_ACCENT, level) if v else C_BG3, r=2)
         if d == today:
             p.rect(x - 1.2, y - 1.2, x + CAL_CELL + 1.2, y + CAL_CELL + 1.2, outline=C_TEXT, width=1, r=3)
     return p.png()
@@ -1346,7 +1623,7 @@ def cal_day_at(x, y):
 
 
 def paint_clock(hours, bg):
-    """Large: when the commits land - a 24-hour clock (midnight at the top, noon at the bottom), a wedge per hour, longer and greener the more
+    """Large: when the commits land - a 24-hour clock (midnight at the top, noon at the bottom), a wedge per hour, longer and deeper the more
        commits in that hour over the activity history.  The amber hand is now"""
     p, c = Pic(CLOCK, CLOCK, bg), CLOCK / 2
     p.ring(c, c, CLOCK_R1 + 1.5, C_BG3, 1)
@@ -2126,6 +2403,52 @@ class Poller(threading.Thread):
 
 
 # ================================================================ the app ================================================================
+# --- STARTUP: start with Windows - the same block in every card widget (master copy in modern_widget_recipe.md) ---
+# Tray apps have their own copy that adds --tray (tray_app_recipe.md); the shortcut is made the same way.  The program supplies APP_NAME (the shortcut's
+# name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC, so each PC's shortcut points at that PC's copy.
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows: make the shortcut (pythonw "<this file>") or remove it.  icon = the program's PNG (base64): it goes beside the
+        program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\"';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
+
+
 class App:
     def __init__(self):
         sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
@@ -2242,14 +2565,15 @@ class App:
         self.widget.bind('<Escape>', 'Exit')
         root = self.widget.TKroot                               # Ctrl + mouse wheel steps through the sizes
         root.bind('<Control-MouseWheel>', lambda e: self.widget.write_event_value(K_SIZE_STEP, 1 if e.delta > 0 else -1), add='+')
-        root.bind('<Control-Button-4>', lambda e: self.widget.write_event_value(K_SIZE_STEP, 1), add='+')
-        root.bind('<Control-Button-5>', lambda e: self.widget.write_event_value(K_SIZE_STEP, -1), add='+')
+        if not sg.running_windows():                            # Linux's wheel - on Windows Button-4 / 5 are the mouse's Back / Forward buttons
+            root.bind('<Control-Button-4>', lambda e: self.widget.write_event_value(K_SIZE_STEP, 1), add='+')
+            root.bind('<Control-Button-5>', lambda e: self.widget.write_event_value(K_SIZE_STEP, -1), add='+')
         self.current_alpha = int(cfg(K_OPACITY)) / 100
         bind_click(self.widget, self.click_map())
         self.add_hover_tips()
         if self.view == VIEW_ISSUES:
             self.refresh_issue_rows()
-        self.close_x = add_close_x(self.widget, K_CLOSE_X, {'Tiny': 'e', 'Small': 'se'}.get(self.wsize, 'ne'))     # added after the click map: it opens nothing
+        self.close_x = None if self.wsize == 'Tiny' else add_close_x(self.widget, K_CLOSE_X, 'se' if self.wsize == 'Small' else 'ne')   # after the click map; none in Tiny
         if first_run:
             self.snap_to('TR')
         for repo in self.visible_rows:
@@ -2298,7 +2622,7 @@ class App:
         return rows
 
     def tiny_layout(self, f):
-        """Tiny - one strip: an orb and a name per repo (the issues view: the repo's name and a pip per issue), the status sign and ≡; the ✕ at the end"""
+        """Tiny - one strip: an orb and a name per repo (the issues view: the repo's name and a pip per issue), the status sign and ≡; no ✕ (right-click > Exit)"""
         sf = self.size_fonts()
         strip = []
         if self.view == VIEW_ISSUES:
@@ -2309,7 +2633,7 @@ class App:
                     sg.Text('', key=KT_NAME(repo), font=sf['label'], text_color=C_MUTED, pad=0)]
             strip.append(sg.pin(sg.Column([tile], key=KT_ROW(repo), pad=((6, 4), 1), background_color=C_BG, visible=repo in self.visible_rows)))
         strip += [sg.Text('', key=K_STATUS, font=sf['label_b'], text_color=C_MUTED, pad=((4, 2), 0)),
-                  sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=sf['glyph'], button_color=(C_MUTED, C_BG), border_width=0, pad=((2, 24), 0))]
+                  sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=sf['glyph'], button_color=(C_MUTED, C_BG), border_width=0, pad=((2, 6), 0))]
         return [strip]
 
     def small_layout(self, f):
@@ -2429,13 +2753,15 @@ class App:
         paused = self.poller is not None and self.poller.paused
         return ['', [f'    Check now::{K_M_CHECK}', f'    Mark all as read::{K_M_READ}', f'    Switch view  (repos ⇄ issues)::{K_M_VIEW}', '---',
                      f'{tick(paused)}Pause polling::{K_M_PAUSE}', f'{tick(cfg(K_KEEP_ON_TOP))}Keep on top::{K_M_TOP}',
-                     '    Size', [f'{tick(size == self.wsize)}{size}::{KT_M_SIZE(size)}' for size in SIZES],
+                     *([f'{tick(startup_on())}Start with Windows::{K_STARTUP}'] if sg.running_windows() and not DEMO else []),
                      '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
                      f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
+                     *accent_menu(tick),
+                     '    Size', [f'{tick(size == self.wsize)}{size}::{KT_M_SIZE(size)}' for size in SIZES],
                      '    Snooze', [f'    {label}::{key}' for key, label in SNOOZES.items()],
                      '    Snap to corner', [f'    {name}::{KT_M_SNAP(corner)}' for corner, name in SNAP_CORNERS.items()], '---',
                      f'    Settings...::{K_M_SETTINGS}', f'    Open log file::{K_M_LOG}', f'    About::{K_M_ABOUT}', '---',
-                     '    Edit Me::Edit Me', '    Version::Version', '    Exit::Exit']]
+                     '    Edit Me::Edit Me', f'    Version {VERSION}::Version', *update_menu(tick), '    Exit::Exit']]
 
     def wire_menu(self):
         """The right-click menu: ONE menu for the whole widget, popped up from a right-click anywhere on it (PySimpleGUI's right_click_menu would give
@@ -2498,11 +2824,12 @@ class App:
             self.text_card(card.metadata['title'], card.metadata['text'], card.metadata['size'], spot)
 
     def keep_going(self, window, event, values):
-        """While the Brightness panel is open the widget keeps taking poll results; anything else closes the panel and goes to the main loop"""
+        """While the Brightness panel is open the widget keeps taking poll results; anything else closes the panel and goes to the main loop.
+           Ctrl + mouse wheel there gets the panel back under the new size (widget_event); one past Tiny or Large does nothing"""
         if event in (K_POLL_BUSY, K_POLL_RESULT, K_REPOS_RESOLVED):
             self.widget_event(event, values)
             return True
-        return False
+        return event == K_SIZE_STEP and self.size_after(values[event]) == self.wsize
 
     def text_card(self, title, text, size, spot=(None, None)):
         """Version, About and messages: the text on a themed card with a title strip, no OS title bar.  The main loop closes it (x, Close, Escape, Alt-F4)"""
@@ -2694,11 +3021,18 @@ class App:
     def size_choice(self):
         return cfg(K_SIZE) if cfg(K_SIZE) in SIZES else 'Medium'
 
+    def size_after(self, step):
+        """The size one step bigger (+1) or smaller (-1) than now, stopping at Tiny and Large"""
+        return SIZES[max(0, min(len(SIZES) - 1, SIZES.index(self.wsize) + step))]
+
     def set_size(self, size):
-        """Right-click > Size, or Ctrl + mouse wheel: the widget rebuilt at the new size, remembered between runs"""
+        """Right-click > Size, or Ctrl + mouse wheel: the widget rebuilt at the new size, remembered between runs.  Its top-left corner stays where it
+           was, and it stays on its monitor (slides back in if it now runs past the right or bottom edge)"""
         if size != self.wsize:
             sg.user_settings_set_entry(K_SIZE, size)
+            self.last_geom = None                               # so keep_on_screen() doesn't hold the right edge instead of the corner
             self.rebuild_widget()
+            keep_on_monitor(self.widget)
 
     def size_fonts(self):
         """The Tiny / Small / Large widget's fonts - the Widget text size setting, a step or two smaller for Tiny and Small"""
@@ -3055,7 +3389,7 @@ class App:
         peak, bw = max(counts) or 1, w / SPARK_DAYS
         for i, c in enumerate(counts):
             top = max(2, round(c / peak * (h - 2))) if c else 1
-            graph.draw_rectangle((i * bw + 1, top), ((i + 1) * bw - 1, 0), fill_color=C_GREEN if c else C_DIM, line_color=C_GREEN if c else C_DIM)
+            graph.draw_rectangle((i * bw + 1, top), ((i + 1) * bw - 1, 0), fill_color=C_ACCENT if c else C_DIM, line_color=C_ACCENT if c else C_DIM)
 
     def refresh_status(self):
         if self.poller is None:
@@ -3977,6 +4311,10 @@ class App:
                     self.last_meta_refresh = datetime.now()
                     self.sync_widget()
                 self.keep_on_screen()
+                if update_tick(self.widget, False, self.update_busy(), (C_BG, C_TEXT, C_PANEL_DONE)):     # a newer version of this file (the UPDATE block)
+                    self.rebuild_menus()                        # 'Restart - x.y.z is ready'
+                if Update.restart:
+                    break
                 continue
             if window is None or (window is self.widget and event in ('Exit', sg.WINDOW_CLOSED)):
                 break
@@ -4010,10 +4348,21 @@ class App:
             if w is not None:
                 w.close()
         self.widget.close()
+        if Update.restart:
+            self.poller.join(10)                                # done with its repo, so the fresh copy starts clean
+
+    def update_busy(self):
+        """Something of the widget is open - What's new, Issues, Settings (and its pickers), a Version / About card, the Brightness panel: no restart then"""
+        return self.panel_open or bool(self.cards) or any(w is not None for w in (self.details, self.issues_win, self.settings_win, self.pick_win, self.all_win))
 
     def widget_event(self, event, values):
         item = values.get(K_MENU) if event == K_MENU else event
         item = item.split('::')[-1] if isinstance(item, str) and '::' in item else item       # a ≡ menu choice arrives as its whole 'label::key'
+        if update_event(item):                                  # Restart, or a New versions choice (the UPDATE block)
+            if Update.restart:
+                return False                                    # the main loop ends; main() starts the fresh copy
+            self.rebuild_menus()                                # the ✓ moved
+            return True
         if event == K_POLL_BUSY:
             self.busy.add(values[event])
             self.refresh_row(values[event])
@@ -4102,22 +4451,37 @@ class App:
             self.snap_to(SNAP_KEYS[item])
         elif item == K_M_SETTINGS:
             self.open_settings()
+        elif item == K_STARTUP:
+            error = set_startup(not startup_on(), ICON)
+            if error:
+                sg.popup_error(f'Start with Windows did not work:\n{error}', title=APP_NAME, keep_on_top=True, non_blocking=True)
+            self.rebuild_menus()
         elif item == K_M_TOP:
             self.set_keep_on_top(not cfg(K_KEEP_ON_TOP))
         elif item in SIZE_KEYS:
             self.set_size(SIZE_KEYS[item])
         elif item == K_SIZE_STEP:
-            self.set_size(SIZES[max(0, min(len(SIZES) - 1, SIZES.index(self.wsize) + values[event]))])
+            self.set_size(self.size_after(values[event]))
         elif isinstance(item, str) and item.startswith(K_THEME):
             G.theme = item[len(K_THEME):]
             sg.user_settings_set_entry(K_THEME, G.theme)
             self.retheme()
+        elif isinstance(item, str) and item.startswith(K_ACCENT):
+            if choose_accent(self.widget, item, C_ACCENT):
+                apply_theme()                                   # C_ACCENT: the new accent as drawn on this card
+                for repo in self.visible_rows:                  # the commit charts drawn again in it
+                    self.refresh_row(repo)
+                self.rebuild_menus()                            # the ✓ in the Accent menu
         elif item == K_BRIGHT:
-            self.panel_open = True
-            try:
-                pending = brightness_panel(self.widget, self.keep_going)
-            finally:
-                self.panel_open = False
+            while True:
+                self.panel_open = True
+                try:
+                    pending = brightness_panel(self.widget, self.keep_going)
+                finally:
+                    self.panel_open = False
+                if not pending or pending[0] != K_SIZE_STEP:
+                    break
+                self.widget_event(*pending)                     # Ctrl + mouse wheel over the widget: the new size, then the panel again under it
             sg.user_settings_set_entry(K_BRIGHT, G.bright)
             self.retheme()
             if pending:                                         # the widget event that closed the panel (a menu choice, the x...)
@@ -4130,7 +4494,9 @@ class App:
         elif item == K_M_ABOUT:
             self.text_card(f'{APP_NAME} - about', f'{APP_NAME} {VERSION}\n\n{__doc__.strip()}', (140, 30))
         elif item == 'Version':
-            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__, sg.get_versions()]), (70, 10))
+            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__,
+                                                                               f'Start with Windows:  {startup_link() if startup_on() else "off"}',
+                                                                               f'New versions:  {dict(UPDATE_CHOICES)[update_mode()]}', sg.get_versions()]), (70, 10))
         elif item == 'Edit Me':
             sg.execute_editor(__file__)
         elif item in ('Exit', K_CLOSE_X):                       # Exit from either menu, or the ✕
@@ -4220,11 +4586,13 @@ class App:
 
 
 def main():
+    Update.default = 'auto'                                     # a desktop widget: a newer version restarts it by itself (it comes back as it was)
     sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
     G.theme = sg.user_settings_get_entry(K_THEME, 'Toybox')
     G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')
     G.bright = sg.user_settings_get_entry(K_BRIGHT, 0)
     G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
+    G.accent = load_accent()
     sg.set_options(dpi_awareness=True, font=(UI_FONT, 11), tooltip_font=(UI_FONT, 10), icon=ICON)
     apply_theme()
     try:
@@ -4232,6 +4600,8 @@ def main():
     except Exception as e:
         log(traceback.format_exc())
         sg.popup_error_with_traceback(f'{APP_NAME} crashed', e, traceback.format_exc())
+    if Update.restart:                                          # Restart, or a newer version: every window is closed and the poller stopped by now
+        restart_self()
 
 
 if __name__ == '__main__':

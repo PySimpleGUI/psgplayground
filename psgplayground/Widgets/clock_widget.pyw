@@ -1,30 +1,202 @@
 #!/usr/bin/env python3
 """
-clock_widget.pyw - the time and the date on a small card, with a bar that fills up every minute.
+clock_widget.pyw - the time and the date on a small card, with a bar that fills up every minute.  Click the date for a month calendar.
 
     One rounded card drawn with Pillow (antialiased, so it looks the same at every Windows display scaling), shown in a single Image element.
     No title bar: drag it anywhere on the card.  The faint x in the corner (red when hovered) closes it; so does Escape.
     The corners are see-through and click-through on Windows (Linux / Mac get square corners - only Windows can make them see-through).
-    Right-click:  Keep on top  |  24-hour time  |  Theme (16 dark + 16 light, as color chips)  |  Brightness... (darker / lighter)  |  Size  |  Opacity
-                  |  Edit Me / Version / Exit
+    Calendar:  click or double-click the date (it lights up in the accent under the mouse), press C, or right-click > Calendar... - this month opens next to the card,
+               today in the accent; < > / arrow keys / Page Up, Down / the mouse wheel change the month, Today or Home comes back; Close or Escape.
+    Right-click:  Calendar...  |  Keep on top  |  24-hour time  |  Show the date (on to start)  |  Theme (16 dark + 16 light, as color chips)  |  Brightness... (darker /
+                  lighter)  |  Accent (the dot and the seconds bar: blue to start, 6 presets or Any... color)  |  Size  |  Opacity  |  Edit Me / Version / Exit
+    Size:  Tiny (one strip: the time, the date under it, the seconds a thin accent line), Small, Medium, Large - right-click > Size, or Ctrl + mouse wheel
     Every choice is remembered (PySimpleGUI user settings), and so is the window position.
+    Start with Windows (right-click; Windows only, off to start): a shortcut, Clock Widget.lnk, in your Startup folder and its icon, Clock Widget.ico,
+    beside the settings file; unticking removes the shortcut.  The Version window names it.
+    Restart / New versions (right-click, just above Exit): Restart starts it again as it was.  A newer version saved over this file restarts it by
+    itself once the mouse has been off it a few seconds (New versions: or Ask me first, or Only say so in this menu) - Tools/update_block.md.
     Made from Templates/widget_template.pyw - the WIDGET THEMES and BRIGHTNESS blocks are the same in every card widget; paste them unchanged.
 
     Requires:  pip install PySimpleGUI pillow
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-13  v1.6  The date sits under the time on the card, brighter (the seconds bar under it), and a click on it - or C, or right-click > Calendar... - opens a month calendar
+2026-11-13  v1.5  The date in Tiny too ("Fri 13 Nov" under the time), and right-click > Show the date to hide it on the card and in Tiny
+2026-11-11  v1.4  Restart and New versions (right-click, above Exit): a newer version saved over this file restarts it by itself once the mouse is off it - the UPDATE block
+2026-11-11  v1.3  A drag that starts on the close x no longer closes it - a click is told from a drag by the screen position (the card moves with the mouse)
+2026-11-11  v1.2  Start with Windows (right-click, Windows only): a shortcut in your Startup folder, off to start - the STARTUP block (recipe section 7)
+2026-11-11  v1.1  Accent menu (the dot and the seconds bar, blue to start), Size Tiny (one strip: the time) and Ctrl + mouse wheel; Version in the menu
 2026-11-02  v1.0  First version - the Widget Template's clock as a widget of its own, with a 24-hour choice on the right-click menu
 """
 import base64
+import calendar
 import datetime
 import io
 import math
+import os
+import re
+import struct
+import subprocess
+import sys
+import time
 import tkinter as tk
+import tkinter.font
+from tkinter import colorchooser
 
 import PySimpleGUI as sg
 from PIL import Image, ImageDraw, ImageFont
 
-VERSION = '1.0'
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026, block 2) - paste unchanged ---
+# Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
+# a NEWER VERSION saved over it counts once it has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts).
+# Then right-click > New versions decides (remembered, -NEW VERSIONS-; the program sets Update.default for its kind):
+#   'auto'  By itself - hidden in the tray at once, showing once the mouse has been off the window UPDATE_QUIET seconds and nothing of it is open
+#   'ask'   Ask me first - a small pop-up, Restart now / Later (Later by itself after 30 s); hidden in the tray it goes by itself
+#   'menu'  Only say so here - never by itself; the menu reads "Restart - x.y.z is ready"
+# Not the internet: the file itself, which Dropbox brings to every PC.
+# Wiring (Tools\update_block.md):  main() start: Update.default = 'auto' / 'ask' / 'menu';   menu, just above Exit: *update_menu(tick)
+#   each event: if update_event(event): end the loop if Update.restart, else remake the menu
+#   timer (every 2-5 s): if update_tick(window, hidden, busy, colors): remake the menu;  if Update.restart: end the loop
+#   the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+UPDATE_SETTLE = 60
+UPDATE_QUIET = 10
+UPDATE_CHOICES = (('auto', "By itself, while I'm not using it"), ('ask', 'Ask me first'), ('menu', 'Only say so in this menu'))
+
+
+class Update:
+    default = 'ask'                   # the program's kind: 'auto' widgets + tray apps, 'ask' other programs that run all day, 'menu' open-and-close
+    seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
+    ready = ''                        # a newer VERSION saved over this file (settled, compiles)
+    asked = ''                        # the version the pop-up already asked about - not asked again
+    away = None                       # when the mouse left the window (for 'auto')
+    restart = False                   # set -> the main loop ends, then restart_self()
+
+
+def update_mode():
+    mode = sg.user_settings_get_entry('-NEW VERSIONS-', Update.default)
+    return mode if mode in dict(UPDATE_CHOICES) else Update.default
+
+
+def update_check():
+    """ Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only after it changed and settled """
+    try:
+        mtime = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        return ''
+    if Update.seen is None:
+        Update.seen = (mtime, None)
+    if mtime != Update.seen[0]:
+        Update.seen = (mtime, time.time())
+        return ''
+    if Update.seen[1] is None or time.time() - Update.seen[1] < UPDATE_SETTLE:
+        return ''
+    Update.seen = (mtime, None)                                           # looked at: wait for the next change
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            text = f.read()
+        compile(text, __file__, 'exec')
+        found = re.search(r"^VERSION = '([0-9.]+)'", text, re.M)
+    except (OSError, SyntaxError, ValueError):
+        return ''
+    newer = found and tuple(int(x) for x in found.group(1).split('.')) > tuple(int(x) for x in VERSION.split('.'))
+    if newer and found.group(1) != Update.ready:
+        Update.ready = found.group(1)
+        return Update.ready
+    return ''
+
+
+def restart_label():
+    """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
+    return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
+
+
+def update_menu(tick=None, indent='    '):
+    """ The right-click items to put just above Exit: the New versions sub-menu (its choice ticked) and Restart.  tick(on) = the program's own
+        check-mark prefix, so the items line up with its other ones """
+    tick = tick or (lambda on: '✓ ' if on else indent)
+    mode = update_mode()
+    return [f'{indent}New versions', [f'{tick(k == mode)}{text}::-NEW VERSIONS {k}-' for k, text in UPDATE_CHOICES], f'{indent}{restart_label()}::Restart']
+
+
+def update_event(event):
+    """ True when the event was one of this block's: Restart (sets Update.restart) or a New versions choice (saved - remake the menu) """
+    key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event
+    if key == 'Restart':
+        Update.restart = True
+        return True
+    for k, _ in UPDATE_CHOICES:
+        if key == f'-NEW VERSIONS {k}-':
+            sg.user_settings_set_entry('-NEW VERSIONS-', k)
+            return True
+    return False
+
+
+def mouse_away(window):
+    """ True once the mouse has been off the window UPDATE_QUIET seconds in a row """
+    try:
+        root = window.TKroot
+        px, py = root.winfo_pointerxy()
+        x, y, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        inside = x <= px < x + w and y <= py < y + h
+    except Exception:
+        inside = False
+    if inside:
+        Update.away = None
+        return False
+    Update.away = Update.away or time.time()
+    return time.time() - Update.away >= UPDATE_QUIET
+
+
+def update_tick(window, hidden=False, busy=False, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Call on the timer.  hidden = the window is hidden in the tray;  busy = a dialog, panel or edit of the program is open (nothing happens
+        then);  colors = (background, text, button) of the pop-up - the program's own theme.  Sets Update.restart when it is time.
+        Returns True when the menu should be remade (a version became ready, or the pop-up was answered Later) """
+    new = update_check()
+    if not Update.ready or Update.restart:
+        return bool(new)
+    mode = update_mode()
+    if mode == 'menu':
+        return bool(new)
+    if hidden:
+        Update.restart = True
+        return False
+    quiet = mouse_away(window) and not busy
+    if mode == 'auto':
+        Update.restart = quiet
+        return bool(new)
+    if Update.asked != Update.ready and not busy:
+        Update.asked = Update.ready                                       # once per version
+        update_offer(window, Update.ready, colors)
+        return not Update.restart
+    return bool(new)
+
+
+def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  Sets Update.restart """
+    Update.asked = new
+    bg, fg, button = colors
+    try:
+        x, y = window.current_location()
+        spot = (x + 20, y + 20)
+    except Exception:
+        spot = (None, None)
+    name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', '(Right-click > New versions: by itself, ask, or only say so)',
+                      title='New version', custom_text=('Restart now', 'Later'), keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot,
+                      background_color=bg, text_color=fg, button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    Update.restart = answer == 'Restart now'
+
+
+def restart_self(extra=()):
+    """ Start this file again with the same arguments (pythonw on Windows - no console).  Call it LAST: after the window, the tray icon and any
+        socket this program listens on are closed, so a one-copy-at-a-time program's new copy finds the way clear """
+    exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = exe if sys.platform.startswith('win') and os.path.isfile(exe) else sys.executable
+    args = [a for a in sys.argv[1:] if a != '--tray'] + list(extra)
+    subprocess.Popen([exe, os.path.abspath(__file__)] + args, cwd=os.path.dirname(os.path.abspath(__file__)))
+# --- end UPDATE ---
+
+VERSION = '1.6'
 APP_NAME = 'Clock Widget'             # the window title (the taskbar and Alt-Tab show it) and the Version popup
 TITLE = 'CLOCK'                       # the label at the top of the card
 REFRESH_MS = 1000                     # how often the time is read and the card redrawn
@@ -34,14 +206,16 @@ ICON = b'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAUP0lEQVR42tWbeZRdZZnuf9+
 K_IMAGE = '-IMAGE-'
 K_HOVER = '-HOVER-'                   # mouse moved over / off the close x  (value: True / False)
 K_CLOSE = '-CLOSE-'                   # close x clicked
+K_HOVER_DATE = '-HOVER DATE-'         # mouse moved over / off the date  (value: True / False) - it lights up: a click opens the calendar
+K_CALENDAR = '-CALENDAR-'             # the date clicked, C, or right-click > Calendar...: the month calendar opens (and closes, when it is open)
 K_TOP = '-TOP-'                       # right-click: keep on top toggle (and its settings-file entry)
 K_24H = '-24 HOUR-'                   # right-click: 24-hour time toggle (and its settings-file entry)
-K_SIZE = '-SIZE-'                     # settings-file entry, and the prefix of the size menu keys
-KT_SIZE = lambda name: f'{K_SIZE}{name}'
+K_DATE = '-SHOW DATE-'                # right-click: Show the date toggle (and its settings-file entry)
 K_OPACITY = '-OPACITY-'
 KT_OPACITY = lambda pct: f'{K_OPACITY}{pct}'
 K_THEME = '-THEME-'                   # settings-file entry, and the prefix of the theme menu keys
 KT_THEME = lambda name: f'{K_THEME}{name}'
+K_UPDATE_TICK = '-UPDATE TICK-'       # every 3 s the UPDATE block looks for a newer version of this file
 K_EXIT = 'Exit'
 
 # ---------- Look ----------
@@ -84,18 +258,21 @@ THEMES = {'Toybox':        {'card': '#141821', 'border': '#2f3a4e', 'track': '#1
           'Pistachio':     {'card': '#ebf3dd', 'border': '#c4cfaf', 'track': '#cfd9bf', 'text': '#242b17', 'dim': '#657051'}}
 OLD_THEME_NAMES = {'Midnight': 'Carbon', 'VoidBlue': 'Carbon', 'DarkSlate': 'Slate', 'MidnightPurple': 'Plum', 'DeepOceanTeal': 'Lagoon'}   # saved by older versions
 # --- end WIDGET THEMES ---
-ACCENT = '#1e9bff'                    # the dot by the title and the seconds bar - pick your own
+ACCENTS = {'Blue': '#1e9bff', 'Green': '#2ecc71', 'Teal': '#2ad4c8', 'Purple': '#c48cff', 'Orange': '#ff7f50', 'Gold': '#e8a33d'}   # right-click > Accent
+ACCENT_DEFAULT = ACCENTS['Blue']      # the dot by the title and the seconds bar, until another is picked
 C_CLOSE = '#c0392b'
 C_MENU_SEL = '#2a62a8'                # right-click menu highlight (white text); its background and text come from the theme - see menu_colors()
 C_SWATCH_EDGE = '#7c8594'             # outline of the theme chips in the Theme menu - mid gray shows on dark and light menus
 FONT_MENU = ('Segoe UI', 10)
-SIZES = {'Small': 0.8, 'Medium': 1.0, 'Large': 1.3}
 OPACITIES = (100, 90, 80, 70, 60)
 
 # card geometry in design pixels (at 96 dpi, Medium); everything is multiplied by the scale when drawn
 CARD_W, CARD_H, RADIUS = 184, 132, 18
 HEADER_H = 34                         # the dot + TITLE row; draw_content() gets the rest
 CLOSE_X, CLOSE_Y, CLOSE_R = CARD_W - 19, 19, 11
+TINY_W, TINY_H = 104, 40              # Tiny: the strip - draw_tiny() fills it
+DATE_H, TINY_DATE_H = 24, 54         # the card's date line (the card is that much shorter without it); Tiny's height with the date
+CARD_DATE_Y, TINY_DATE_Y = 91, 37    # the middle of the date line on the card and in Tiny - drawn there, and clicked there for the calendar
 FONT_NAMES = {True: ('segoeuib.ttf', 'DejaVuSans-Bold.ttf'), False: ('segoeui.ttf', 'DejaVuSans.ttf')}     # bold / regular: Windows first, then Linux
 
 
@@ -106,10 +283,13 @@ class G:                              # program-wide state
     theme = 'Toybox'                  # key into THEMES
     value = None                      # what read_value() returned last
     hours24 = False                   # 13:05 instead of 1:05 PM
+    show_date = True                  # the date on the card and in Tiny
     hover = False                     # mouse is over the close x
-    press = None                      # (x, y) where the left button went down on the card
+    hover_date = False                # mouse is over the date (it opens the calendar)
+    press = None                      # (x_root, y_root): where on the screen the left button went down on the card
     fonts = {}                        # (bold, px) -> ImageFont
     swatches = {}                     # (theme name, brightness) -> tk.PhotoImage shown in the Theme menu
+    accent = ACCENT_DEFAULT           # right-click > Accent: '#rrggbb'
     bright = 0                        # Brightness: -80 (much darker) .. 50 (lighter), 0 = the theme as designed
     tuned = {}                        # (theme name, brightness) -> the theme's colors at that brightness
 
@@ -128,15 +308,48 @@ def draw_content(d, k, T, now):
     hm, ampm = (now.strftime('%H:%M'), '') if G.hours24 else (now.strftime('%I:%M').lstrip('0'), now.strftime('%p'))
     wb, ws = d.textlength(hm, font=big), d.textlength(ampm, font=small)
     gap = 4 * k if ampm else 0
-    x0, base = cx - (wb + gap + ws) / 2, 76 * k                                       # the time and a small AM / PM after it, centered as a group
+    x0, base = cx - (wb + gap + ws) / 2, (74 if G.show_date else 76) * k              # the time and a small AM / PM after it, centered as a group
     d.text((x0, base), hm, font=big, fill=T['text'], anchor='ls')
     if ampm:
         d.text((x0 + wb + gap, base), ampm, font=small, fill=T['dim'], anchor='ls')
-    x0, x1, y = 18 * k, (CARD_W - 18) * k, 91 * k                                     # the seconds: a bar that fills up every minute
+    if G.show_date:                                                                   # the date under the time - in the accent under the mouse: a click opens the calendar
+        d.text((cx, CARD_DATE_Y * k), f'{now:%A}  {now.day} {now:%B}', font=font(False, round(14 * k)), fill=accent_on(T['card']) if G.hover_date else T['text'],
+               anchor='mm')
+    x0, x1, y = 18 * k, (CARD_W - 18) * k, (112 if G.show_date else 91) * k           # the seconds: a bar that fills up every minute, at the bottom
     d.rounded_rectangle((x0, y - 2 * k, x1, y + 2 * k), radius=2 * k, fill=T['track'])
     if now.second:
-        d.rounded_rectangle((x0, y - 2 * k, x0 + (x1 - x0) * now.second / 59, y + 2 * k), radius=2 * k, fill=ACCENT)
-    d.text((cx, 112 * k), f'{now:%A}  {now.day} {now:%B}', font=font(False, round(12 * k)), fill=T['dim'], anchor='mm')
+        d.rounded_rectangle((x0, y - 2 * k, x0 + (x1 - x0) * now.second / 59, y + 2 * k), radius=2 * k, fill=accent_on(T['card']))
+
+
+def card_h():
+    """The card's height in design pixels - shorter without the date line"""
+    return CARD_H if G.show_date else CARD_H - DATE_H
+
+
+def tiny_h():
+    """Tiny's height in design pixels - taller with the date"""
+    return TINY_DATE_H if G.show_date else TINY_H
+
+
+def draw_tiny(d, k, T, now):
+    """Tiny: the card collapsed to one strip - the time, the date under it ("Fri 13 Nov", unless Show the date is off), and the seconds as a thin
+       line in the accent that fills up every minute.  The strip is TINY_W x tiny_h() design pixels; no header, no close x"""
+    cx = TINY_W / 2 * k
+    big, small = font(True, round(20 * k)), font(True, round(12 * k))
+    hm, ampm = (now.strftime('%H:%M'), '') if G.hours24 else (now.strftime('%I:%M').lstrip('0'), now.strftime('%p'))
+    wb, ws = d.textlength(hm, font=big), d.textlength(ampm, font=small)
+    gap = 3 * k if ampm else 0
+    x0, base = cx - (wb + gap + ws) / 2, 24 * k
+    d.text((x0, base), hm, font=big, fill=T['text'], anchor='ls')
+    if ampm:
+        d.text((x0 + wb + gap, base), ampm, font=small, fill=T['dim'], anchor='ls')
+    if G.show_date:
+        d.text((cx, TINY_DATE_Y * k), f'{now:%a} {now.day} {now:%b}', font=font(False, round(12 * k)), fill=accent_on(T['card']) if G.hover_date else T['dim'],
+               anchor='mm')
+    x0, x1, y = 14 * k, (TINY_W - 14) * k, (47 if G.show_date else 31) * k
+    d.rounded_rectangle((x0, y - 1.25 * k, x1, y + 1.25 * k), radius=1.25 * k, fill=T['track'])
+    if now.second:
+        d.rounded_rectangle((x0, y - 1.25 * k, x0 + (x1 - x0) * now.second / 59, y + 1.25 * k), radius=1.25 * k, fill=accent_on(T['card']))
 
 
 # ---------- Drawing ----------
@@ -177,14 +390,16 @@ def font(bold, px):
 
 def render():
     """Draw the whole card and return it as PNG bytes.  Drawn at 2x and shrunk, so every edge is antialiased"""
+    if G.size_name == 'Tiny':
+        return render_tiny()
     s = G.scale
     k = s * 2
-    W, H = round(CARD_W * k), round(CARD_H * k)
+    W, H = round(CARD_W * k), round(card_h() * k)
     T = theme_colors()                                                # the theme at the Brightness setting
     im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     d.rounded_rectangle((0, 0, W - 1, H - 1), radius=(RADIUS if SEE_THROUGH else 0) * k, fill=T['card'], outline=T['border'], width=max(1, round(k)))
-    d.ellipse((12 * k, 15 * k, 20 * k, 23 * k), fill=ACCENT)                          # header: a colored dot and the title, the close x in the corner
+    d.ellipse((12 * k, 15 * k, 20 * k, 23 * k), fill=accent_on(T['card']))                          # header: a colored dot and the title, the close x in the corner
     d.text((27 * k, 19 * k), TITLE, font=font(True, round(13 * k)), fill=T['dim'], anchor='lm')
     cx, cy, r = CLOSE_X * k, CLOSE_Y * k, 4.5 * k
     if G.hover:
@@ -193,7 +408,23 @@ def render():
     d.line((cx - r, cy - r, cx + r, cy + r), fill=xc, width=max(1, round(1.6 * k)))
     d.line((cx - r, cy + r, cx + r, cy - r), fill=xc, width=max(1, round(1.6 * k)))
     draw_content(d, k, T, G.value)
-    im = im.resize((round(CARD_W * s), round(CARD_H * s)), Image.LANCZOS)
+    im = im.resize((round(CARD_W * s), round(card_h() * s)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+def render_tiny():
+    """Tiny: the strip - drawn like the card (2x and shrunk), draw_tiny() fills it"""
+    s = G.scale
+    k = s * 2
+    W, H = round(TINY_W * k), round(tiny_h() * k)
+    T = theme_colors()
+    im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=(min(RADIUS, tiny_h() / 2) if SEE_THROUGH else 0) * k, fill=T['card'], outline=T['border'], width=max(1, round(k)))
+    draw_tiny(d, k, T, G.value)
+    im = im.resize((round(TINY_W * s), round(tiny_h() * s)), Image.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, 'PNG')
     return buf.getvalue()
@@ -210,15 +441,68 @@ def redraw(window):
 
 
 def keep_going(window, event, values):
-    """While the Brightness panel is open the card keeps updating and hovering; anything else closes the panel and goes to the main loop"""
+    """While the Brightness panel is open the card keeps updating, hovering and changing size; anything else closes the panel and goes to the main loop"""
     if event == sg.EVENT_TIMER:
         refresh(window)
+    elif event == K_SIZE_STEP:                                                    # Ctrl + mouse wheel - the panel stays open; the menu is rebuilt after it
+        set_size(window, size_step(G.size_name, values[event]))
+    elif event == K_UPDATE_TICK:                                                  # busy: a newer version waits until the panel closes
+        update_tick(window, False, True, update_colors())
     elif event == K_HOVER:
         G.hover = values[K_HOVER]
+        redraw(window)
+    elif event == K_HOVER_DATE:
+        G.hover_date = values[K_HOVER_DATE]
         redraw(window)
     else:
         return False
     return True
+
+
+# --- STARTUP: start with Windows - the same block in every card widget (master copy in modern_widget_recipe.md) ---
+# Tray apps have their own copy that adds --tray (tray_app_recipe.md); the shortcut is made the same way.  The program supplies APP_NAME (the shortcut's
+# name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC, so each PC's shortcut points at that PC's copy.
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows: make the shortcut (pythonw "<this file>") or remove it.  icon = the program's PNG (base64): it goes beside the
+        program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\"';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
 
 
 # ---------- Window ----------
@@ -226,13 +510,17 @@ def make_menu(on_top, opacity):
     """Right-click menu with a check mark on the current choices"""
     tick = lambda on: '✓ ' if on else '    '
     theme = lambda n: f'{tick(n == G.theme)}{n}::{KT_THEME(n)}'
-    return ['', [f'{tick(on_top)}Keep on top::{K_TOP}',                # every label starts with a tick or the same width of spaces, so they line up
+    return ['', [f'    Calendar...  (C)::{K_CALENDAR}',
+                 f'{tick(on_top)}Keep on top::{K_TOP}',                # every label starts with a tick or the same width of spaces, so they line up
                  f'{tick(G.hours24)}24-hour time::{K_24H}',
+                 f'{tick(G.show_date)}Show the date::{K_DATE}',
+                 *([f'{tick(startup_on())}Start with Windows::{K_STARTUP}'] if sg.running_windows() else []),
                  '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
                  f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
+                 *accent_menu(tick),
                  '    Size', [f'{tick(n == G.size_name)}{n}::{KT_SIZE(n)}' for n in SIZES],
                  '    Opacity', [f'{tick(p == opacity)}{p}%::{KT_OPACITY(p)}' for p in OPACITIES],
-                 '---', '    Edit Me::Edit Me', '    Version::Version', f'    Exit::{K_EXIT}']]
+                 '---', '    Edit Me::Edit Me', f'    Version {VERSION}::Version', *update_menu(tick), f'    Exit::{K_EXIT}']]
 
 
 def menu_colors():
@@ -256,6 +544,31 @@ def theme_swatch(name):
     return G.swatches[(name, G.bright)]
 
 
+def menu_arrows(menu, dark):
+    """ Windows draws a sub-menu's arrow in Windows' own menu-text color (black, white only on the lit row) whatever the menu's colors, so on a dark
+        menu it can't be seen (Mike, 10-Nov).  This puts a › in the menu's own text color at the right end of each sub-menu's label instead.  Windows
+        and dark menus only - a light menu shows Windows' arrow, and Linux / Mac draw theirs in the menu's colors.  Safe to call again """
+    if not (dark and sg.running_windows()) or menu.index('end') is None:
+        return
+    f = tk.font.Font(root=menu, font=menu.cget('font'))
+    labels = {}
+    for i in range(menu.index('end') + 1):
+        if menu.type(i) in ('command', 'cascade', 'checkbutton', 'radiobutton'):
+            label = menu.entrycget(i, 'label')
+            labels[i] = label.rstrip(' \u2009›') if menu.type(i) == 'cascade' and label.endswith('›') else label
+    cascades = [i for i in labels if menu.type(i) == 'cascade']
+    if not cascades:
+        return
+    end = max(f.measure(text) for text in labels.values()) + f.measure('      ›')       # the arrows line up a little past the longest label
+    for i in cascades:
+        label = labels[i] + '  '
+        while f.measure(label + ' ›') <= end:
+            label += ' '
+        while f.measure(label + '\u2009›') <= end:                                       # thin spaces for the last few pixels
+            label += '\u2009'
+        menu.entryconfigure(i, label=label + '›')
+
+
 def style_menus(window):
     """tk draws menus Windows-gray; recolor the right-click menu and its sub-menus in the card's colors, flat and compact, with a chip beside each theme name"""
     bg, fg = menu_colors()
@@ -270,6 +583,7 @@ def style_menus(window):
                 if first_light and is_light(THEMES[name]['card']):
                     menu.entryconfigure(i, columnbreak=1)                     # the light themes get a column of their own
                     first_light = False
+        menu_arrows(menu, not is_light(bg))                                    # sub-menu arrows you can see on a dark menu
         for child in menu.winfo_children():
             if isinstance(child, tk.Menu):
                 style(child)
@@ -282,29 +596,175 @@ def apply_menu(window, on_top, opacity):
     style_menus(window)
 
 
+def set_size(window, name):
+    """Right-click > Size or Ctrl + mouse wheel: the card drawn at that size (Tiny = the strip), its top-left corner kept, on its monitor.
+       False if it was that size already"""
+    if name == G.size_name or name not in SIZES:
+        return False
+    G.size_name, G.hover = name, False
+    G.scale = max(1.0, window.TKroot.winfo_fpixels('1i') / 96) * SIZES[name]
+    sg.user_settings_set_entry(K_SIZE, name)
+    redraw(window)
+    keep_on_monitor(window)
+    return True
+
+
+def update_colors():
+    """The New version pop-up in the card's own colors: background, text, button"""
+    T = theme_colors()
+    return T['card'], T['text'], C_MENU_SEL
+
+
 def bind_mouse(window):
     """Hover highlight and click on the close x.  grab_anywhere already handles dragging; these bindings are added alongside it"""
     widget = window[K_IMAGE].Widget
 
-    def over_close(e):
-        return math.hypot(e.x - CLOSE_X * G.scale, e.y - CLOSE_Y * G.scale) <= CLOSE_R * G.scale
+    def over_close(e):                                                          # Tiny has no close x
+        return G.size_name != 'Tiny' and math.hypot(e.x - CLOSE_X * G.scale, e.y - CLOSE_Y * G.scale) <= CLOSE_R * G.scale
+
+    def over_date(e):                                                           # the date line - a click there opens the calendar
+        if not G.show_date:
+            return False
+        tiny = G.size_name == 'Tiny'
+        return 8 * G.scale <= e.x <= ((TINY_W if tiny else CARD_W) - 8) * G.scale and abs(e.y - (TINY_DATE_Y if tiny else CARD_DATE_Y) * G.scale) <= 9 * G.scale
 
     def motion(e):
         if over_close(e) != G.hover:
             window.write_event_value(K_HOVER, over_close(e))
+        if over_date(e) != G.hover_date:
+            widget.configure(cursor='hand2' if over_date(e) else '')
+            window.write_event_value(K_HOVER_DATE, over_date(e))
 
     def press(e):
-        G.press = (e.x, e.y)
+        G.press = (e.x_root, e.y_root)                                          # the screen: a drag moves the card with the mouse, so e.x / e.y hardly change
 
     def release(e):
-        if G.press and over_close(e) and math.hypot(e.x - G.press[0], e.y - G.press[1]) < 4:        # a click, not a drag that ended on the x
+        click = G.press and math.hypot(e.x_root - G.press[0], e.y_root - G.press[1]) < 4      # a click, not a drag that ended on the x or the date
+        if click and over_close(e):
             window.write_event_value(K_CLOSE, None)
+        elif click and over_date(e):
+            window.write_event_value(K_CALENDAR, None)
         G.press = None
 
+    def leave(e):
+        widget.configure(cursor='')
+        if G.hover:
+            window.write_event_value(K_HOVER, False)
+        if G.hover_date:
+            window.write_event_value(K_HOVER_DATE, False)
+
     widget.bind('<Motion>', motion, add='+')
-    widget.bind('<Leave>', lambda e: window.write_event_value(K_HOVER, False) if G.hover else None, add='+')
+    widget.bind('<Leave>', leave, add='+')
     widget.bind('<ButtonPress-1>', press, add='+')
     widget.bind('<ButtonRelease-1>', release, add='+')
+
+
+# --- SIZE STEPS: the same block in every card widget (master copy in modern_widget_recipe.md) - Tiny / Small / Medium / Large and Ctrl + mouse wheel ---
+# Right-click > Size, or Ctrl + mouse wheel anywhere over the widget: up = a size bigger, down = smaller, stopping at the ends; remembered (-SIZE-).
+# Tiny is the widget collapsed to one small strip with only its one reading (the program draws it, with no close x - right-click > Exit or Alt-F4 close it);
+# Small / Medium / Large are the card at 0.8 / 1.0 / 1.3.  A new size keeps the card's top-left corner where it was, and the card on its monitor.
+# The program supplies G.size_name; on K_SIZE_STEP it sets size_step(G.size_name, values[K_SIZE_STEP]) the way its Size menu does, then keep_on_monitor().
+SIZES = {'Tiny': 1.0, 'Small': 0.8, 'Medium': 1.0, 'Large': 1.3}  # the scale each size is drawn at - Tiny's strip has its own, smaller geometry
+K_SIZE = '-SIZE-'                                                 # settings-file entry, and the start of the Size menu's keys
+KT_SIZE = lambda name: f'{K_SIZE}{name}'
+K_SIZE_STEP = '-SIZE STEP-'                                       # Ctrl + mouse wheel over the widget - value: +1 = a size bigger, -1 = smaller
+
+
+def size_step(name, step):
+    """The size one step bigger (+1) or smaller (-1) than name, stopping at Tiny and Large"""
+    names = list(SIZES)
+    i = names.index(name) if name in names else names.index('Medium')
+    return names[max(0, min(len(names) - 1, i + step))]
+
+
+def bind_size_wheel(window):
+    """Ctrl + mouse wheel anywhere over the window -> K_SIZE_STEP.  Bound on the window itself, so every part of it passes it on.  Linux sends the wheel
+       as Button-4 / 5 - on Windows those are the mouse's Back / Forward buttons, so they are bound only elsewhere"""
+    root = window.TKroot
+    root.bind('<Control-MouseWheel>', lambda e: window.write_event_value(K_SIZE_STEP, 1 if e.delta > 0 else -1), add='+')
+    if not sg.running_windows():
+        root.bind('<Control-Button-4>', lambda e: window.write_event_value(K_SIZE_STEP, 1), add='+')
+        root.bind('<Control-Button-5>', lambda e: window.write_event_value(K_SIZE_STEP, -1), add='+')
+
+
+def work_area(window, x, y):
+    """The usable part (no taskbar) of the monitor that point x, y is on: left, top, right, bottom"""
+    if sg.running_windows():
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD)]
+            user32 = ctypes.WinDLL('user32')
+            user32.MonitorFromPoint.argtypes, user32.MonitorFromPoint.restype = (wintypes.POINT, wintypes.DWORD), wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.POINTER(MONITORINFO))
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if user32.GetMonitorInfoW(user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2), ctypes.byref(info)):      # 2 = the nearest monitor
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    root = window.TKroot
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
+
+def keep_on_monitor(window):
+    """After a size change: the top-left corner stays where it is, unless the card now runs past its monitor's right or bottom edge - then it slides back"""
+    window.refresh()
+    (x, y), (w, h) = window.current_location(), window.size
+    left, top, right, bottom = work_area(window, x, y)
+    nx, ny = max(left, min(x, right - w)), max(top, min(y, bottom - h))
+    if (nx, ny) != (x, y):
+        window.move(nx, ny)
+# --- end SIZE STEPS ---
+
+
+# --- ACCENT: the same block in every card widget (master copy in modern_widget_recipe.md) - right-click > Accent, remembered (-ACCENT-) ---
+# The accent colors the dot by the title and the widget's main bar / ring / line; colors that carry meaning (load, status, warnings) stay as they are.
+# The program supplies ACCENTS (name -> '#rrggbb', its default first; None = 'Follows load', only where the color can follow a load), ACCENT_DEFAULT,
+# G.accent, mix() and is_light(), and imports colorchooser (from tkinter import colorchooser).
+ACCENT_ANY = 'Any...'                                             # the last Accent item: the color dialog
+K_ACCENT = '-ACCENT-'                                             # settings-file entry ('#rrggbb', None = follows the load), and the start of the Accent menu's keys
+KT_ACCENT = lambda name: f'{K_ACCENT}{name}'
+
+
+def load_accent():
+    """The saved accent - ACCENT_DEFAULT the first time, or if what was saved is not a color"""
+    c = sg.user_settings_get_entry(K_ACCENT, ACCENT_DEFAULT)
+    if c is None:
+        return None if None in ACCENTS.values() else ACCENT_DEFAULT
+    ok = isinstance(c, str) and len(c) == 7 and c[0] == '#' and all(ch in '0123456789abcdefABCDEF' for ch in c[1:])
+    return c if ok else ACCENT_DEFAULT
+
+
+def accent_on(card, color=None):
+    """The accent as drawn on a card of color card (color = what it is right now when it follows the load): a preset - or the load color - a shade
+       darker on a light card, like the other status colors; a color picked in the Any... dialog exactly as picked"""
+    color = color or G.accent
+    return mix(color, '#000000', 0.18) if is_light(card) and G.accent in ACCENTS.values() else color
+
+
+def accent_menu(tick):
+    """The Accent sub-menu for make_menu(): its label and its items - the presets, then Any..., a tick on the one in use"""
+    current = next((n for n, c in ACCENTS.items() if c == G.accent), ACCENT_ANY)
+    return ['    Accent', [f'{tick(n == current)}{n}::{KT_ACCENT(n)}' for n in list(ACCENTS) + [ACCENT_ANY]]]
+
+
+def choose_accent(window, menu_key, now):
+    """Right-click > Accent > an item: G.accent set and saved.  Any... opens the color dialog on now (the color shown at the moment).  False if cancelled"""
+    name = menu_key[len(K_ACCENT):]
+    if name == ACCENT_ANY:
+        picked = colorchooser.askcolor(color=now, parent=window.TKroot, title='Accent color')[1]
+        if not picked:
+            return False
+        G.accent = picked
+    else:
+        G.accent = ACCENTS.get(name, ACCENT_DEFAULT)
+    sg.user_settings_set_entry(K_ACCENT, G.accent)
+    return True
+# --- end ACCENT ---
 
 
 # --- BRIGHTNESS: the same block in every card widget (master copy in modern_widget_recipe.md) - the program darkens or lightens its own theme ---
@@ -527,17 +987,177 @@ def brightness_panel(card, keep_going):
 # --- end BRIGHTNESS ---
 
 
+# ---------- The calendar: a click on the date (or C, or right-click > Calendar...) opens this month under the card ----------
+FIRST_WEEKDAY = calendar.SUNDAY                                   # the first column - calendars in the US start on Sunday
+CAL_W, CAL_H = 232, 262                                           # the calendar panel, in design pixels
+CAL_HEAD_Y, CAL_DAYS_Y = 24, 56                                   # the middles of the month row (< November 2026 >) and the weekday row
+CAL_CELL_W, CAL_CELL_H, CAL_GRID_Y = 29, 26, 82                   # one day's box; the middle of the first week's row (6 rows, always)
+CAL_ARROW_X, CAL_PILL_Y = 26, 240                                 # the < > buttons' distance from the sides; the middle of the Today / Close pills
+K_CAL_IMAGE, K_CAL_CLICK, K_CAL_HOVER = '-CAL IMAGE-', '-CAL CLICK-', '-CAL HOVER-'   # values: 'prev' | 'next' | 'today' | 'close' | None
+K_CAL_STEP, K_CAL_CLOSE = '-CAL STEP-', '-CAL CLOSE-'             # value: -1 / +1 month;  Escape, Enter, C or the mouse's Back button
+
+
+def cal_scale():
+    """The calendar is drawn at the screen's scaling - never smaller than the Medium card, so Tiny and Small still get readable days"""
+    return G.scale / SIZES[G.size_name] * max(1.0, SIZES[G.size_name])
+
+
+def cal_part(x, y):
+    """'prev', 'next', 'today', 'close' or None at calendar pixel (x, y)"""
+    s = cal_scale()
+    x, y = x / s, y / s
+    if abs(y - CAL_HEAD_Y) <= 14:
+        if abs(x - CAL_ARROW_X) <= 15:
+            return 'prev'
+        if abs(x - (CAL_W - CAL_ARROW_X)) <= 15:
+            return 'next'
+    if abs(y - CAL_PILL_Y) <= PILL_H / 2:
+        if 18 <= x <= 18 + PILL_W:
+            return 'today'
+        if CAL_W - 18 - PILL_W <= x <= CAL_W - 18:
+            return 'close'
+    return None
+
+
+def render_calendar(year, month, today, hover):
+    """The calendar panel, drawn like the card and in its colors: the month with < > to step, the weekdays, 6 weeks (days of the months around it
+       faded), today in a disc of the accent, and the Today / Close pills of the Brightness panel"""
+    s = cal_scale()
+    k = s * 2
+    T = theme_colors()
+    W, H = round(CAL_W * k), round(CAL_H * k)
+    im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=(RADIUS if SEE_THROUGH else 0) * k, fill=T['card'], outline=T['border'], width=max(1, round(k)))
+    for part, x, sign in (('prev', CAL_ARROW_X, 1), ('next', CAL_W - CAL_ARROW_X, -1)):         # the < > buttons: a chevron, a soft disc behind it when hovered
+        if hover == part:
+            d.ellipse(((x - 13) * k, (CAL_HEAD_Y - 13) * k, (x + 13) * k, (CAL_HEAD_Y + 13) * k), fill=mix(T['text'], T['card'], 0.82))
+        d.line([((x + 3 * sign) * k, (CAL_HEAD_Y - 6) * k), ((x - 3 * sign) * k, CAL_HEAD_Y * k), ((x + 3 * sign) * k, (CAL_HEAD_Y + 6) * k)],
+               fill=T['text'], width=max(1, round(2 * k)), joint='curve')
+    d.text((CAL_W / 2 * k, CAL_HEAD_Y * k), f'{calendar.month_name[month]} {year}', font=font(True, round(15 * k)), fill=T['text'], anchor='mm')
+    col_x = lambda c: (CAL_W - 7 * CAL_CELL_W) / 2 + (c + 0.5) * CAL_CELL_W
+    for c in range(7):
+        d.text((col_x(c) * k, CAL_DAYS_Y * k), calendar.day_abbr[(FIRST_WEEKDAY + c) % 7][:2], font=font(True, round(12 * k)), fill=T['dim'], anchor='mm')
+    weeks = calendar.Calendar(FIRST_WEEKDAY).monthdatescalendar(year, month)
+    while len(weeks) < 6:                                                               # always 6 rows, so the panel never changes size
+        weeks.append([day + datetime.timedelta(days=7) for day in weeks[-1]])
+    accent = accent_on(T['card'])
+    on_accent = '#ffffff' if luminance(accent) < 0.45 else '#000000'
+    faded = mix(T['dim'], T['card'], 0.45)
+    for r, week in enumerate(weeks):
+        for c, day in enumerate(week):
+            x, y = col_x(c) * k, (CAL_GRID_Y + r * CAL_CELL_H) * k
+            color = T['text'] if day.month == month else faded
+            if day == today:
+                d.ellipse((x - 12 * k, y - 12 * k, x + 12 * k, y + 12 * k), fill=accent)
+                color = on_accent
+            d.text((x, y), str(day.day), font=font(day == today, round(13 * k)), fill=color, anchor='mm')
+    this_month = (year, month) == (today.year, today.month)
+    for part, px, fill, color in (('today', 18, T['track'], T['dim'] if this_month else T['text']), ('close', CAL_W - 18 - PILL_W, C_PANEL_DONE, '#ffffff')):
+        if hover == part:
+            fill = shade(fill, '#ffffff', 0.15) if part == 'close' else shade(T['text'], T['card'], 0.78)
+        d.rounded_rectangle((px * k, (CAL_PILL_Y - PILL_H / 2) * k, (px + PILL_W) * k, (CAL_PILL_Y + PILL_H / 2) * k), radius=PILL_H / 2 * k, fill=fill)
+        d.text(((px + PILL_W / 2) * k, CAL_PILL_Y * k), part.capitalize(), font=font(True, round(12 * k)), fill=color, anchor='mm')
+    im = im.resize((round(CAL_W * s), round(CAL_H * s)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+def calendar_panel(card, keep_going):
+    """The date clicked, C, or right-click > Calendar...: this month next to the card, today marked in the accent.  < > or the arrow keys, Page Up /
+       Page Down and the mouse wheel change the month, Today or Home comes back to this one; Close, Escape, Enter, C, the mouse's Back button or a click
+       on the date again close it.  Drag it by anything that isn't a button.  keep_going(card, event, values) handles the card's own events meanwhile;
+       any other card event closes the calendar and is returned for the main loop (None otherwise) - as the Brightness panel does"""
+    today = datetime.date.today()
+    shown = (today.year, today.month)
+    s = cal_scale()
+    w, h = round(CAL_W * s), round(CAL_H * s)
+    (x, y), (cw, ch) = card.current_location(), card.size
+    left, top, right, bottom = work_area(card, x, y)
+    px = max(left, min(x + cw - w, right - w))                                          # right edges lined up (the widgets sit at the right), on the monitor
+    py = y + ch + 6 if y + ch + 6 + h <= bottom else max(top, y - h - 6)               # under the card, or above it near the bottom
+    cal = sg.Window('Calendar', [[sg.Image(data=render_calendar(*shown, today, None), key=K_CAL_IMAGE, background_color=TRANSPARENT, pad=(0, 0))]],
+                    no_titlebar=True, keep_on_top=True, margins=(0, 0), element_padding=(0, 0), background_color=TRANSPARENT, location=(px, py), icon=ICON,
+                    transparent_color=TRANSPARENT if SEE_THROUGH else None, finalize=True)
+    widget, mouse = cal[K_CAL_IMAGE].Widget, {'press': None, 'hover': None}
+
+    def press(e):
+        mouse['press'] = (e.x_root, e.y_root, cal_part(e.x, e.y), cal.TKroot.winfo_x(), cal.TKroot.winfo_y())
+
+    def drag(e):                                                                        # anywhere off the buttons drags the calendar
+        p = mouse['press']
+        if p and p[2] is None:
+            cal.TKroot.geometry(f'+{p[3] + e.x_root - p[0]}+{p[4] + e.y_root - p[1]}')
+
+    def release(e):
+        p, mouse['press'] = mouse['press'], None
+        if p and p[2] and p[2] == cal_part(e.x, e.y) and math.hypot(e.x_root - p[0], e.y_root - p[1]) < 4:       # a click on a button, not a drag
+            cal.write_event_value(K_CAL_CLICK, p[2])
+
+    def hover(part):
+        if part != mouse['hover']:
+            mouse['hover'] = part
+            widget.configure(cursor='hand2' if part else '')
+            cal.write_event_value(K_CAL_HOVER, part)
+
+    widget.bind('<ButtonPress-1>', press, add='+')
+    widget.bind('<B1-Motion>', drag, add='+')
+    widget.bind('<ButtonRelease-1>', release, add='+')
+    widget.bind('<Motion>', lambda e: hover(cal_part(e.x, e.y)), add='+')
+    widget.bind('<Leave>', lambda e: hover(None), add='+')
+    widget.bind('<MouseWheel>', lambda e: cal.write_event_value(K_CAL_STEP, -1 if e.delta > 0 else 1), add='+')     # Windows: wheel up = the month before
+    if sg.running_windows():
+        widget.bind('<Button-4>', lambda e: cal.write_event_value(K_CAL_CLOSE, None), add='+')                       # the mouse's Back button on Windows
+    else:
+        widget.bind('<Button-4>', lambda e: cal.write_event_value(K_CAL_STEP, -1), add='+')                          # Linux: the wheel
+        widget.bind('<Button-5>', lambda e: cal.write_event_value(K_CAL_STEP, 1), add='+')
+        widget.bind('<ButtonPress>', lambda e: cal.write_event_value(K_CAL_CLOSE, None) if e.num == 8 else None, add='+')   # Linux Back button
+    for seq, n in (('<Left>', -1), ('<Up>', -1), ('<Prior>', -1), ('<Right>', 1), ('<Down>', 1), ('<Next>', 1)):
+        cal.TKroot.bind(seq, lambda e, n=n: cal.write_event_value(K_CAL_STEP, n))
+    cal.TKroot.bind('<Home>', lambda e: cal.write_event_value(K_CAL_CLICK, 'today'))
+    for seq in ('<Escape>', '<Return>', '<Key-c>', '<Key-C>', '<Alt-Left>'):
+        cal.TKroot.bind(seq, lambda e: cal.write_event_value(K_CAL_CLOSE, None))
+    cal.force_focus()
+    pending, opened = None, time.monotonic()
+    while True:
+        win, event, values = sg.read_all_windows()
+        if win is card and event == K_CALENDAR and time.monotonic() - opened < 0.6:    # the second click of a double-click on the date: it stays open
+            continue
+        if win is card:                                                                 # the card keeps ticking while the calendar is open
+            if keep_going(card, event, values):
+                if datetime.date.today() != today:                                     # midnight went by: today's disc moves
+                    today = datetime.date.today()
+                    cal[K_CAL_IMAGE].update(data=render_calendar(*shown, today, mouse['hover']))
+                continue
+            pending = (event, values)
+            break
+        if event in (sg.WINDOW_CLOSED, K_CAL_CLOSE) or (event == K_CAL_CLICK and values[event] == 'close'):
+            break
+        if event == K_CAL_STEP or (event == K_CAL_CLICK and values[event] in ('prev', 'next')):
+            months = shown[0] * 12 + shown[1] - 1 + (values[event] if event == K_CAL_STEP else (-1 if values[event] == 'prev' else 1))
+            shown = (months // 12, months % 12 + 1)
+        elif event == K_CAL_CLICK and values[event] == 'today':
+            shown = (today.year, today.month)
+        cal[K_CAL_IMAGE].update(data=render_calendar(*shown, today, mouse['hover']))
+    cal.close()
+    return pending
+
+
 def main():
+    Update.default = 'auto'                                                       # a desktop widget: a new version restarts it by itself
     sg.set_options(dpi_awareness=True)
     sg.user_settings_filename(filename='clock_widget.json')
     G.size_name = sg.user_settings_get_entry(K_SIZE, 'Medium')
     G.size_name = G.size_name if G.size_name in SIZES else 'Medium'
     G.theme = sg.user_settings_get_entry(K_THEME, 'Toybox')
     G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')           # a renamed theme or an unknown one
+    G.accent = load_accent()
     G.bright = sg.user_settings_get_entry(K_BRIGHT, 0)
     G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
     on_top = sg.user_settings_get_entry(K_TOP, False)
     G.hours24 = bool(sg.user_settings_get_entry(K_24H, False))
+    G.show_date = bool(sg.user_settings_get_entry(K_DATE, True))
     opacity = sg.user_settings_get_entry(K_OPACITY, 100)
     opacity = opacity if opacity in OPACITIES else 100
     G.value = read_value()
@@ -552,14 +1172,29 @@ def main():
     G.scale = max(1.0, window.TKroot.winfo_fpixels('1i') / 96) * SIZES[G.size_name]       # 2.0 on a 200% Windows display
     redraw(window)
     bind_mouse(window)
+    bind_size_wheel(window)
     window.bind('<Escape>', K_EXIT)
+    window.bind('<Key-c>', K_CALENDAR)
+    window.bind('<Key-C>', K_CALENDAR)
     window.timer_start(REFRESH_MS)
+    window.timer_start(3000, key=K_UPDATE_TICK)                                   # the UPDATE block: a newer version of this file?
 
     pending = None                                                                         # a card event that came in while the Brightness panel was open
     while True:
         event, values = pending or window.read()
         pending = None
         menu_key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event             # right-click items come back as 'label::key'
+        if update_event(event):                                                  # right-click > Restart, or a New versions choice
+            if Update.restart:
+                break
+            apply_menu(window, on_top, opacity)
+            continue
+        if event == K_UPDATE_TICK:                                               # every 3 s: has a newer version been saved over this file?
+            if update_tick(window, False, False, update_colors()):
+                apply_menu(window, on_top, opacity)
+            if Update.restart:
+                break
+            continue
         if menu_key in (K_EXIT, sg.WINDOW_CLOSED, K_CLOSE):
             break
         if event == sg.EVENT_TIMER:
@@ -567,6 +1202,14 @@ def main():
         elif event == K_HOVER:
             G.hover = values[K_HOVER]
             redraw(window)
+        elif event == K_HOVER_DATE:
+            G.hover_date = values[K_HOVER_DATE]
+            redraw(window)
+        elif menu_key == K_CALENDAR:
+            pending = calendar_panel(window, keep_going)
+            key = pending[0].split('::')[-1] if pending and isinstance(pending[0], str) else None
+            if key == K_CALENDAR:                                                 # the date clicked again (or C, or the menu item): that closes it
+                pending = None
         elif menu_key == K_TOP:
             on_top = not on_top
             window.keep_on_top_set() if on_top else window.keep_on_top_clear()
@@ -577,12 +1220,24 @@ def main():
             sg.user_settings_set_entry(K_24H, G.hours24)
             redraw(window)
             apply_menu(window, on_top, opacity)
-        elif isinstance(menu_key, str) and menu_key.startswith(K_SIZE):
-            G.size_name = menu_key[len(K_SIZE):]
-            G.scale = max(1.0, window.TKroot.winfo_fpixels('1i') / 96) * SIZES[G.size_name]
-            sg.user_settings_set_entry(K_SIZE, G.size_name)
+        elif menu_key == K_DATE:
+            G.show_date = not G.show_date
+            sg.user_settings_set_entry(K_DATE, G.show_date)
             redraw(window)
+            keep_on_monitor(window)                                               # the card changes height - its top-left corner stays, on its monitor
             apply_menu(window, on_top, opacity)
+        elif menu_key == K_STARTUP:
+            error = set_startup(not startup_on(), ICON)
+            if error:
+                sg.popup_error(f'Start with Windows did not work:\n{error}', title=APP_NAME, keep_on_top=True, non_blocking=True)
+            apply_menu(window, on_top, opacity)
+        elif event == K_SIZE_STEP or (isinstance(menu_key, str) and menu_key.startswith(K_SIZE)):         # Ctrl + mouse wheel, or right-click > Size
+            if set_size(window, size_step(G.size_name, values[event]) if event == K_SIZE_STEP else menu_key[len(K_SIZE):]):
+                apply_menu(window, on_top, opacity)
+        elif isinstance(menu_key, str) and menu_key.startswith(K_ACCENT):
+            if choose_accent(window, menu_key, G.accent):                                               # Any...: the color dialog - Cancel keeps the accent
+                redraw(window)
+                apply_menu(window, on_top, opacity)
         elif isinstance(menu_key, str) and menu_key.startswith(K_THEME):
             G.theme = menu_key[len(K_THEME):]
             sg.user_settings_set_entry(K_THEME, G.theme)
@@ -599,10 +1254,14 @@ def main():
             redraw(window)
             apply_menu(window, on_top, opacity)
         elif menu_key == 'Version':
-            sg.popup_scrolled(__file__, f'{APP_NAME}  version {VERSION}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
+            sg.popup_scrolled(__file__, f'{APP_NAME}  version {VERSION}', f'Settings:  {sg.user_settings_filename()}',
+                              f'Start with Windows:  {startup_link() if startup_on() else "off"}',
+                              f'New versions:  {dict(UPDATE_CHOICES)[update_mode()]}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 13))
         elif menu_key == 'Edit Me':
             sg.execute_editor(__file__)
     window.close()
+    if Update.restart:                                                                     # right-click > Restart, or a newer version: a fresh copy, as it was
+        restart_self()
 
 
 if __name__ == '__main__':

@@ -38,6 +38,39 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.58  12-Nov-2026     Claude: right-click > Start with Windows in every dock (program standards; Windows only, off until ticked).
+                            ONE shortcut, "PSG Dock.lnk" in the Startup folder, runs psgdock.pyw like the taskbar pin, so the docks that
+                            were open come back after a reboot; unticking removes it.  The STARTUP block from the widget recipe.
+    2.2.57  11-Nov-2026     Claude: right-click > Docks > Delete this dock... - the match for New dock... (Mike asked).  It asks first,
+                            copies the dock's two files to a backup, closes the dock and removes them.  The main dock can't be deleted.
+    2.2.56  11-Nov-2026     Claude: the docks are one set.  psgdock.pyw with no --dock (the taskbar pin) opens every dock that was open
+                            last time and isn't running - never a second copy; a dock closed on its own (Exit, the Panel's x) is left out
+                            next time.  Right-click > Close all docks / Restart all docks (each comes back at its place).  The UPDATE
+                            block (program standards, 11-Nov): a newer psgdock.pyw, settled and compiling, makes the first open dock ask
+                            once - Restart now restarts the whole set; until then the menu says the version is ready.
+    2.2.55  11-Nov-2026     Claude: right-click a heading > Start all N programs - every program and link under it starts, a quarter
+                            second apart, each hopping / glowing as it goes (Mike: start all my widgets at once, like a batch file).
+                            Panel heading, Bar section name or stack.  The 2.2.53 menu-emptying timer no longer calls update() (is_closed).
+    2.2.54  11-Nov-2026     Claude: Bar - the controls at its far end (T S M L, the Panel switch, the gear, the hide arrow) tuck into a small
+                            end cap of three dots: point at it, or click it, and they come out past the end - the programs don't move - and
+                            fold when the mouse leaves the bar.  Right-click > Controls: Tucked at the end / Always shown / None (right-click
+                            only), per dock;  not set: tucked when they would take over a fifth of the bar.  The search button stays out.
+    2.2.53  11-Nov-2026     Claude: on Windows the right-click menu has no items between right-clicks (filled on the right-press, emptied a
+                            second after it closes) - something on Mike's PC sends menu commands to windows and Tk ran whichever item had
+                            that command's number.  The red "Stopped a menu command" notice is gone (still logged).  Panel: double-click a
+                            heading to rename it.
+    2.2.52  11-Nov-2026     Claude: drag a program, link or whole section out of the Panel onto another running dock - it lands where that dock
+                            shows its blue line / gap and leaves this one (hold Ctrl to copy).  The docks talk on a local port; each saves only
+                            its own list.
+    2.2.51  11-Nov-2026     Claude: every right-click menu command is checked, not only the themes - one the mouse didn't pass over in the menu
+                            in the last 30 s is stopped (a stray Theme > Indigo came while Mike right-clicked a tray icon); the log names the
+                            window in front and the one under the mouse.
+    2.2.50  11-Nov-2026     Claude: add a heading from the right-click menu - Add a heading... (at the end), a heading's Add a heading here...
+                            (a new section after its own), a program's Add a heading above this... - without opening the Programs window.
+    2.2.49  11-Nov-2026     Claude: fixed 2.2.48 stopping real theme picks - a theme goes through when the mouse passed over it in the menu since
+                            the right-press (on Windows the menu's highlight goes back to Programs... as it closes, at the moment of the click).
+    2.2.48  10-Nov-2026     Claude: a theme change that the mouse didn't pick in the menu is ignored (the dock changed theme by itself twice);
+                            a temporary log of what led up to any theme change - psgdock_theme_log.txt, beside the master copy only.
     2.2.47  09-Nov-2026     Claude: a starter file shows its program's version - a .py / .pyw of a few lines with no version of its own that
                             imports the real program from beside it (the Playground's playground.pyw -> psgplayground/playground.py, the
                             Toybox) shows that program's version, and the versions' refresh watches that file too.
@@ -215,17 +248,151 @@ import json
     Drop an image file onto an entry in the Programs window to use it as that entry's icon.
     Drop a program (.exe, .pyw, .lnk, ...) onto an entry and the path, name and icon are filled in from it.
     Drag an entry by its ☰ grip to change the order - it lifts out and floats with the mouse, the orange slot shows where it will land.
+    In the dock's Panel, double-click a heading to rename it.
+    Bar: on a small dock the controls at its end tuck into three dots - point at them (or click) for them;  right-click > Controls to choose.
+    Right-click a heading > Start all to start every program under it - all your widgets at once.
+    Start psgdock.pyw with no --dock (the taskbar pin) to open every dock you had open;  right-click > Close all docks / Restart all docks.
+    Right-click > Start with Windows (Windows): "PSG Dock.lnk" in your Startup folder runs it like the pin;  its icon is "PSG Dock.ico" in the settings folder.
     Requires:  PySimpleGUI, pillow, psgdnd  (pip install psgdnd)
 
     Copyright 2026_PySimpleGUI
 """
 
-version = '2.2.47'
+VERSION = '2.2.58'
+version = VERSION                                               # (the name the code has always used - VERSION is the one the UPDATE block reads)
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
 WINDOW_SETTINGS_FILENAME = 'psgdock.json'                       # alpha, keep-on-top, window position (was MiniLauncher2.json, named after the old file)
 MAIN_SETTINGS_FILENAME = WINDOW_SETTINGS_FILENAME               # the dock started without a name keeps these two files.  A named dock (--dock "Claude chats") has its own:
 DOCK_PREFIX = 'psgdock_dock_'                                   #   psgdock_dock_claude_chats.json and psgdock_dock_claude_chats_entries.json - set by use_dock()
+
+
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026) - paste unchanged ---
+# Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
+# once a NEWER VERSION has been saved over it and has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts),
+# a program hidden in the tray restarts by itself; a showing one asks with a small pop-up - Restart now / Later (Later after 30 s on its own).
+# Later keeps "Restart - x.y.z is ready" in the menu.  Not the internet: the file itself, which Dropbox brings to every PC.
+# Wiring (see the standards):  menu item  f'{restart_label()}::Restart'  ->  Update.restart = True and end the loop;
+#   on the timer:  new = update_check();  if Update.ready and hidden in the tray: Update.restart = True  (also after a Later)
+#                  elif new: update_offer(window, new, colors) and remake the menu;  if Update.restart: end the loop
+#   at the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+UPDATE_SETTLE = 60
+
+
+class Update:
+    seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
+    ready = ''                        # a newer VERSION saved over this file (settled, compiles)
+    asked = ''                        # the version the pop-up already asked about - not asked again
+    restart = False                   # set -> the main loop ends, then restart_self()
+
+
+def update_check():
+    """ Call every few seconds.  Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only
+        after it has changed and settled """
+    try:
+        mtime = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        return ''
+    if Update.seen is None:
+        Update.seen = (mtime, None)
+    if mtime != Update.seen[0]:
+        Update.seen = (mtime, time.time())
+        return ''
+    if Update.seen[1] is None or time.time() - Update.seen[1] < UPDATE_SETTLE:
+        return ''
+    Update.seen = (mtime, None)                                           # looked at: wait for the next change
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            text = f.read()
+        compile(text, __file__, 'exec')
+        found = re.search(r"^VERSION = '([0-9.]+)'", text, re.M)
+    except (OSError, SyntaxError, ValueError):
+        return ''
+    newer = found and tuple(int(x) for x in found.group(1).split('.')) > tuple(int(x) for x in VERSION.split('.'))
+    if newer and found.group(1) != Update.ready:
+        Update.ready = found.group(1)
+        return Update.ready
+    return ''
+
+
+def restart_label():
+    """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
+    return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
+
+
+def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  colors = (background, text, button)
+        - pass the program's own theme colors.  Sets Update.restart """
+    if new == Update.asked:
+        return
+    Update.asked = new
+    bg, fg, button = colors
+    try:
+        x, y = window.current_location()
+        spot = (x + 20, y + 20)
+    except Exception:
+        spot = (None, None)
+    name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', title='New version', custom_text=('Restart now', 'Later'),
+                      keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot, background_color=bg, text_color=fg,
+                      button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    Update.restart = answer == 'Restart now'
+
+
+def restart_self(extra=()):
+    """ Start this file again with the same arguments (pythonw on Windows - no console).  Call it LAST: after the window, the tray icon and any
+        socket this program listens on are closed, so a one-copy-at-a-time program's new copy finds the way clear """
+    exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = exe if sys.platform.startswith('win') and os.path.isfile(exe) else sys.executable
+    args = [a for a in sys.argv[1:] if a != '--tray'] + list(extra)
+    subprocess.Popen([exe, os.path.abspath(__file__)] + args, cwd=os.path.dirname(os.path.abspath(__file__)))
+# --- end UPDATE ---
+
+
+# --- STARTUP: start with Windows - the same block in every card widget (master copy in modern_widget_recipe.md) ---
+# Tray apps have their own copy that adds --tray (tray_app_recipe.md); the shortcut is made the same way.  The program supplies APP_NAME (the shortcut's
+# name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC, so each PC's shortcut points at that PC's copy.
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows: make the shortcut (pythonw "<this file>") or remove it.  icon = the program's PNG (base64): it goes beside the
+        program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\"';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
 
 
 def migrate_settings():
@@ -283,6 +450,8 @@ class G:
     bounce, flash = {}, {}                                                                    # block_num -> launch bounce start / accent glow end
     drop_index, drop_item, drop_line, drop_open, drop_rows, panel_off = None, None, None, 0.0, [], 0     # programs being dragged over the dock
     menu_target, menu_at = None, None                   # the program / heading a right-click menu was opened on, and where (screen point)
+    menu_gen, head_click = 0, None                      # counts right-presses (an older one's "empty the menu" timer does nothing);  Panel: the last heading clicked, when
+    menu_armed, last_command, cmd_watch, cmd_watched = False, '', None, set()     # temporary (11-Nov): the menu has items now;  the stray-command watch
     api, layered, last_image, keep = None, None, None, {}                                     # Glass (UpdateLayeredWindow), the shown picture, tk images in use
     text, sections, bar_layout = 'Medium', True, 'Icons'                                      # right-click > Text size / Colored sections / Layout (Bar)
     location, legacy_style, default_pt = None, 'Panel', None                                  # this style's floating spot; the style 2.2.19 showed; where the last dock was
@@ -294,6 +463,7 @@ class G:
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
     stack_open, stack_closed, drop_stack = None, None, None                                   # Bar Stacks: the one flown out, the last closed (num, time), a drop aimed at one
     dock_slug, dock_title, mutex = '', APP_NAME, None   # which dock this is: '' = the one started without a name;  its name as shown;  the handle that says it's running
+    leave, ipc_server, settings_dir = None, None, None  # how this dock is leaving: 'one' (on its own), 'all' / 'quit' / 'restart' (the set);  its port;  settings_folder()
     dock_ready = False                                  # dock_title is this dock's own name now (read from its settings)
     link_icons = {}                                     # a link's scheme -> the icon of the app that opens it (made once)
     along = None                                        # docked: where along its edge the dock's middle is (0 .. 1 of the edge) - None = centred.  Saved per style
@@ -302,10 +472,17 @@ class G:
     edge_target, preview, preview_size = None, None, None                                     # a dock dragged near an edge: where it would dock, the highlight showing it
     handle_name = False                                 # right-click > Name on the handle: an auto-hidden dock's handle is a tag with its name
     bubble_section = True                               # Bar: right-click > Section name in the bubble
+    bar_controls = None                                 # Bar: right-click > Controls: 'Tucked' / 'Always' / 'None' - None (not set) = tucked on a small bar
+    tools_open, tools_out = False, 0.0                  # Controls tucked: they are out (or coming out);  how far out, 0 .. 1 (eased by bar_tick)
+    tools_rest, tools_since, tools_shut = None, 0, False     # ...the mouse on the end cap since;  opened by the mouse at;  a click folded them (until it leaves the cap)
+    menu_up = False                                     # the right-click menu is showing (from the right-press until it closes) - tucked controls stay out
     flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
     hide_delay = 0.7                                    # right-click > Hide after: seconds the mouse is away before an auto-hidden dock tucks away
     version_stamps = {}                                 # the versions' refresh: {program path: its file's mtime at the last look}
     starters = {}                                       # a starter file's program: {starter path: the source its version came from}
+    remote_over = False                                 # another dock is dragging something over this one (its line / gap shows here)
+    diag = []                                           # temporary (10-Nov): the last things the dock did, written to the theme log on a theme change
+    menu_hovers = []                                    # [(time, label)] the menu items the mouse passed over since the right-press - <<MenuSelect>>
     version_busy = False                                # a refresh thread is reading versions now
     handle_color = None                                 # right-click > Handle colour: '#rrggbb', or None = the theme's
     handle_custom = None                                # right-click > Handle colour > Custom...: the colour last picked there ('#rrggbb') - its chip in the menu
@@ -344,6 +521,7 @@ K_REFRESH = '-REFRESH-'
 K_IMAGE = '-IMAGE-'                             # the dock is one Image the whole card is drawn into
 K_HOVER = '-HOVER-'                             # the mouse moved onto another part of the dock, value = that part
 K_CLICK = '-CLICK-'                             # a click (not a drag of the dock) on a part of the dock, value = that part
+K_HEAD_RENAME = '-HEAD RENAME-'                 # Panel: a heading double-clicked - Rename, value = (its number, screen point)
 K_STYLE = '-STYLE-'                             # right-click > Style: Panel or Bar (settings entry, and the prefix of the menu keys)
 KT_STYLE = lambda name: f'{K_STYLE}{name}'
 K_PLACE = '-PLACE-'                             # right-click > Position: Floating, Bottom, Top, Left, Right
@@ -360,10 +538,15 @@ K_DOCK = '-DOCK AT-'                            # a dock dragged to an edge and 
 K_FLOAT = '-FLOAT AT-'                          # a docked dock pulled off its edge and let go away from every edge, value = (where it was on the screen, up and down?)
 K_FLOAT_VERTICAL = '-FLOAT VERTICAL-'           # right-click > Floating vertically (a floating Bar)
 K_HANDLE_NAME = '-HANDLE NAME-'                 # right-click > Name on the handle (settings entry too)
+K_BAR_CONTROLS = '-BAR CONTROLS-'               # right-click > Controls (Bar): settings entry, and the prefix of the menu keys
+KT_CONTROLS = lambda name: f'{K_BAR_CONTROLS}{name}'
 K_BUBBLE_SECTION = '-BUBBLE SECTION-'           # right-click > Section name in the bubble (Bar): a program's bubble names its section too (settings entry too)
 K_FLYOUT = '-FLY OUT-'                          # right-click > Fly out: how soon an auto-hidden dock comes out (settings entry, and the prefix of the menu keys)
 K_HIDE_DELAY = '-HIDE AFTER-'                   # right-click > Hide after: how long an auto-hidden dock waits before tucking away (settings entry + menu key prefix)
 K_VERSIONS_FOUND = '-VERSIONS FOUND-'           # the versions' refresh thread: programs whose version changed, value = {block_num: version}
+K_IPC = '-DOCK TALK-'                           # another dock asking (dock-to-dock dragging): value = (request, answer box) - answered in the main loop
+K_DOCK_SENT = '-DOCK SENT-'                     # what was dragged onto another dock: its answer, value = {'ok', 'dock', 'copy', 'nums', 'what'...}
+K_IPC_PORT = '-TALK PORT-'                      # settings: the local port this dock answers on, so the other docks can find it
 K_HANDLE_COLOR = '-HANDLE COLOR-'               # right-click > Handle colour (settings entry: '#rrggbb' or None = the theme's;  the prefix of the menu keys + the colour's name)
 K_HANDLE_CUSTOM = '-HANDLE CUSTOM-'             # right-click > Handle colour > Custom... (settings entry too: the colour last picked there)
 K_HEAD_COLORS = '-HEADING COLORS-'              # settings entry: {heading name: '#rrggbb'} from a heading's right-click > Colour (each dock its own)
@@ -389,9 +572,17 @@ K_DOCK_NAME = '-DOCK NAME-'                     # settings entry: this dock's na
 K_OPEN_DOCK = '-OPEN DOCK-'                     # right-click > Docks > a dock: the prefix of the keys, + its file name part ('' = the dock started without a name)
 K_NEW_DOCK = '-NEW DOCK-'                       # right-click > Docks > New dock...
 K_RENAME_DOCK = '-RENAME DOCK-'                 # right-click > Docks > Rename this dock...
+K_DELETE_DOCK = '-DELETE DOCK-'                 # right-click > Docks > Delete this dock... (not the main dock)
 K_DOCK_SHORTCUT = '-DOCK SHORTCUT-'             # right-click > Docks > Desktop shortcut for this dock
+K_CLOSE_ALL = '-CLOSE ALL DOCKS-'               # right-click > Close all docks (the pin opens them all again);  Restart all docks is 'Restart'
+K_IN_SET = '-IN THE SET-'                       # settings: this dock was open (True) / closed on its own (False) - the pin opens the ones that were open
+K_UPDATE_FOUND = '-NEW VERSION-'                # a newer psgdock.pyw was saved over this one (the UPDATE block), value = its version
+UPDATE_POLL_MS = 5000                           # how often a dock looks at its own file for a newer version (one stat)
 K_ADD_LINK = '-ADD LINK-'                       # right-click > Add a link... (a web page, a claude:// chat ...)
 K_E_ADD_LINK = '-E ADD LINK-'                   # a heading's menu: Add a link here...
+K_ADD_HEAD = '-ADD A HEADING-'                  # right-click > Add a heading... (at the end of the list)
+K_E_ADD_HEAD = '-E ADD A HEADING-'              # a heading's menu: Add a heading here... (after its section);  a program's: Add a heading above this...
+K_E_START_ALL = '-E START ALL-'                 # a heading's menu: Start all N programs - every program and link under it, one after another
 K_SEARCH = '-SEARCH-'                           # right-click > Search > Search box / Search button (settings entry too: True / False - not there = by itself)
 K_SEARCH_MODE = '-SEARCH MODE-'                 # right-click > Search > Hide / Dim (settings entry, and the prefix of the menu keys)
 K_FIND_OPEN = '-FIND OPEN-'                     # a letter typed while the Bar has the keyboard: its search flies out with it, value = the letter
@@ -511,12 +702,14 @@ def make_menu():
         sizes += ['---', f'!✓ {round(G.size * 100)}%  (dragged across S M L)']
     other = 'Bar' if G.style == 'Panel' else 'Panel'
     docks = [f'{tick(slug == G.dock_slug)}{menu_label(name)}{"  (open)" if slug != G.dock_slug and dock_running(slug) else ""}::{K_OPEN_DOCK}{slug}' for slug, name in list_docks()]
-    docks += ['---', f'    New dock...::{K_NEW_DOCK}', f'    Rename this dock...::{K_RENAME_DOCK}']
+    docks += ['---', f'    New dock...::{K_NEW_DOCK}', f'    Rename this dock...::{K_RENAME_DOCK}',
+              f'    Delete this dock...::{K_DELETE_DOCK}' if G.dock_slug else '!    Delete this dock  (not the main dock)']
     if sg.running_windows():
         docks.append(f'    Desktop shortcut for this dock::{K_DOCK_SHORTCUT}')
     search = ([f'{tick(search_on())}Search {"button" if G.style == "Bar" else "box"}::{K_SEARCH}', '---'] +
               [f'{tick(m == G.search_mode)}{label}::{K_SEARCH_MODE}{m}' for m, label in SEARCH_MODES.items()])
-    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', f'    Add a link...::{K_ADD_LINK}', '    Docks', docks, '    Search', search, '---',
+    items = [f'    Programs...::{K_PROGRAMS}', f'    Add programs...::{K_ADD}', f'    Add a link...::{K_ADD_LINK}', f'    Add a heading...::{K_ADD_HEAD}',
+             '    Docks', docks, '    Search', search, '---',
              f'    Switch to the {other}::{KT_STYLE(other)}'] + place + ['---',
              '    Size', sizes,
              '    Text size', [f'{tick(n == G.text)}{n}::{KT_TEXT(n)}' for n in TEXT_SIZES]]
@@ -525,6 +718,7 @@ def make_menu():
                   ['---', f'{tick(G.stacks_hover)}Stacks open when the mouse rests on them::{K_STACKS_HOVER}' if G.bar_layout == 'Stacks' else
                    f'!{tick(G.stacks_hover)}Stacks open when the mouse rests on them'],
                   '    Magnify', [f'{tick(m == G.magnify)}{m}::{KT_MAGNIFY(m)}' for m in MAGNIFIES],
+                  '    Controls', [f'{tick(k == bar_controls())}{label}::{KT_CONTROLS(k)}' for k, label in BAR_CONTROLS.items()],
                   f'{tick(G.bar_labels)}Section names under the bar::{K_BAR_LABELS}',
                   f'{tick(G.bubble_section)}Section name in the bubble  (with a program\'s name)::{K_BUBBLE_SECTION}']
         hidden = [b for b in Block.active_blocks.values() if not b.bar]
@@ -539,15 +733,126 @@ def make_menu():
               '    Opacity', [f'{tick(p == G.opacity)}{p}%::{KT_OPACITY(p)}' for p in OPACITIES]]
     if sg.running_windows():
         items += [f'{tick(G.glass)}Glass look::{K_GLASS}']
-    items += [f'{tick(G.on_top)}Keep on top::{K_KEEP_ON_TOP}', '---', f'    Sharper icons - fetch them again...::{K_SHARPEN_ALL}', f'    Refresh::{K_REFRESH}',
-              '    Edit Me::Edit Me', '    Version::Version', '---', '    Exit::Exit']
+    items += [f'{tick(G.on_top)}Keep on top::{K_KEEP_ON_TOP}']
+    if sg.running_windows():                                            # ONE Startup shortcut for the set - it runs psgdock.pyw like the taskbar pin
+        items += [f'{tick(startup_on())}Start with Windows::{K_STARTUP}']
+    items += ['---', f'    Sharper icons - fetch them again...::{K_SHARPEN_ALL}', f'    Refresh::{K_REFRESH}',
+              '    Edit Me::Edit Me', '    Version::Version', '---']
+    if any(slug != G.dock_slug and dock_running(slug) for slug, _ in list_docks()):          # the docks are one set: restarted / closed together
+        ready = f'  -  {Update.ready} is ready' if Update.ready else ''
+        items += [f'    Restart all docks{ready}::Restart', f'    Close all docks::{K_CLOSE_ALL}']
+    else:
+        items += [f'    {restart_label()}::Restart']
+    items += ['    Exit::Exit']
     return ['', items]
 
 
-def set_right_click_menu(window:sg.Window, menu):
+DIAG_LOG = 'psgdock_theme_log.txt'                # temporary (10-Nov): what led up to a theme change - beside the master copy only (it has psgdock_handoff.md)
+
+
+def diag_note(kind, text):
+    """ Temporary (10-Nov): one line in the trail of what the dock did - written out when the theme changes """
+    now = time.time()
+    G.diag.append(f'{time.strftime("%H:%M:%S", time.localtime(now))}.{int(now * 1000) % 1000:03d}  {kind:<6} {text}')
+    del G.diag[:-80]
+
+
+def diag_write(title, trail=True):
+    """ Temporary (10-Nov): append title (and the trail) to the theme log beside psgdock.pyw - only where psgdock_handoff.md is (the master copy) """
+    here = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.isfile(os.path.join(here, 'psgdock_handoff.md')):
+        return
+    try:
+        with open(os.path.join(here, DIAG_LOG), 'a', encoding='utf-8') as f:
+            f.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")}  {title}  [dock {G.dock_title!r}, PSG Dock {version}, Tk {sg.tk.TkVersion}]\n')
+            if trail:
+                f.write(''.join(f'        {line}\n' for line in G.diag) + '\n')
+    except OSError:
+        pass
+
+
+def menu_selected(menu):
+    """ <<MenuSelect>>: the right-click menu item now under the mouse (or chosen with the keys) - a theme change must come from the one last here """
+    try:
+        i = menu.index('active')
+        label = menu.entrycget(i, 'label') if i is not None and menu.type(i) in ('command', 'cascade') else ''
+    except Exception:
+        return
+    label = label.lstrip('✓ ').strip()
+    if label:
+        G.menu_hovers.append((time.time(), label))
+        del G.menu_hovers[:-200]
+        diag_note('hover', label)
+
+
+QUIET_MENUS = sg.running_windows()              # 11-Nov: the right-click menu has no items between right-clicks (see set_right_click_menu)
+MENU_ARMED_MS = 1000                            # how long its items stay after the menu closes (the pick's command comes within a few ms)
+
+
+def set_right_click_menu(window:sg.Window, menu, armed=False):
+    """ The dock's right-click menu.  On Windows it only has items while in use (armed: from the right-press until MENU_ARMED_MS after the
+        menu closes) and none the rest of the time - something on Mike's PC sends menu commands (WM_COMMAND) to windows, and Tk runs
+        whichever menu item has that command's number (11-Nov: Theme > White, Peach, '3'... minutes after any menu had closed).  Tk numbers
+        items in one run per program and the dock builds its menu again on every right-click, so its numbers climb into the thousands -
+        a program that builds its menu once only has small ones, which is likely why only the dock was hit """
+    quiet = QUIET_MENUS and not armed
+    G.menu_armed = not quiet
+    diag_note('menus', f'{"emptied" if quiet else "made again"} ({sys._getframe(1).f_code.co_name})')
+    if quiet:
+        empty_menus(window)
+        return
     for elem in window.element_list():
         elem.set_right_click_menu(menu, propogate_to_window=True)
+        if QUIET_MENUS:                                                 # runs after PySimpleGUI's own, which returns once the menu has closed
+            elem.Widget.bind('<ButtonRelease-3>', lambda e, g=G.menu_gen: window.TKroot.after(MENU_ARMED_MS, lambda: quiet_menus(window, g)), add='+')
     style_menus(window)
+    watch_menu_close(window)
+
+
+def watch_menu_close(window):
+    """ Have menu_closed() called when the right-click menu goes away.  Windows: the menu is shown by PySimpleGUI's own right-button binding,
+        which only returns once it has closed - a binding after it.  Elsewhere the menu comes back at once and says so itself (<Unmap>) """
+    for elem in window.element_list():
+        menu = elem.TKRightClickMenu
+        if sg.running_windows():
+            elem.Widget.bind('<ButtonRelease-3>', lambda e: menu_closed(window), add='+')
+        elif menu is not None:
+            menu.bind('<Unmap>', lambda e, m=menu: window.TKroot.after(60, lambda: menu_closed(window, m)) if e.widget is m else None, add='+')
+
+
+def menu_closed(window, menu=None):
+    """ The right-click menu has closed (G.menu_up: set by the right-press).  A Bar's tucked controls stayed out for it: one look by
+        bar_tick folds them if the mouse isn't on the bar.  menu: the one that went (not on Windows) - nothing if it is showing again """
+    try:
+        if menu is not None and menu.winfo_ismapped():
+            return
+    except Exception:                                                   # (a menu already destroyed)
+        pass
+    if G.menu_up:
+        G.menu_up = False
+        if window is G.window:
+            bar_track_start(window)
+
+
+def empty_menus(window):
+    """ Windows: every item out of the dock's right-click menus, their sub-menus destroyed - Tk gives their command numbers up """
+    for m in {id(m): m for m in [window.TKRightClickMenu] + [e.TKRightClickMenu for e in window.element_list()] if m is not None}.values():
+        try:
+            for child in m.winfo_children():
+                child.destroy()
+            if m.index('end') is not None:
+                m.delete(0, 'end')
+        except Exception:                                               # (a menu already destroyed)
+            pass
+
+
+def quiet_menus(window, gen):
+    """ A moment after a right-click menu closed: its items go - unless another right-click has filled it again since """
+    try:
+        if gen == G.menu_gen and window is G.window and not window.is_closed(quick_check=True):        # (a full is_closed() runs update() - events inside a timer)
+            set_right_click_menu(window, None)
+    except Exception:                                                   # (the window went in the meantime)
+        pass
 
 
 def style_menus(window:sg.Window):
@@ -560,6 +865,7 @@ def style_menus(window:sg.Window):
     def style(menu):
         try:
             menu.configure(bd=0, relief='flat', activeborderwidth=1, **colors)
+            menu.bind('<<MenuSelect>>', lambda e, m=menu: menu_selected(m), add='+')
         except tk.TclError:                                             # a menu PySimpleGUI has already replaced and destroyed
             return
         first_light = True
@@ -584,6 +890,168 @@ def style_menus(window:sg.Window):
 
     for top in menus.values():
         style(top)
+
+
+def menu_picked(event):
+    """ True when a right-click menu event ('label::key') really is a pick: the mouse passed over that item in the menu in the last 30 s
+        (<<MenuSelect>>; on Windows the highlight goes back to the menu's first item as it closes, so not only the last one).  Menu commands
+        also arrive with no menu open - 10-Nov the theme changed twice, 11-Nov 08:29 Theme > Indigo came 64 s after the dock's menu had closed,
+        while Mike held the right button on a tray icon.  Those are stopped and noted in the log (which windows were around) - no notice since
+        2.2.53, and on Windows the menu is empty between right-clicks now, so they should hardly come """
+    label = event.split('::')[0].replace('&', '').lstrip('✓ ').strip()
+    seen = [hover for t, hover in G.menu_hovers if time.time() - t < 30]
+    if label in seen:
+        G.menu_hovers = []                                              # used: the next command needs its own pick
+        return True
+    diag_note('menu', f'{event!r} stopped - the mouse wasn\'t on it (the last items: {seen[-3:]!r})')
+    diag_write(f'STOPPED a menu command nobody picked: {label!r}   ({G.last_command})   {window_info()}')
+    return False
+
+
+def watch_menu_commands():
+    """ Temporary (11-Nov): to find the program that sends the stray menu commands.  The dock's top-level Tk windows (its window, Tk's
+        hidden menu window) get a subclass that only looks at WM_COMMAND (menu_command_seen) and passes every message on.  Windows only """
+    if not QUIET_MENUS:
+        return
+    try:
+        import ctypes, atexit
+        from ctypes import wintypes
+        if G.cmd_watch is None:
+            u, c, k = ctypes.WinDLL('user32'), ctypes.WinDLL('comctl32'), ctypes.WinDLL('kernel32')
+            names = {'set': ('SetWindowSubclass', 410), 'remove': ('RemoveWindowSubclass', 412), 'default': ('DefSubclassProc', 413)}
+            fn = {key: getattr(c, name, None) or c[ordinal] for key, (name, ordinal) in names.items()}
+            LRESULT = ctypes.c_ssize_t
+            proc_type = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, ctypes.c_size_t, ctypes.c_size_t)
+            fn['set'].argtypes, fn['set'].restype = [wintypes.HWND, proc_type, ctypes.c_size_t, ctypes.c_size_t], wintypes.BOOL
+            fn['remove'].argtypes, fn['remove'].restype = [wintypes.HWND, proc_type, ctypes.c_size_t], wintypes.BOOL
+            fn['default'].argtypes, fn['default'].restype = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], LRESULT
+            u.InSendMessageEx.argtypes, u.InSendMessageEx.restype = [ctypes.c_void_p], wintypes.DWORD
+            enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            u.EnumThreadWindows.argtypes = [wintypes.DWORD, enum_type, wintypes.LPARAM]
+            u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+            def proc(hwnd, msg, wp, lp, sub_id, ref):
+                try:
+                    if msg == 0x0111:                                   # WM_COMMAND
+                        menu_command_seen(hwnd, wp, lp, u.InSendMessageEx(None))
+                    elif msg == 0x0082:                                 # WM_NCDESTROY: let go before the window goes
+                        fn['remove'](hwnd, G.cmd_watch['proc'], 7307)
+                        G.cmd_watched.discard(hwnd)
+                except Exception:
+                    pass
+                return fn['default'](hwnd, msg, wp, lp)
+
+            def unwatch():                                              # at exit, while Python can still answer
+                for h in list(G.cmd_watched):
+                    fn['remove'](h, G.cmd_watch['proc'], 7307)
+                G.cmd_watched.clear()
+            G.cmd_watch = {'proc': proc_type(proc), 'fn': fn, 'u': u, 'k': k, 'enum': enum_type}
+            atexit.register(unwatch)
+        w = G.cmd_watch
+        found = []
+
+        def each(h, _):
+            cls = ctypes.create_unicode_buffer(100)
+            w['u'].GetClassNameW(h, cls, 100)
+            found.append((h, cls.value))
+            return True
+        w['u'].EnumThreadWindows(w['k'].GetCurrentThreadId(), w['enum'](each), 0)
+        for h, cls in found:
+            if h and (cls.startswith('Tk') or 'Menu' in cls) and h not in G.cmd_watched and w['fn']['set'](h, w['proc'], 7307, 0):
+                G.cmd_watched.add(h)
+        diag_write(f'watching menu commands sent to {sorted(c for h, c in found if h in G.cmd_watched)}  (all its windows: {sorted({c for h, c in found})})', trail=False)
+    except Exception as e:
+        diag_write(f'watching menu commands failed: {e!r}', trail=False)
+
+
+def menu_command_seen(hwnd, wp, lp, sent):
+    """ Temporary (11-Nov, watch_menu_commands): a WM_COMMAND reached one of the dock's windows.  While the menu is empty it can only be a
+        stray - logged with its number, how it came and which window got it.  While a menu is in use only noted (a real pick's comes then) """
+    cmd, code = wp & 0xFFFF, wp >> 16 & 0xFFFF
+    how = 'sent by another program' if sent & 1 else 'SendNotifyMessage' if sent & 2 else 'SendMessageCallback' if sent & 4 else 'posted or from this dock'
+    G.last_command = (f'WM_COMMAND {cmd} (0x{cmd:04X}) code {code} lParam {lp or 0:#x} {window_program(lp) if lp else ""}to {window_program(hwnd)}, {how}, '
+                      f'{time.strftime("%H:%M:%S")}')
+    if G.menu_armed:
+        diag_note('command', G.last_command)
+    else:
+        diag_write(f'STRAY {G.last_command} - the menu was empty, nothing ran   {window_info()}', trail=False)
+
+
+def window_program(h):
+    """ Temporary (11-Nov): '[class] program.exe pid N' for a window, for the log """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u, k = ctypes.WinDLL('user32'), ctypes.WinDLL('kernel32')
+        u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        cls, pid = ctypes.create_unicode_buffer(200), wintypes.DWORD()
+        u.GetClassNameW(h, cls, 200)
+        u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        exe, hp = '?', k.OpenProcess(0x1000, False, pid.value)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if hp:
+            buf, n = ctypes.create_unicode_buffer(400), wintypes.DWORD(400)
+            if k.QueryFullProcessImageNameW(hp, 0, buf, ctypes.byref(n)):
+                exe = os.path.basename(buf.value)
+            k.CloseHandle(hp)
+        return f'[{cls.value[:40]}] {exe} pid {pid.value}' + (' = this dock' if pid.value == os.getpid() else '') + ' '
+    except Exception as e:
+        return f'[? {e!r}] '
+
+
+def double_click_s():
+    """ Windows' double-click speed (its Mouse settings), in seconds - 0.5 elsewhere """
+    if sg.running_windows():
+        try:
+            import ctypes
+            return ctypes.windll.user32.GetDoubleClickTime() / 1000
+        except Exception:
+            pass
+    return 0.5
+
+
+def window_info():
+    """ Temporary (11-Nov): the window in front and the one under the mouse, with their programs, and the mouse buttons - who sent a stray command """
+    if not sg.running_windows():
+        return ''
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u, k = ctypes.windll.user32, ctypes.windll.kernel32
+        u.GetForegroundWindow.restype = u.WindowFromPoint.restype = wintypes.HWND
+        u.WindowFromPoint.argtypes = [wintypes.POINT]
+        k.OpenProcess.restype = wintypes.HANDLE
+
+        def describe(h):
+            if not h:
+                return 'none'
+            title, cls, pid = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(200), wintypes.DWORD()
+            u.GetWindowTextW(h, title, 200)
+            u.GetClassNameW(h, cls, 200)
+            u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            exe, hp = '?', k.OpenProcess(0x1000, False, pid.value)       # PROCESS_QUERY_LIMITED_INFORMATION
+            if hp:
+                buf, n = ctypes.create_unicode_buffer(400), wintypes.DWORD(400)
+                if k.QueryFullProcessImageNameW(hp, 0, buf, ctypes.byref(n)):
+                    exe = os.path.basename(buf.value)
+                k.CloseHandle(hp)
+            return f'{title.value[:50]!r} [{cls.value[:40]}] {exe} pid {pid.value}' + (' = this dock' if pid.value == os.getpid() else '')
+        pt = wintypes.POINT()
+        u.GetCursorPos(ctypes.byref(pt))
+        buttons = ' '.join(n for n, vk in (('left', 1), ('right', 2), ('middle', 4), ('x1', 5), ('x2', 6)) if u.GetAsyncKeyState(vk) & 0x8000)
+        return (f'[in front: {describe(u.GetForegroundWindow())};  under the mouse at ({pt.x}, {pt.y}): {describe(u.WindowFromPoint(pt))};  '
+                f'buttons down: {buttons or "none"}]')
+    except Exception as e:
+        return f'[window info failed: {e}]'
+
+
+def theme_picked(name):
+    """ The theme menu's event got past menu_picked (the mouse was on it): note the change in the log """
+    diag_write(f'theme {G.theme} -> {name}')
+    return True
 
 
 def color_chip(window, color):
@@ -2108,6 +2576,7 @@ LAYOUTS = {'Icons': 'Icons  -  every program, sections side by side', 'Stacks': 
 SIZE_PRESETS = {'T': 0.65, 'S': 0.8, 'M': 1.0, 'L': 1.3}               # one click on the dock's T S M L;  dragging across them: any size SIZE_MIN .. SIZE_MAX
 SIZE_MIN, SIZE_MAX = 0.55, 1.75
 DOCK_DRAG = 5                                                          # pixels the mouse moves before a press drags the floating dock
+START_GAP_MS = 250                                                     # a heading's Start all: the wait between one program and the next
 TEXT_SIZES = {'Small': 0.88, 'Medium': 1.0, 'Large': 1.2, 'Extra large': 1.45}
 SECTION_PALETTE = ('#e8a33d', '#1e9bff', '#2ecc71', '#c48cff', '#ff7f50', '#2ad4c8', '#ff6b9a', '#d9c63a', '#a6e22e', '#8c9eff', '#c0c7d1')
 #                  gold,      blue,      green,     purple,    coral,     teal,      pink,      yellow,    lime,      periwinkle, silver
@@ -2115,6 +2584,9 @@ SECTION_NAMES = ('Gold', 'Blue', 'Green', 'Purple', 'Coral', 'Teal', 'Pink', 'Ye
 HEAD_AUTO = 'Automatic'                                                # a heading's Colour menu: the palette's colour for its place (no colour of its own)
 BAR_ICON, BAR_GAP, BAR_PAD, BAR_SEP, BAR_TOOL = 48, 8, 9, 17, 0.62     # Bar style, design pixels at 96 dpi / Medium size.  The switch and the gear are 62% of an icon
 BAR_LABEL, BAR_LABEL_SIDE = 54, 260                                    # room for the name bubble: above / below a horizontal bar, beside a vertical one (x text size)
+BAR_MORE, CONTROLS_SHARE = 0.34, 0.2                                   # Controls tucked: the end cap is 34% of an icon;  not set = tucked when over this share of the bar
+BAR_CONTROLS = {'Tucked': 'Tucked at the end', 'Always': 'Always shown', 'None': 'None  (right-click only)'}        # right-click > Controls
+TOOLS_REST, TOOLS_GRACE = 0.15, 0.6                                    # seconds on the end cap before they come out;  a click this soon after doesn't fold them
 BAR_EDGE, BAR_SIDE = 10, 18                                            # room around the bar for its shadow: on the screen-edge side, at the ends
 PANEL_SHADOW = 18                                                      # Glass: room around the Panel card for its shadow
 AUTOHIDE_POLL_MS, AUTOHIDE_DWELL, AUTOHIDE_DELAY, SLIDE_MS = 90, 0.25, 0.7, 170    # auto-hide: pointer check, rest at the edge before showing, wait before hiding, slide time
@@ -2638,6 +3110,29 @@ def start_program(window, num):
         window.TKroot.after(400, lambda: redraw(window))
 
 
+def start_section(window, heading_num):
+    """ A heading's right-click > Start all: every program and link under it (hidden from the Bar or not), one after another,
+        START_GAP_MS apart, each hopping / glowing as it starts - Mike: "start all my widgets at once" """
+    b = Block.active_blocks.get(heading_num)
+    if b is None or b.kind != KIND_HEADING:
+        return
+    nums = [m.block_num for m in section_members(heading_num, bar_only=False) if m.path]
+    if not nums:
+        return
+    notice(f'Starting {len(nums)} programs from {b.name}' if len(nums) > 1 else f'Starting the program in {b.name}', seconds=2)
+    for i, num in enumerate(nums):
+        window.TKroot.after(i * START_GAP_MS, lambda n=num: start_queued(n))
+
+
+def start_queued(num):
+    """ (start_section) one of a heading's programs, when its turn comes - in the dock window showing now """
+    try:
+        if num in Block.active_blocks and G.window is not None and not G.window.is_closed(quick_check=True):     # (no update() - it would run the next one first)
+            start_program(G.window, num)
+    except Exception:                                                   # (the dock is closing)
+        pass
+
+
 def see_through(im, amount):
     """ A copy of a picture at that much of its opacity - the search dims what doesn't match """
     out = im.copy()
@@ -2951,10 +3446,89 @@ def panel_drop(xd, yd):
 
 # ------------------------------------------------------------ Bar style ------------------------------------------------------------
 
-def bar_items():
+def bar_controls(items=None):
+    """ Right-click > Controls, as it is for this Bar now: 'Tucked' (an end cap, the controls come out of it), 'Always' or 'None'.  Not set:
+        tucked when the controls would take more than CONTROLS_SHARE of the bar - counted in icon widths from what the dock holds (items: its
+        programs, stacks and lines), so the size, the text size or the screen never change it """
+    if G.bar_controls in BAR_CONTROLS:
+        return G.bar_controls
+    if items is None:
+        items = bar_items('Always')
+    gap = BAR_GAP / BAR_ICON
+    programs = sum((1 if kind in ('app', 'stack') else BAR_SEP / BAR_ICON) + gap for kind, b, pos, sec in items if kind in ('app', 'stack', 'sep'))
+    tools = (len(SIZE_PRESETS) + 0.1) * 0.5 + gap + (2 + hide_shown()) * (BAR_TOOL + gap)
+    return 'Tucked' if programs and tools > CONTROLS_SHARE * (programs + tools) else 'Always'
+
+
+def bar_tools(end, controls):
+    """ The controls at the Bar's far end.  Always: size, switch, gear, search, hide.  Tucked: the search button (it finds programs - it stays),
+        the end cap 'more', then size, switch, gear and hide - drawn, and there to click, only while they are out (G.tools_out).  None: the
+        search button, and on a docked bar the hide arrow (nothing in the menu hides it by hand) """
+    tools = [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)]
+    search = [('search', None, end, None)] if search_on() and program_count() else []
+    hide = [('hide', None, end, None)] if hide_shown() else []
+    if controls == 'Tucked':
+        return search + [('more', None, end, None)] + tools + hide
+    if controls == 'None':
+        return search + hide
+    return tools + search + hide
+
+
+def tools_fold():
+    """ Controls tucked: fold them away at once (the bar is about to hide, move or be laid out another way).  True when they were out """
+    was = G.tools_open or G.tools_out > 0
+    G.tools_open, G.tools_out, G.tools_rest, G.tools_shut = False, 0.0, None, G.hover == 'more'
+    return was
+
+
+def tools_click(window):
+    """ A click on the end cap: out <-> folded.  The mouse resting on the cap had just brought them out (TOOLS_GRACE): the click meant that
+        too - they stay.  Folded by a click, they stay folded until the mouse has left the cap """
+    if G.tools_open and time.time() - G.tools_since < TOOLS_GRACE:
+        G.tools_since = 0
+        return
+    G.tools_open = not G.tools_open
+    G.tools_since, G.tools_rest, G.tools_shut = 0, None, not G.tools_open
+    bar_track_start(window)
+
+
+def tools_tick(hover, now):
+    """ Controls tucked, from bar_tick: the mouse resting on the end cap brings them out;  they fold once it has left the bar - not while the
+        right-click menu, a stack or the search is out, or a button is held.  G.tools_out eases toward where they are going """
+    if not G.bar_geo or G.bar_geo['more'] is None:
+        return
+    if hover != 'more':
+        G.tools_rest, G.tools_shut = None, False
+    elif G.press is None and not G.tools_shut and not G.tools_open:
+        G.tools_rest = G.tools_rest or now
+        if now - G.tools_rest >= TOOLS_REST:
+            G.tools_open, G.tools_since = True, now
+    busy = G.menu_up or G.stack_open is not None or G.scrub is not None or G.press is not None
+    if G.tools_open and G.pointer is None and not busy:
+        G.tools_open = False
+    target = 1.0 if G.tools_open else 0.0
+    G.tools_out += (target - G.tools_out) * 0.35
+    if abs(G.tools_out - target) < 0.02:
+        G.tools_out = target
+
+
+def draw_more(d, box, upright, color, back):
+    """ The end cap: three dots across the bar (upright: the bar runs up and down, so they lie side by side) - on a pill (back) while lit """
+    x0, y0, x1, y1 = box
+    cx, cy, w = (x0 + x1) / 2, (y0 + y1) / 2, min(x1 - x0, y1 - y0)
+    if back:
+        d.rounded_rectangle(box, radius=w / 2, fill=back)
+    r, step = max(2, w * 0.17), max(x1 - x0, y1 - y0) * 0.33
+    for k in (-1, 0, 1):
+        dx, dy = (k * step, 0) if upright else (0, k * step)
+        d.ellipse((cx + dx - r, cy + dy - r, cx + dx + r, cy + dy + r), fill=color)
+
+
+def bar_items(controls=None):
     """ What the Bar shows, in order: (kind, block, list position, the heading of its section).  'app' a program; 'sep' a thin line where a
-        section starts; 'stack' a whole section as one tile (Stacks layout); then 'size' (S M L), 'switch', 'gear' and 'search' (right-click >
-        Search).  Programs and whole sections left out of the Bar (right-click > Show in the Bar) are skipped """
+        section starts; 'stack' a whole section as one tile (Stacks layout); then the controls - bar_tools(): 'size' (S M L), 'switch', 'gear',
+        'search' (right-click > Search), 'hide', and 'more', the end cap they tuck into (right-click > Controls; controls: as if it were that).
+        Programs and whole sections left out of the Bar (right-click > Show in the Bar) are skipped """
     items, order = [], list(Block.active_blocks.values())
     section, shown, i = None, True, 0
     while i < len(order):
@@ -2975,10 +3549,7 @@ def bar_items():
         i += 1
     if items and items[-1][0] == 'sep':
         items.pop()
-    end = len(order)
-    tools = [('size', None, end, None), ('switch', None, end, None), ('gear', None, end, None)]
-    tools += [('search', None, end, None)] if search_on() and program_count() else []
-    return items + tools + ([('hide', None, end, None)] if hide_shown() else [])
+    return items + bar_tools(len(order), controls or bar_controls(items))
 
 
 def label_room(items, icon, gap, name_w):
@@ -3025,13 +3596,17 @@ def bar_layout():
         items = label_room(base_items, icon, gap, name_w) if name_w and G.bar_layout == 'Icons' else base_items
         size_thick = min(icon, max(round(icon * 0.5), round(21 * G.dpi)))             # the S M L letters stay readable on a small bar
         size_len = round(size_thick * (len(SIZE_PRESETS) + 0.1))
+        cap = max(round(icon * BAR_MORE), round(14 * G.dpi))           # Controls tucked: the end cap
         slots = [icon if kind == 'app' else max(icon, name_w.get(b.block_num, 0)) if kind == 'stack' else round(BAR_SEP * s) if kind == 'sep' else
-                 b if kind == 'space' else size_len if kind == 'size' else round(icon * BAR_TOOL) for kind, b, pos, sec in items]
-        rest = sum(slots) + gap * (len(slots) - 1) + 2 * pad
+                 b if kind == 'space' else size_len if kind == 'size' else cap if kind == 'more' else round(icon * BAR_TOOL) for kind, b, pos, sec in items]
+        more = next((i for i, item in enumerate(items) if item[0] == 'more'), None)
+        out = sum(slots[more + 1:]) + gap * (len(slots) - more - 1) if more is not None else 0      # how far the controls reach past the cap when out
+        rest = sum(slots) + gap * (len(slots) - 1) + 2 * pad - out     # (the bar at rest: tucked controls folded away)
         main = rest + round(icon * (M - 1) * 2.4) + icon + gap + 2 * round(BAR_SIDE * G.scale)     # room to grow: magnification and a gap for a drop
-        if main <= room or icon <= 20:
+        main += 2 * out                                                 # ...and for the controls to come out - as much at the start, so the bar stays in the middle
+        if main - out <= room or icon <= 20:                            # (the room at the start may hang over the screen's end: docked_position)
             break
-        s *= max(0.5, room / main) * 0.98
+        s *= max(0.5, room / (main - out)) * 0.98
     rise = round(icon * (M - 1))
     label = round((BAR_LABEL_SIDE if vertical() else BAR_LABEL) * G.dpi * text_scale())
     edge = round(BAR_EDGE * G.scale)
@@ -3040,7 +3615,7 @@ def bar_layout():
     cross = edge + thick + rise + label
     W, H = (cross, main) if vertical() else (main, cross)
     return dict(items=items, slots=slots, icon=icon, gap=gap, pad=pad, thick=thick, rise=rise, label=label, edge=edge, rest=rest, main=main, W=W, H=H, M=M,
-                size_thick=size_thick, lab=lab, label_px=label_px)
+                size_thick=size_thick, lab=lab, label_px=label_px, more=more, out=out)
 
 
 def bar_box(L, m0, c0, m1, c1):
@@ -3089,7 +3664,8 @@ def bar_targets(L):
     out = []
     for (kind, b, pos, sec), c in zip(L['items'], bar_rest_centers(L)):
         d = min(1.0, abs(u - c) / reach)
-        out.append(1.0 if kind in ('sep', 'size', 'space') else 1 + (L['M'] - 1) * math.cos(d * math.pi / 2) ** 2)
+        still = kind in ('sep', 'size', 'space', 'more') or (L['more'] is not None and kind in ('switch', 'gear', 'hide'))     # (tucked controls keep their size)
+        out.append(1.0 if still else 1 + (L['M'] - 1) * math.cos(d * math.pi / 2) ** 2)
     return out
 
 
@@ -3099,7 +3675,7 @@ def bar_drop(L, m):
     for i, ((kind, b, pos, sec), c, slot) in enumerate(zip(L['items'], bar_rest_centers(L), L['slots'])):
         if kind == 'stack' and abs(m - c) <= slot * 0.4:
             return section_end(b.block_num), None, b.block_num
-        if kind in ('size', 'switch', 'gear', 'search', 'hide') or m < c:
+        if kind in ('size', 'switch', 'gear', 'search', 'hide', 'more') or m < c:
             return pos, i, None
     return len(Block.active_blocks), len(L['items']) - 1, None
 
@@ -3182,11 +3758,14 @@ def render_bar():
     items, n = L['items'], len(L['items'])
     if len(G.mag) != n:
         G.mag = [1.0] * n
-    sizes = [slot if kind in ('sep', 'size', 'space') else max(slot, round(L['icon'] * G.mag[i])) if kind == 'stack' else round(slot * G.mag[i])
+    sizes = [slot if kind in ('sep', 'size', 'space', 'more') else max(slot, round(L['icon'] * G.mag[i])) if kind == 'stack' else round(slot * G.mag[i])
              for i, ((kind, b, pos, sec), slot) in enumerate(zip(items, L['slots']))]                   # (a stack's place can be wider than its tile: its name)
     opening = round((L['icon'] + L['gap']) * G.drop_open) if G.drop_item is not None else 0
-    length = sum(sizes) + L['gap'] * (n - 1) + 2 * L['pad'] + opening
-    m0 = round((L['main'] - length) / 2)
+    more = L['more']                                                    # Controls tucked: the end cap's item - what follows it shows only while out
+    tail = sum(sizes[more + 1:]) + L['gap'] * (n - more - 1) if more is not None else 0
+    fold = sum(sizes) + L['gap'] * (n - 1) + 2 * L['pad'] + opening - tail          # the bar with them folded away: that is what sits in the middle,
+    length = fold + round(tail * G.tools_out)                           # so the programs stay put as the controls come out past the end
+    m0 = round((L['main'] - fold) / 2)
     edge, thick, pad, lab = L['edge'], L['thick'], L['pad'], L['lab']
     base, zone = edge + lab, thick - lab                                # the icons' part of the bar: above the strip with the section names
     im = Image.new('RGBA', (L['W'], L['H']), (0, 0, 0, 0))
@@ -3234,7 +3813,8 @@ def render_bar():
         for num, r0, r1, kind in runs:
             if kind == 'app':
                 d.rounded_rectangle(bar_box(L, r0 + 2, c0, r1 - 2, c0 + rail), radius=rail / 2, fill=rgba(colors[num], 235))
-    G.label_spans = draw_section_labels(im, d, L, runs, colors, t, m0 + pad, m0 + length - pad) if lab else []
+    G.label_spans = draw_section_labels(im, d, L, runs, colors, t, m0 + pad, m0 + fold - pad) if lab else []
+    faded = None                                                        # Controls tucked, on their way out / in: drawn apart, to fade with the bar's growth
     spans, lit, veils = [], bar_lit(), []                               # the search out, with Dim: the programs that match - the rest fades (veils)
     for entry in places:
         if entry[0] == 'gap':                                           # programs being dragged over: an outlined space where they'll land
@@ -3249,6 +3829,12 @@ def render_bar():
             continue
         i, m, w = entry
         kind, b, pos, sec = items[i]
+        if more is not None and i > more:                               # Controls tucked: past the end cap - nothing while they are folded
+            if G.tools_out <= 0:
+                break
+            if G.tools_out < 1 and faded is None:
+                faded = Image.new('RGBA', im.size, (0, 0, 0, 0))
+                d = ImageDraw.Draw(faded)
         if kind == 'app':
             lift = round(bounce_lift(b.block_num) * L['icon'] * 0.5)
             box = bar_box(L, m, base + pad + lift, m + w, base + pad + lift + w)
@@ -3275,6 +3861,11 @@ def render_bar():
             part, top = (('head', b.block_num) if b is not None else None), edge + thick
         elif kind == 'space':                                           # room for a section's name: nothing to draw, nothing to point at
             continue
+        elif kind == 'more':                                            # Controls tucked: the end cap - lit under the mouse and while they are out
+            hot = G.hover == 'more' or G.tools_open
+            box = bar_box(L, m, base + zone * 0.2, m + w, base + zone * 0.8)
+            draw_more(d, box, vertical(), t['text'] if hot else t['dim'], mix_hex(t['text'], t['card'], 0.84) if hot else None)
+            part, top = 'more', base + zone * 0.8
         elif kind == 'size':
             st = L['size_thick']
             box = bar_box(L, m, base + (zone - st) / 2, m + w, base + (zone + st) / 2)
@@ -3297,7 +3888,13 @@ def render_bar():
             else:
                 draw_switch(d, cx, cy, w * 0.36, color, to_bar=False)
             part, top = kind, base + (zone + w) / 2
-        spans.append((m - L['gap'] / 2, m + w + L['gap'] / 2, part, top))
+        if more is None or i <= more or G.tools_open:                   # (tucked controls: there to point at once they are coming out)
+            spans.append((m - L['gap'] / 2, m + w + L['gap'] / 2, part, top))
+    if faded is not None:
+        faded.putalpha(faded.getchannel('A').point(lambda a: round(a * G.tools_out)))
+        box = tuple(max(0, round(v)) for v in bar_box(L, m0, edge, m0 + length - pad, edge + thick))       # only as far as the bar has grown
+        im.alpha_composite(faded.crop(box), box[:2])
+        d = ImageDraw.Draw(im)
     if veils:                                                           # the search, Dim: what doesn't match fades into the bar
         veil = Image.new('RGBA', im.size, (0, 0, 0, 0))
         vd = ImageDraw.Draw(veil)
@@ -3375,6 +3972,9 @@ def bar_bubble(im, d, L, part, text=None):
     elif part == 'gear':                                                # this dock's name, then what the gear does
         runs.append((G.dock_title, small, mix_hex(t['heading'], '#ffffff', 0.15)))
         runs.append(('Programs  -  add, remove and order them   ·   right-click for settings', sub_f, '#9aa3b2'))
+    elif part == 'more':                                                # the end cap: what is tucked into it
+        runs.append(('Controls', small, '#eceff6'))
+        runs.append(('size  ·  Panel  ·  Programs' + ('  ·  hide' if hide_shown() else '') + '   -   also on right-click', sub_f, '#9aa3b2'))
     elif part == 'switch':
         runs.append(('Switch to the Panel  -  names and versions', small, '#eceff6'))
     elif part == 'hide':
@@ -3493,6 +4093,7 @@ def bar_tick(window):
     if hover != G.hover:
         G.hover = hover
         window[K_IMAGE].Widget.configure(cursor='hand2' if hover else '')
+    tools_tick(hover, now)
     if G.stacks_hover and isinstance(hover, tuple) and hover[0] == 'stack' and hover[1] != G.stack_open and G.press is None:
         if G.rest is None or G.rest[0] != hover:                        # Open stacks on hover: the mouse resting on one opens it
             G.rest = (hover, now, False)
@@ -3512,7 +4113,9 @@ def bar_tick(window):
         if G.drop_index is None or G.drop_stack is not None:
             G.drop_item = None
     settled = all(abs(cur - tgt) < 0.003 for cur, tgt in zip(G.mag, targets)) and abs(G.drop_open - open_target) < 0.02
+    settled = settled and G.tools_out == (1.0 if G.tools_open else 0.0)
     signature = (G.pointer, G.hover, tuple(round(v, 3) for v in G.mag), G.drop_item, G.drop_stack, round(G.drop_open, 2), tuple(G.bounce), G.stack_open)
+    signature += (round(G.tools_out, 3), G.tools_open)
     if signature != G.last_signature or G.bounce:
         G.last_signature = signature
         redraw(window)
@@ -3783,11 +4386,18 @@ def docked_position(place=None, work=None, size=None, along=-1):
     along = G.along if along == -1 else along
     left, top, right, bottom = work
     gap = round(2 * G.dpi)
+    over = tuck_room()                                                  # (a Bar's empty room at its start may hang over the edge's end)
     if place in ('Bottom', 'Top'):
         x = (left + right - w) // 2 if along is None else round(left + along * (right - left) - w / 2)
-        return max(left, min(x, right - w)), (bottom - h - gap if place == 'Bottom' else top + gap)
+        return max(left - over, min(x, right - w)), (bottom - h - gap if place == 'Bottom' else top + gap)
     y = (top + bottom - h) // 2 if along is None else round(top + along * (bottom - top) - h / 2)
-    return (left + gap if place == 'Left' else right - w - gap), max(top, min(y, bottom - h))
+    return (left + gap if place == 'Left' else right - w - gap), max(top - over, min(y, bottom - h))
+
+
+def tuck_room():
+    """ Bar, Controls tucked: the see-through room its window keeps at each end for the controls to come out into (0 otherwise).  They come out
+        at the far end only, so the room at the start may be off the screen - the bar still slides right up to that end of its edge """
+    return G.bar_geo['out'] if G.style == 'Bar' and G.bar_geo else 0
 
 
 def place_window(window):
@@ -3850,6 +4460,8 @@ def slide(window, show):
         except Exception:
             pass
         G.anim = None
+    if tools_fold() and not show:                                       # a Bar's tucked controls fold first
+        redraw(window)
     if show:
         G.hidden, G.sliding = False, True
         redraw(window)                                                  # the whole dock again - the window grows back from the handle
@@ -4018,7 +4630,7 @@ def dock_drag(window, p, x_root, y_root):
     sx, sy = p['shown'] or docked_position()
     start, end, size = (top, bottom, fh) if upright else (left, right, fw)
     middle = (sy + fh / 2 + y_root - p['y']) if upright else (sx + fw / 2 + x_root - p['x'])
-    middle = min(max(middle, start + size / 2), end - size / 2)
+    middle = min(max(middle, start + size / 2 - tuck_room()), end - size / 2)
     G.along = (middle - start) / max(1, end - start)
     G.shown_pos = docked_position()
     move_to(window, *(handle_position() if G.hidden else G.shown_pos))
@@ -4049,6 +4661,7 @@ def finish_dock_drag(window, p, x_root, y_root):
 def bar_footprint(place, work):
     """ A Bar docked on place (an edge of the monitor with this work area): (its window's size, the bar's box at rest in that window) """
     key = ('footprint', place, work, G.scale, G.text, G.bar_labels, G.magnify, G.bar_layout, G.sections, tuple((b.block_num, b.bar) for b in Block.active_blocks.values()))
+    key += (G.bar_controls, search_on(), len(SIZE_PRESETS))            # (at rest, so with tucked controls folded - L['rest'])
     if key not in G.icon_cache:
         saved = G.place, G.work
         try:
@@ -4282,16 +4895,19 @@ def part_menu(part):
         chosen = G.head_colors.get(b.name)
         colours = ([f'{tick(chosen is None)}{HEAD_AUTO}::{K_E_COLOR}{HEAD_AUTO}'] + [f'{tick(chosen == c)}{n}::{K_E_COLOR}{n}' for n, c in zip(SECTION_NAMES, SECTION_PALETTE)] +
                    ['---', f'{tick(chosen is not None and chosen not in SECTION_PALETTE)}{HANDLE_CUSTOM}::{K_E_COLOR}{HANDLE_CUSTOM}'])
-        return ['', [title, '---', f'    Add a program here...::{K_E_ADD_HERE}', f'    Add a link here...::{K_E_ADD_LINK}', f'    Rename...::{K_E_RENAME}',
+        starts = len([m for m in section_members(b.block_num, bar_only=False) if m.path])
+        start = [f'    Start all {starts} programs::{K_E_START_ALL}' if starts > 1 else f'    Start its program::{K_E_START_ALL}', '---'] if starts else []
+        return ['', [title, '---'] + start + [f'    Add a program here...::{K_E_ADD_HERE}', f'    Add a link here...::{K_E_ADD_LINK}',
+                     f'    Add a heading here...::{K_E_ADD_HEAD}', f'    Rename...::{K_E_RENAME}',
                      '    Colour', colours, f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}', f'    Remove this heading::{K_E_REMOVE}'] + dock]
     if is_link(b.path):                                                 # a link: no folder, source or sharper icon
         return ['', [title, '---', f'    Open::{K_E_OPEN}', f'    Copy the link::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}',
-                     f'    Remove from the dock::{K_E_REMOVE}'] + dock]
+                     f'    Add a heading above this...::{K_E_ADD_HEAD}', f'    Remove from the dock::{K_E_REMOVE}'] + dock]
     items = [title, '---', f'    Open::{K_E_OPEN}', f'    Open its folder::{K_E_FOLDER}']
     if b.path.lower().endswith(('.py', '.pyw')):
         items.append(f'    Edit the source::{K_E_EDIT}')
     items += [f'    Copy the path::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}', f'    Sharper icon - fetch it again::{K_E_SHARPEN}',
-              f'    Remove from the dock::{K_E_REMOVE}']
+              f'    Add a heading above this...::{K_E_ADD_HEAD}', f'    Remove from the dock::{K_E_REMOVE}']
     return ['', items + dock]
 
 
@@ -4327,6 +4943,7 @@ def bind_mouse(window):
 
     def press(e):
         part = part_at(e.x, e.y)
+        G.menu_up = False                                               # (a press on the dock: its menu has gone, whatever was heard of it)
         if search_on() and not G.hidden:                                # click the dock, then type: its search takes the keys
             try:
                 window.TKroot.focus_force()
@@ -4369,6 +4986,8 @@ def bind_mouse(window):
                 window.write_event_value(K_TIP, 'Dragging slides the bar along its edge - pull it off the edge to float it, or into another edge to dock it there.\n'
                                                 'To rearrange your programs, use the Panel:\nclick the switch, then drag them where you want. The Bar shows the same order.')
             p['moving'] = True
+            if G.style == 'Bar' and not G.hidden and tools_fold():      # the bar moves at its folded length
+                redraw(window)
             if not p['handle']:
                 widget.configure(cursor='fleur')
         if p['moving']:
@@ -4393,7 +5012,7 @@ def bind_mouse(window):
         if p is None:
             return
         if G.drag_item is not None:                                     # a program or section let go: it lands on the line (outside the dock: no change)
-            finish_entry_drag(window)
+            finish_entry_drag(window, e.state & 0x4, e.x_root, e.y_root)   # (over another dock: it goes there - Ctrl held = a copy)
             widget.configure(cursor='hand2' if part_at(e.x, e.y) else '')
             return
         if p['moving']:                                                 # the dock was dragged - never a launch
@@ -4403,13 +5022,23 @@ def bind_mouse(window):
         elif p['handle'] and G.hidden:                                  # a click on the handle: out at once
             slide(window, True)
         elif math.hypot(e.x_root - p['x'], e.y_root - p['y']) < DOCK_DRAG and p['part'] is not None and part_at(e.x, e.y) == p['part']:
+            last, G.head_click = G.head_click, None
+            if G.style == 'Panel' and isinstance(p['part'], tuple) and p['part'][0] == 'head':        # a heading: a double-click is Rename
+                if last and last[0] == p['part'] and time.time() - last[1] < double_click_s():
+                    window.write_event_value(K_HEAD_RENAME, (p['part'][1], (e.x_root, e.y_root)))
+                    return
+                G.head_click = (p['part'], time.time())
             window.write_event_value(K_CLICK, p['part'])
 
     def right_press(e):                                                 # before the menu shows (on release): pick the menu for what's under the mouse
         part = part_at(e.x, e.y)
         G.menu_target = part[1] if isinstance(part, tuple) and part[0] in ('app', 'head', 'stack') else None
         G.menu_at = (e.x_root, e.y_root)                                # questions it asks (Rename...) open here
-        set_right_click_menu(window, part_menu(part))
+        G.menu_hovers = []                                              # a new menu: nothing under the mouse in it yet
+        G.menu_gen += 1
+        G.menu_up = not G.hidden                                        # (until it closes - watch_menu_close)
+        diag_note('right', f'press on {part!r}')
+        set_right_click_menu(window, part_menu(part), armed=True)      # (Windows: emptied again a moment after it closes)
 
     def enter(e):
         if not G.hidden and G.style == 'Bar':
@@ -4575,7 +5204,8 @@ def start_entry_drag(window, p):
                           'at': (round(16 * G.dpi), round(10 * G.dpi)), 'ghost': None}     # the copy sits just right of and below the mouse: the line stays in sight
     n = end - start - 1
     what = f'the {b.name} section' + (f' and its {n} program{"s" * (n != 1)}' if n else '') if kind == 'head' else (b.name or 'this program')
-    drag['hint'] = f'Moving {what}   ·   let go where the blue line is   ·   outside the dock: no change'
+    drag['what'] = what
+    drag['hint'] = drag['hint0'] = f'Moving {what}   ·   let go where the blue line is   ·   onto another dock: moves it there'
     try:
         photo = ImageTk.PhotoImage(render_ghost(drag))
         ghost = sg.tk.Toplevel(window.TKroot)
@@ -4611,23 +5241,35 @@ def place_ghost(drag, x_root, y_root):
 
 
 def drag_entry(window, x_root, y_root):
-    """ The dragged entry's copy follows the mouse; the blue line moves to where it would land (none outside the dock, or where it wouldn't move) """
+    """ The dragged entry's copy follows the mouse; the blue line moves to where it would land (none outside the dock, or where it wouldn't move).
+        Outside the dock the other docks are told where the mouse is (DockLink) - the one under it shows where it would land """
     drag = G.drag_item
     place_ghost(drag, x_root, y_root)
     x, y = x_root - window.TKroot.winfo_rootx(), y_root - window.TKroot.winfo_rooty()
     w, h = G.win_size or (0, 0)
     off = G.panel_off
     index = None
-    if off <= x < w - off and off <= y < h - off:
+    inside = off <= x < w - off and off <= y < h - off
+    if inside:
         index = drag_target(panel_drop((x - off) / G.scale, (y - off) / G.scale)[0])
-    if index != drag['index']:
-        drag['index'] = index
+    drag['outside'] = not inside
+    hint = drag['hint0']
+    if not inside:
+        if drag.get('link') is None:
+            drag['link'] = DockLink(window, other_docks())
+        drag['link'].move(x_root, y_root)
+        hint = f'Moving {drag["what"]}   ·   let go over another dock to move it there - hold Ctrl to copy   ·   anywhere else: no change'
+    elif drag.get('link') is not None:
+        drag['link'].move(None, None)                                   # back on this dock: the other docks' lines go
+    if index != drag['index'] or hint != drag['hint']:
+        drag['index'], drag['hint'] = index, hint
         G.drop_line = drop_line_at(index) if index is not None else None
         redraw(window)
 
 
-def finish_entry_drag(window):
-    """ The dragged entry was let go: the event loop moves it to the line (K_REORDER).  No line (outside the dock, or no move): nothing changes """
+def finish_entry_drag(window, copy=False, x_root=None, y_root=None):
+    """ The dragged entry was let go: the event loop moves it to the line (K_REORDER).  Let go over another dock: that dock gets it (DockLink ->
+        K_DOCK_SENT; copy = Ctrl was held).  No line and no dock (or no move): nothing changes """
     drag, G.drag_item = G.drag_item, None
     G.drop_line = None
     if drag['ghost'] is not None:
@@ -4635,10 +5277,19 @@ def finish_entry_drag(window):
             drag['ghost'].destroy()
         except sg.tk.TclError:
             pass
+    link = drag.get('link')
     if drag['index'] is not None:
+        if link is not None:
+            link.finish(None, None, None, None)
         window.write_event_value(K_REORDER, (drag['start'], drag['end'], drag['index']))
-    else:
-        redraw(window)
+        return
+    if link is not None and drag.get('outside') and x_root is not None:
+        moving = list(Block.active_blocks.values())[drag['start']:drag['end']]
+        link.finish(x_root, y_root, {'entries': entry_payload(moving), 'from': G.dock_title},
+                    {'nums': [b.block_num for b in moving], 'copy': bool(copy), 'what': drag['what']})
+    elif link is not None:
+        link.finish(None, None, None, None)
+    redraw(window)
 
 
 def move_entries(window, start, end, index):
@@ -4920,6 +5571,9 @@ def entry_action(window, key):
             add_programs(window, files, list(Block.active_blocks).index(b.block_num) + 1)
     elif key == K_E_ADD_LINK:
         ask_for_link(window, section_end(b.block_num))
+    elif key == K_E_ADD_HEAD:                                           # a heading: a new section after its own;  a program: a heading just above it
+        order = list(Block.active_blocks)
+        ask_for_heading(window, section_end(b.block_num) if b.kind == KIND_HEADING else order.index(b.block_num))
 
 
 def heading_color(window, choice):
@@ -5176,6 +5830,9 @@ def open_stack(window, heading_num, by_hover=False):
             if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the stack stays out)
                 versions_found(window, values[event])
                 continue
+            if event == K_IPC:                                          # another dock asking: busy while the stack is out
+                values[event][1]['done'].set()
+                continue
             pending = (event, values)
             break
         else:                                                           # every 150 ms: the mouse away from the fly-out and the bar for a while closes it
@@ -5351,6 +6008,9 @@ def open_search(window, text=''):
             if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the search stays out)
                 versions_found(window, values[event])
                 continue
+            if event == K_IPC:                                          # another dock asking: busy while the search is out
+                values[event][1]['done'].set()
+                continue
             pending = (event, values)
             break
     glass_free(surface)
@@ -5381,6 +6041,9 @@ def make_psg_launcher():
                        right_click_menu_background_color=m_bg, right_click_menu_text_color=m_fg, right_click_menu_selected_colors=('#ffffff', C_SELECT),
                        right_click_menu_font=FONT_MENU, disable_close=True)    # Alt-F4 is ignored: the dock closes with Exit or the Panel's x
     G.window = window
+    if QUIET_MENUS:                                                     # Windows: no menu items until a right-press (set_right_click_menu)
+        set_right_click_menu(window, None)
+    watch_menu_commands()
     G.dpi = max(1.0, window.TKroot.winfo_fpixels('1i') / 96)
     G.scale = G.dpi * G.size
     G.hidden, G.sliding, G.anim, G.hover, G.pointer, G.tracking, G.press, G.scrub = False, False, None, None, None, False, None, None
@@ -5388,6 +6051,7 @@ def make_psg_launcher():
     G.drop_index, G.drop_item, G.drop_line, G.drop_open, G.drop_stack, G.stack_open, G.rest = None, None, None, 0.0, None, None, None
     G.handle_since, G.edge_target, G.preview, G.preview_size = None, None, None, None
     G.search, G.search_sel, G.focus, G.search_spots, G.redraw_due, G.search_all = '', 0, False, [], False, False
+    G.tools_open, G.tools_out, G.tools_rest, G.tools_since, G.tools_shut, G.menu_up = False, 0.0, None, 0, False, False
     here = G.default_pt or (window.TKroot.winfo_rootx() + 50, window.TKroot.winfo_rooty() + 50)    # the other style's dock was here, else where tk put this one
     if not floating and G.monitor_pt is None:
         G.monitor_pt = here
@@ -5416,6 +6080,7 @@ def make_psg_launcher():
         G.out_since, G.edge_since = None, None
         window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
     window.TKroot.after(VERSION_CHECK_S * 1000, lambda: version_tick(window))         # the versions keep themselves up to date
+    window.TKroot.after(UPDATE_POLL_MS, lambda: update_tick(window))                    # a newer psgdock.pyw (the UPDATE block)
     return window
 
 
@@ -5570,6 +6235,303 @@ def ask_for_link(window, index=None):
     insert_entries(window, [b], index)
 
 
+def ask_for_heading(window, index=None):
+    """ Right-click > Add a heading... (a heading's: Add a heading here... - after its section; a program's: Add a heading above this...): its name,
+        then it goes in at list position index (None = at the end) - no Programs window needed """
+    name = ask_near(G.menu_at or pointer(), 'Add a heading', 'The new heading\'s name', default='', yes='Add')
+    if name is None or not name.strip():
+        return
+    b = Block(block_num=G.block_number, name=name.strip(), path='', iconb64='', kind=KIND_HEADING)
+    G.block_number += 1
+    insert_entries(window, [b], index)
+
+
+# ------------------------------------------------------------ Dock to dock: drag programs and sections onto another dock (2.2.52) ------------------------------
+#  Mike (11-Nov): "I would like to be able to drag items and entire headings out of the dock and into another dock."  Every dock answers on a local
+#  port (127.0.0.1 only, picked by the system, saved as K_IPC_PORT in its own settings).  While a program / section is dragged outside its dock, a
+#  DockLink thread tells the other docks where the mouse is ('over'); the one under it shows its blue line / gap like a drop from Explorer.  Let go:
+#  'drop' - that dock adds the entries at its line and saves its own list, then answers; this dock removes them (unless Ctrl was held: a copy).
+#  A request is answered in the receiving dock's main loop (K_IPC); a dock busy in a stack, the search fly-out or the Brightness panel says busy.
+
+def ipc_start():
+    """ Open this dock's local port and answer on it in a thread; the port goes in this dock's own settings so the other docks find it """
+    import socket
+    import threading
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(('127.0.0.1', 0))
+        server.listen(4)
+    except OSError:
+        return
+    sg.user_settings_set_entry(K_IPC_PORT, server.getsockname()[1])
+    G.ipc_server = server                                               # (closed when the dock leaves - let_go)
+    threading.Thread(target=ipc_serve, args=(server,), daemon=True).start()
+
+
+def ipc_serve(server):
+    import threading
+    while True:
+        try:
+            conn, _ = server.accept()
+        except OSError:
+            return
+        threading.Thread(target=ipc_conn, args=(conn,), daemon=True).start()
+
+
+def ipc_conn(conn):
+    """ One other dock talking to this one: a JSON request per line, a JSON answer per line.  'hello' is answered here; the rest by the main loop """
+    import threading
+    try:
+        conn.settimeout(60)
+        f = conn.makefile('rw', encoding='utf-8', newline='\n')
+        for line in f:
+            try:
+                req = json.loads(line)
+            except ValueError:
+                break
+            if not isinstance(req, dict):
+                break
+            if req.get('op') == 'hello':
+                reply = {'psgdock': True, 'slug': G.dock_slug, 'dock': G.dock_title}
+            else:
+                box = {'done': threading.Event(), 'reply': {'ok': False, 'mine': False, 'busy': True}, 'expired': False, 'taken': False}
+                try:
+                    G.window.write_event_value(K_IPC, (req, box))
+                except Exception:
+                    break
+                if not box['done'].wait(5 if req.get('op') == 'drop' else 1.5):
+                    box['expired'] = True
+                    if box['taken']:
+                        box['done'].wait(10)
+                reply = box['reply']
+            f.write(json.dumps(reply) + '\n')
+            f.flush()
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def on_my_window(window, x, y):
+    """ Is screen point x, y on this dock's window (shown or its handle)? """
+    if x is None or y is None:
+        return False
+    try:
+        root = window.TKroot
+        if not root.winfo_viewable():
+            return False
+        rx, ry = root.winfo_rootx(), root.winfo_rooty()
+        return rx <= x < rx + root.winfo_width() and ry <= y < ry + root.winfo_height()
+    except Exception:
+        return False
+
+
+def section_edge(index):
+    """ A section dropped from another dock lands between sections: the heading position (or the end) nearest index """
+    order = list(Block.active_blocks.values())
+    edges = [i for i, b in enumerate(order) if b.kind == KIND_HEADING] + [len(order)]
+    return min(edges, key=lambda i: (abs(i - index), i))
+
+
+def ipc_answer(window, req):
+    """ The main loop answers another dock: 'over' (is the mouse on this dock? then show where it would land), 'leave' (clear that), 'drop' (add the
+        entries there and save) """
+    op, x, y = req.get('op'), req.get('x'), req.get('y')
+    if op in ('quit', 'restart'):                                       # Close all docks / Restart all docks on another dock: this one goes too
+        G.leave = op
+        return {'ok': True}
+    mine = on_my_window(window, x, y) if op in ('over', 'drop') else False
+    if not mine:
+        if G.remote_over:
+            G.remote_over = False
+            drop_over(window, None, None)
+        return {'ok': op == 'leave', 'mine': False}
+    if G.hidden:                                                        # over the handle: fly out first, like a drag from Explorer
+        slide(window, True)
+    if op == 'over':
+        G.remote_over = True
+        drop_over(window, x, y)
+        return {'mine': True}
+    if G.drop_index is None:
+        drop_over(window, x, y)
+    index = G.drop_index
+    G.drop_index, G.drop_line, G.drop_item, G.drop_open, G.drop_stack, G.remote_over = None, None, None, 0.0, None, False
+    entries = [e for e in req.get('entries') or [] if isinstance(e, dict)]
+    if not entries:
+        redraw(window)
+        return {'ok': False}
+    if entries[0].get('kind') == KIND_HEADING and index is not None:
+        index = section_edge(index)
+    new, colored = [], False
+    for e in entries:
+        kind = KIND_HEADING if e.get('kind') == KIND_HEADING else KIND_APP
+        b = Block(block_num=G.block_number, name=str(e.get('name', '')), path=str(e.get('path', '')), iconb64=str(e.get('icon', '')), kind=kind,
+                  bar=bool(e.get('bar', True)))
+        G.block_number += 1
+        new.append(b)
+        color = str(e.get('color') or '')
+        if kind == KIND_HEADING and re.fullmatch(r'#[0-9a-fA-F]{6}', color) and b.name not in G.head_colors:
+            G.head_colors[b.name], colored = color, True                # a heading's own Colour comes along
+    if colored:
+        sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
+    insert_entries(window, new, index)
+    return {'ok': True, 'added': len(new)}
+
+
+def entry_payload(blocks):
+    """ Entries as plain data for another dock: name, path, icon, kind, Show in the Bar, a heading's own Colour """
+    return [{'name': b.name, 'path': b.path, 'icon': b.iconb64.decode() if isinstance(b.iconb64, bytes) else (b.iconb64 or ''), 'kind': b.kind, 'bar': b.bar,
+             'color': G.head_colors.get(b.name, '') if b.kind == KIND_HEADING else ''} for b in blocks]
+
+
+def other_docks():
+    """ The other docks that have a local port: [(slug, name, port)] - from their settings files, only read """
+    folder, found = settings_folder(), []
+    for slug, name in list_docks():
+        if slug == G.dock_slug:
+            continue
+        try:
+            with open(os.path.join(folder, dock_files(slug)[0]), 'r', encoding='utf-8') as f:
+                port = json.load(f).get(K_IPC_PORT)
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(port, int) and 0 < port < 65536:
+            found.append((slug, name, port))
+    return found
+
+
+class DockLink:
+    """ One drag outside this dock: a thread that connects to the other running docks (a dock that isn't running doesn't answer), tells them where
+        the mouse is - only the newest position, one at a time - and at the end hands the entries to the one under the mouse """
+
+    def __init__(self, window, docks):
+        import threading
+        self.window, self.docks = window, docks                        # [(slug, name, port)]
+        self.wake, self.lock = threading.Event(), threading.Lock()
+        self.pos, self.final, self.under = None, None, None
+        self.conns = {}                                                 # slug -> (socket, file, name)
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def move(self, x, y):
+        """ The mouse is at x, y outside this dock (None, None: back on it) """
+        with self.lock:
+            self.pos = (x, y)
+        self.wake.set()
+
+    def finish(self, x, y, payload, meta):
+        """ Let go at x, y with payload (the entries) - None: just clear the other docks' lines """
+        with self.lock:
+            self.final = (x, y, payload, meta)
+        self.wake.set()
+
+    def ask(self, slug, req, wait):
+        conn = self.conns.get(slug)
+        if conn is None:
+            return None
+        try:
+            conn[0].settimeout(wait)
+            conn[1].write(json.dumps(req) + '\n')
+            conn[1].flush()
+            line = conn[1].readline()
+            if line:
+                return json.loads(line)
+        except (OSError, ValueError):
+            pass
+        self.close(slug)                                                # no answer in time: that dock is left out from now on
+        return None
+
+    def close(self, slug):
+        conn = self.conns.pop(slug, None)
+        if conn is not None:
+            try:
+                conn[0].close()
+            except OSError:
+                pass
+
+    def run(self):
+        import socket
+        for slug, name, port in self.docks:
+            try:
+                sock = socket.create_connection(('127.0.0.1', port), timeout=0.5)
+                self.conns[slug] = (sock, sock.makefile('rw', encoding='utf-8', newline='\n'), name)
+            except OSError:
+                continue
+            hello = self.ask(slug, {'op': 'hello'}, 1.0)
+            if not isinstance(hello, dict) or not hello.get('psgdock') or hello.get('slug') != slug:
+                self.close(slug)                                        # an old port that something else uses now
+            else:
+                self.conns[slug] = self.conns[slug][:2] + (hello.get('dock') or name,)
+        while True:
+            self.wake.wait()
+            self.wake.clear()
+            with self.lock:
+                pos, final, self.pos = self.pos, self.final, None
+            if final is not None:
+                break
+            if pos is not None:
+                self.over(*pos)
+        x, y, payload, meta = final
+        result = self.drop(x, y, payload, meta) if payload is not None else None
+        for slug in list(self.conns):
+            if result is None or slug != result.get('slug'):
+                self.ask(slug, {'op': 'leave'}, 2.0)
+            self.close(slug)
+        if result is not None:
+            try:
+                self.window.write_event_value(K_DOCK_SENT, result)
+            except Exception:
+                pass
+
+    def over(self, x, y):
+        """ Tell the docks where the mouse is: the first that says it's on it shows its line, the rest clear theirs """
+        under = None
+        for slug in list(self.conns):
+            r = self.ask(slug, {'op': 'over' if x is not None and under is None else 'leave', 'x': x, 'y': y}, 2.5)
+            if isinstance(r, dict) and r.get('mine') and under is None:
+                under = slug
+        self.under = under
+
+    def drop(self, x, y, payload, meta):
+        """ Hand the entries to the dock under x, y: {'ok': True, 'dock', 'slug', ...meta}, or {'ok': False, 'busy': [names]} """
+        busy = []
+        for slug in sorted(self.conns, key=lambda s: s != self.under):
+            name = self.conns[slug][2]
+            r = self.ask(slug, dict(payload, op='drop', x=x, y=y), 16)
+            if isinstance(r, dict) and r.get('ok'):
+                return dict(meta, ok=True, slug=slug, dock=name)
+            if isinstance(r, dict) and r.get('busy'):
+                busy.append(name)
+        return dict(meta, ok=False, busy=busy)
+
+
+def dock_sent(window, result):
+    """ What was dragged onto another dock - its answer: moved = gone from this dock (a copy stays), saved at once """
+    what, dock = result.get('what') or 'it', result.get('dock') or 'the other dock'
+    if not result.get('ok'):
+        if result.get('busy'):
+            notice(f'Nothing moved - {" / ".join(result["busy"])} didn\'t answer (a menu or a window of it open?)', '#b71c1c', 4)
+        return
+    if result.get('copy'):
+        notice(f'Copied {what} to {dock}')
+        return
+    colors = False
+    for num in result.get('nums') or []:
+        b = Block.active_blocks.pop(num, None)
+        if b is not None and b.kind == KIND_HEADING and b.name in G.head_colors and \
+                not any(o.kind == KIND_HEADING and o.name == b.name for o in Block.active_blocks.values()):
+            del G.head_colors[b.name]                                   # its Colour went with it
+            colors = True
+    if colors:
+        sg.user_settings_set_entry(K_HEAD_COLORS, G.head_colors)
+    save_entries()
+    G.hover = None
+    relayout(window)
+    notice(f'Moved {what} to {dock}')
+
+
 # ------------------------------------------------------------ Several docks: each named dock has its own list and settings ------------------------------------------------------------
 
 def dock_slug(name):
@@ -5584,7 +6546,11 @@ def dock_files(slug):
 
 
 def settings_folder():
-    return os.path.dirname(sg.UserSettings(MAIN_SETTINGS_FILENAME).get_filename())
+    """ The PySimpleGUI settings folder, where every dock keeps its files - worked out once and silently: reading the main dock's file while
+        it was being written showed PySimpleGUI's 'User Settings read warning' (11-Nov, docks starting together) """
+    if G.settings_dir is None:
+        G.settings_dir = os.path.dirname(sg.UserSettings(MAIN_SETTINGS_FILENAME, silent_on_error=True).get_filename())
+    return G.settings_dir
 
 
 def dock_arg():
@@ -5665,7 +6631,7 @@ def dock_running(slug):
     if slug == G.dock_slug:
         return True
     if not sg.running_windows():
-        return False
+        return dock_answers(slug)                                       # (no mutex there: its local port says)
     import ctypes
     k32 = ctypes.WinDLL('kernel32', use_last_error=True)
     k32.OpenMutexW.restype = ctypes.c_void_p
@@ -5713,7 +6679,7 @@ def start_dock(slug_or_name):
     if exe.lower().endswith('python.exe') and os.path.isfile(exe[:-len('python.exe')] + 'pythonw.exe'):
         exe = exe[:-len('python.exe')] + 'pythonw.exe'
     script = os.path.abspath(__file__)
-    subprocess.Popen([exe, script] + (['--dock', slug_or_name] if slug_or_name else []), cwd=os.path.dirname(script))
+    subprocess.Popen([exe, script] + (['--dock', slug_or_name] if slug_or_name else ['--alone']), cwd=os.path.dirname(script))     # (--alone: not the set)
 
 
 def open_dock(slug):
@@ -5726,6 +6692,133 @@ def open_dock(slug):
     else:
         start_dock(slug)
         notice(f'Opening {name}', C_SELECT)
+
+
+# ------------------------------------------------------------ The docks as one set (11-Nov-2026) ------------------------------------------------------------
+#  Mike runs 3-4 docks and starts PSG Dock from his taskbar pin.  The pin (no --dock) opens every dock that was open last time and isn't running;
+#  each dock keeps K_IN_SET in its OWN settings (True while open, False once closed on its own).  Close all / Restart all go to the other docks over
+#  their local ports ('quit' / 'restart'); a newer psgdock.pyw is offered by the first open dock only, and Restart now restarts them all.
+
+def dock_in_set(slug):
+    """ Was that dock open last time?  True / False from its own settings file (only read) - None when it never said (before 2.2.56) """
+    for tries in range(3):                                              # (a file another dock is writing reads as half a file: look again)
+        try:
+            with open(os.path.join(settings_folder(), dock_files(slug)[0]), 'r', encoding='utf-8') as f:
+                value = json.load(f).get(K_IN_SET)
+            return value if isinstance(value, bool) else None
+        except ValueError:
+            time.sleep(0.15)
+        except (OSError, AttributeError):
+            return None
+    return None
+
+
+def open_the_set():
+    """ The pin - psgdock.pyw with no --dock: start every dock that was open last time and isn't running now (never a second copy).  None of them
+        has said yet (first run of 2.2.56): all of them.  None left in the set: the main dock.  True: this copy goes on as the main dock """
+    G.dock_slug = None                                                  # (no dock of its own yet - dock_running asks about all of them)
+    docks = list_docks()
+    said = {slug: dock_in_set(slug) for slug, _ in docks}
+    want = [slug for slug, _ in docks if said[slug]] if any(v is not None for v in said.values()) else [slug for slug, _ in docks]
+    want = want or ['']
+    missing = [slug for slug in want if not dock_running(slug)]
+    G.dock_slug = ''
+    for slug in missing:
+        if slug:
+            start_dock(slug)
+    if not missing:
+        text = f'{dict(docks).get(want[0]) or APP_NAME} is already open' if len(want) == 1 else f'All {len(want)} docks are already open'
+        sg.popup_quick_message(text, font='_ 12', text_color='white', background_color=C_SELECT, auto_close_duration=2, non_blocking=False, keep_on_top=True)
+    return '' in missing
+
+
+def dock_answers(slug):
+    """ Off Windows (no mutex): is that dock running?  Its local port (in its own settings file) answers 'hello' with its own name """
+    import socket
+    try:
+        with open(os.path.join(settings_folder(), dock_files(slug)[0]), 'r', encoding='utf-8') as f:
+            port = json.load(f).get(K_IPC_PORT)
+        with socket.create_connection(('127.0.0.1', int(port)), timeout=0.3) as sock:
+            sock.settimeout(0.5)
+            f = sock.makefile('rw', encoding='utf-8', newline='\n')
+            f.write(json.dumps({'op': 'hello'}) + '\n')
+            f.flush()
+            hello = json.loads(f.readline() or 'null')
+        return isinstance(hello, dict) and bool(hello.get('psgdock')) and hello.get('slug') == slug
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def tell_docks(op):
+    """ Close all docks / Restart all docks: tell every other open dock - 'quit' or 'restart'.  Returns the names of the ones that didn't answer
+        (a dock busy in a stack, its search fly-out, the Programs window or a question) """
+    import socket
+    missed = []
+    for slug, name, port in other_docks():
+        if not dock_running(slug):
+            continue
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=1) as sock:
+                sock.settimeout(3)
+                f = sock.makefile('rw', encoding='utf-8', newline='\n')
+                f.write(json.dumps({'op': 'hello'}) + '\n')
+                f.flush()
+                hello = json.loads(f.readline() or 'null')
+                if not (isinstance(hello, dict) and hello.get('psgdock') and hello.get('slug') == slug):
+                    missed.append(name)
+                    continue
+                f.write(json.dumps({'op': op}) + '\n')
+                f.flush()
+                reply = json.loads(f.readline() or 'null')
+            if not (isinstance(reply, dict) and reply.get('ok')):
+                missed.append(name)
+        except (OSError, ValueError):
+            missed.append(name)
+    return missed
+
+
+def leave_together(restart):
+    """ Right-click > Restart all docks / Close all docks (or Restart now for a new version): the other open docks go first, then this one.
+        They stay in the set, so the pin opens them all again """
+    missed = tell_docks('restart' if restart else 'quit')
+    Update.restart, G.leave = restart, 'all'
+    if missed:
+        sg.popup_quick_message(f'No answer from {", ".join(missed)} - {"restart" if restart else "close"} it on its own (it may be busy)',
+                               font='_ 12', text_color='white', background_color='#b71c1c', auto_close_duration=4, non_blocking=False, keep_on_top=True)
+
+
+def set_leader():
+    """ The first open dock (in the Docks menu's order) speaks for the set - one 'new version' pop-up, not one per dock """
+    return next((slug for slug, _ in list_docks() if dock_running(slug)), G.dock_slug) == G.dock_slug
+
+
+def update_tick(window):
+    """ Every UPDATE_POLL_MS: one stat() of this file (update_check, the UPDATE block); a newer, settled psgdock.pyw -> K_UPDATE_FOUND """
+    try:
+        if window is not G.window or window.is_closed(quick_check=True):
+            return
+        new = update_check()
+        if new:
+            window.write_event_value(K_UPDATE_FOUND, new)
+        window.TKroot.after(UPDATE_POLL_MS, lambda: update_tick(window))
+    except Exception:                                                   # (the window went in the meantime)
+        pass
+
+
+def let_go():
+    """ Leaving: close this dock's local port and give up its mutex, so a new copy of it (Restart) can start at once """
+    try:
+        if G.ipc_server is not None:
+            G.ipc_server.close()
+    except OSError:
+        pass
+    if G.mutex and sg.running_windows():
+        try:
+            import ctypes
+            ctypes.WinDLL('kernel32').CloseHandle(ctypes.c_void_p(G.mutex))
+        except Exception:
+            pass
+        G.mutex = None
 
 
 def new_dock(window):
@@ -5759,6 +6852,43 @@ def rename_dock(window):
     set_right_click_menu(window, make_menu())
 
 
+def delete_dock_asked():
+    """ Right-click > Docks > Delete this dock...: True when the answer is yes - then this dock closes and delete_dock_files() removes it """
+    if not G.dock_slug:
+        return False
+    n = sum(1 for b in Block.active_blocks.values() if b.kind != KIND_HEADING)
+    what = f'its {n} program{"s" * (n != 1)} and settings' if n else 'its settings'
+    return bool(ask_near(G.menu_at or pointer(), 'Delete this dock', f'Delete the dock {G.dock_title}?\n\nIt closes, and {what} go -\na copy of its two files is kept '
+                         f'in {os.path.basename(deleted_docks_folder())}.', yes='Delete', danger=True))
+
+
+def deleted_docks_folder():
+    """ Where a deleted dock's files are kept: _download_mover_backup beside this program (Mike's Dock folder has one), else a folder in the settings
+        folder - never the settings folder itself (list_docks would take a copy there for a dock) """
+    beside = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_download_mover_backup')
+    return beside if os.path.isdir(beside) else os.path.join(settings_folder(), 'psgdock_deleted_docks')
+
+
+def delete_dock_files():
+    """ The last thing a deleted dock does (after its window has closed and written its settings for the last time): copy its two files to
+        deleted_docks_folder() with the time in their names, then remove them.  Nothing goes unless both copies were made """
+    import shutil
+    folder, stamp = deleted_docks_folder(), time.strftime('%Y%m%d_%H%M%S')
+    paths = [os.path.join(settings_folder(), f) for f in dock_files(G.dock_slug)]
+    try:
+        os.makedirs(folder, exist_ok=True)
+        for p in paths:
+            if os.path.exists(p):
+                base, ext = os.path.splitext(os.path.basename(p))
+                shutil.copy2(p, os.path.join(folder, f'{base}.deleted_{stamp}{ext}'))
+        for p in paths:
+            if os.path.exists(p):
+                os.remove(p)
+    except OSError as e:
+        sg.popup_quick_message(f'Could not delete {G.dock_title}: {e}', font='_ 12', text_color='white', background_color='#b71c1c', auto_close_duration=4,
+                               non_blocking=False, keep_on_top=True)
+
+
 def make_dock_shortcut(folder=None):
     """ Right-click > Docks > Desktop shortcut for this dock: a shortcut (on the desktop, or in folder) that starts this dock.  Returns its path, or None """
     script = os.path.abspath(__file__)
@@ -5768,7 +6898,7 @@ def make_dock_shortcut(folder=None):
     icon = os.path.join(os.path.dirname(script), 'psgdock.ico')
     lnk = re.sub(r'[<>:"/\\|?*]', '_', G.dock_title) + '.lnk'
     env = dict(os.environ, PSGDOCK_LNK=lnk, PSGDOCK_FOLDER=folder or '', PSGDOCK_EXE=exe, PSGDOCK_DIR=os.path.dirname(script), PSGDOCK_ICON=icon if os.path.isfile(icon) else exe,
-               PSGDOCK_ARGS=f'"{script}"' + (f' --dock "{G.dock_title}"' if G.dock_slug else ''))
+               PSGDOCK_ARGS=f'"{script}"' + (f' --dock "{G.dock_title}"' if G.dock_slug else ' --alone'))
     ps = ("$f = if ($env:PSGDOCK_FOLDER) { $env:PSGDOCK_FOLDER } else { [Environment]::GetFolderPath('Desktop') }; $p = Join-Path $f $env:PSGDOCK_LNK; "
           "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($p); $s.TargetPath = $env:PSGDOCK_EXE; $s.Arguments = $env:PSGDOCK_ARGS; "
           "$s.WorkingDirectory = $env:PSGDOCK_DIR; $s.IconLocation = $env:PSGDOCK_ICON; $s.Save(); Write-Output $p")
@@ -5846,6 +6976,8 @@ def load_view_settings():
     G.bar_labels = bool(sg.user_settings_get_entry(K_BAR_LABELS, False))
     G.handle_name = bool(sg.user_settings_get_entry(K_HANDLE_NAME, False))
     G.bubble_section = bool(sg.user_settings_get_entry(K_BUBBLE_SECTION, True))
+    G.bar_controls = sg.user_settings_get_entry(K_BAR_CONTROLS, None)
+    G.bar_controls = G.bar_controls if G.bar_controls in BAR_CONTROLS else None                # not set: tucked by itself on a small bar (bar_controls)
     G.flyout = sg.user_settings_get_entry(K_FLYOUT, 0.3)
     G.flyout = G.flyout if G.flyout in FLYOUTS.values() else 0.3
     G.hide_delay = sg.user_settings_get_entry(K_HIDE_DELAY, AUTOHIDE_DELAY)
@@ -5874,6 +7006,12 @@ def keep_going(window, event, values):
         return True
     if event == K_MOVED:
         remember_location(window, values[K_MOVED])
+        return True
+    if event == K_VERSIONS_FOUND:
+        versions_found(window, values[K_VERSIONS_FOUND])
+        return True
+    if event == K_IPC:                                                  # another dock asking: busy while the panel is open
+        values[K_IPC][1]['done'].set()
         return True
     return False
 
@@ -6107,6 +7245,8 @@ def brightness_panel(card, keep_going):
 
 def main():
     sg.set_options(border_width=0, dpi_awareness=True)
+    if dock_arg() is None and '--alone' not in sys.argv and not open_the_set():      # the pin: every dock that was open last time
+        return
     slug, name = use_dock(dock_arg())                                   # --dock "Claude chats": that dock's own files
     if not claim_dock(slug):                                            # already running: two copies would write the same files
         shown = dict(list_docks()).get(slug) or name or APP_NAME
@@ -6118,21 +7258,32 @@ def main():
         migrate_settings()
     if new:
         start_new_dock(name)
+    sg.user_settings_set_entry(K_IN_SET, True)                          # open: the pin opens it again next time (unless it's closed on its own)
     G.dock_title = sg.user_settings_get_entry(K_DOCK_NAME, None) or name or APP_NAME
     G.dock_ready = True
     G.launcher_settings = sg.UserSettings(ENTRIES_FILENAME)
     load_view_settings()
+    diag_write(f'started - theme {G.theme}', trail=False)
     apply_theme()
     window = make_psg_launcher()
+    ipc_start()                                                         # the other docks can hand this one what's dragged onto it
 
     pending = None                                                      # a dock event that came in while the Brightness panel or a stack was open
     while True:  # The Event Loop
         event, values = pending or window.read()
         pending = None
+        if event not in (K_HOVER, K_IPC):
+            diag_note('event', repr(event)[:100])
+        if isinstance(event, str) and '::' in event and not event.startswith('x::') and not menu_picked(event):
+            continue                                                    # a menu command nobody picked (11-Nov) - stopped and logged
         if event in ('Exit', sg.WINDOW_CLOSED):
             break
         menu_key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event      # right-click items come back as 'label::key'
-        if menu_key == 'Exit':
+        if menu_key == 'Exit':                                          # this dock alone: the pin leaves it out next time
+            G.leave = 'one'
+            break
+        if menu_key in ('Restart', K_CLOSE_ALL):                        # Restart all docks / Close all docks ('Restart' alone when it's the only one)
+            leave_together(menu_key == 'Restart')
             break
         if event == K_HOVER:
             G.hover = values[K_HOVER]
@@ -6150,10 +7301,13 @@ def main():
             notice(values[K_TIP], C_SELECT, 6, beside_dock=True)
         elif event == K_CLICK:
             part = values[K_CLICK]
-            if part == 'close':
+            if part == 'close':                                         # the Panel's x: this dock alone
+                G.leave = 'one'
                 break
             if part == 'hide':                                          # tuck it away now (auto-hide)
                 hide_now(window)
+            elif part == 'more':                                        # the Bar's end cap: its tucked controls out / folded
+                tools_click(window)
             elif part == 'gear':
                 menu_key = K_PROGRAMS                                   # handled at the bottom
             elif part == 'switch':
@@ -6174,12 +7328,35 @@ def main():
                 start_program(window, part[1])
                 if G.search:                                            # started from a search: it clears a moment later
                     clear_search_later(window)
+        elif event == K_HEAD_RENAME:                                    # Panel: a heading double-clicked
+            G.menu_target, G.menu_at = values[K_HEAD_RENAME]
+            entry_action(window, K_E_RENAME)
         elif event == K_STACK_OPEN:                                     # the mouse rested on a stack
             if values[K_STACK_OPEN] in Block.active_blocks and G.style == 'Bar':
                 pending = open_stack(window, values[K_STACK_OPEN], by_hover=True)
         elif event == K_FIND_OPEN:                                      # a letter typed while the Bar has the keyboard: its search, with that letter
             if G.style == 'Bar' and search_on():
                 pending = open_search(window, values[K_FIND_OPEN])
+        elif event == K_IPC:                                            # another dock: something dragged over / dropped on this one
+            req, box = values[K_IPC]
+            if not box['expired']:
+                box['taken'] = True
+                try:
+                    box['reply'] = ipc_answer(window, req)
+                except Exception as e:
+                    box['reply'] = {'ok': False, 'mine': False, 'why': str(e)}
+            box['done'].set()
+            if G.leave:                                                 # another dock closed / restarted the set
+                Update.restart = G.leave == 'restart'
+                break
+        elif event == K_UPDATE_FOUND:                                   # a newer psgdock.pyw: the first open dock asks, once, for the whole set
+            if set_leader():
+                update_offer(window, values[K_UPDATE_FOUND], (T()['card'], T()['text'], C_SELECT))
+                if Update.restart:
+                    leave_together(True)
+                    break
+        elif event == K_DOCK_SENT:                                      # what was dragged onto another dock: its answer
+            dock_sent(window, values[K_DOCK_SENT])
         elif event == K_VERSIONS_FOUND:                                 # the versions' refresh found programs whose version changed
             versions_found(window, values[K_VERSIONS_FOUND])
         elif event == K_DROP:
@@ -6202,16 +7379,31 @@ def main():
             set_right_click_menu(window, make_menu())
         elif menu_key == K_ADD_LINK:
             ask_for_link(window)
+        elif menu_key == K_ADD_HEAD:
+            ask_for_heading(window)
         elif isinstance(menu_key, str) and menu_key.startswith(K_OPEN_DOCK):  # Docks > a dock
             open_dock(menu_key[len(K_OPEN_DOCK):])
         elif menu_key == K_NEW_DOCK:
             new_dock(window)
         elif menu_key == K_RENAME_DOCK:
             rename_dock(window)
+        elif menu_key == K_STARTUP:                                     # Start with Windows: one shortcut for the whole set, the same tick in every dock
+            error = set_startup(not startup_on(), ICON)
+            if error:
+                sg.popup_error(f'Start with Windows did not work:\n{error}', title=APP_NAME, keep_on_top=True, non_blocking=True, icon=dock_icon_64)
+            else:
+                notice('Starts with Windows - the docks that were open come back' if startup_on() else 'No longer starts with Windows', C_SELECT, 3)
+            set_right_click_menu(window, make_menu())
+        elif menu_key == K_DELETE_DOCK:                                 # (the main dock has no such item)
+            if delete_dock_asked():
+                G.leave = 'delete'
+                break
         elif menu_key == K_DOCK_SHORTCUT:
             make_dock_shortcut()
         elif menu_key == 'Version':
-            sg.popup_scrolled(f'{__file__}\n{APP_NAME} version {version}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10), icon=dock_icon_64)
+            startup = f'\nStart with Windows:  {startup_link() if startup_on() else "off"}' if sg.running_windows() else ''
+            sg.popup_scrolled(f'{__file__}\n{APP_NAME} version {version}{startup}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10),
+                              icon=dock_icon_64)
         elif menu_key == 'Edit Me':
             sg.execute_editor(__file__)
         elif menu_key in (K_REFRESH, 'Refresh'):
@@ -6225,7 +7417,9 @@ def main():
                         'replaced, and only by the program\'s own\nicon - a picture you dropped on an entry stays unless\nthe program has a bigger icon of its own.',
                         yes='Fetch them'):
                 sharpen_icons(window)
-        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK):
+        elif menu_key == K_E_START_ALL:                                 # a heading's Start all N programs
+            start_section(window, G.menu_target)
+        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK, K_E_ADD_HEAD):
             entry_action(window, menu_key)
         elif isinstance(menu_key, str) and menu_key.startswith(K_E_COLOR):     # a heading's Colour > a choice
             heading_color(window, menu_key[len(K_E_COLOR):])
@@ -6272,7 +7466,7 @@ def main():
             sg.user_settings_set_entry(K_BAR_LABELS, G.bar_labels)
             relayout(window)
             set_right_click_menu(window, make_menu())
-        elif isinstance(menu_key, str) and menu_key.startswith(K_THEME):
+        elif isinstance(menu_key, str) and menu_key.startswith(K_THEME) and theme_picked(menu_key[len(K_THEME):]):
             G.theme = menu_key[len(K_THEME):]
             sg.user_settings_set_entry(K_THEME, G.theme)
             apply_theme()
@@ -6317,6 +7511,12 @@ def main():
             if pick_handle_color(window):
                 redraw(window)
                 set_right_click_menu(window, make_menu())
+        elif isinstance(menu_key, str) and menu_key.startswith(K_BAR_CONTROLS):    # right-click > Controls > Tucked / Always / None
+            G.bar_controls = menu_key[len(K_BAR_CONTROLS):] if menu_key[len(K_BAR_CONTROLS):] in BAR_CONTROLS else None
+            sg.user_settings_set_entry(K_BAR_CONTROLS, G.bar_controls)
+            tools_fold()
+            relayout(window)
+            set_right_click_menu(window, make_menu())
         elif menu_key == K_BUBBLE_SECTION:
             G.bubble_section = not G.bubble_section
             sg.user_settings_set_entry(K_BUBBLE_SECTION, G.bubble_section)
@@ -6349,6 +7549,13 @@ def main():
     remember_location(window)
     glass_free(G.layered)
     window.close()
+    if G.leave == 'one':                                                # closed on its own: the pin leaves it out next time
+        sg.user_settings_set_entry(K_IN_SET, False)
+    if G.leave == 'delete':                                             # Delete this dock: its files go last (a backup is kept)
+        delete_dock_files()
+    let_go()                                                            # its port and mutex - a new copy (Restart) finds the way clear
+    if Update.restart:
+        restart_self(['--alone'] if not G.dock_slug and '--alone' not in sys.argv else [])
 
 
 blank_image_30x30 = b'iVBORw0KGgoAAAANSUhEUgAAAB4AAAAeCAYAAAA7MK6iAAAAGklEQVR4nO3BMQEAAADCoPVP7W8GoAAAAKAzDi4AAXXIMrUAAAAASUVORK5CYII='
@@ -6356,6 +7563,7 @@ blank_image_30x30 = b'iVBORw0KGgoAAAANSUhEUgAAAB4AAAAeCAYAAAA7MK6iAAAAGklEQVR4nO
 launcher_icon = b'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAE4UlEQVR4nO1V24uVVRT/rb33dzvnzMW8JOPdUSZx7OagYZlJhvfCQAkkQp/qwYeoByVsknwoUehJEIQgyQd7KAQpBDEHK43OQ46allLqTNnMmTlz5sz5zved79tr9XDmZv4JtWFt9l4/WL+19t7rt4H/x39odIoiAJMNnaIAQKRTPYjQqA+Qzk4Fook4RHXf2PZfNC6AMZAB1CZj80axOw9jzjxA36mvBUA8QdApCgdIWt7ten/6zDlPOTasAECiM9mBvrv5nkNrDl77+sl902dPXSlVNQIAOiOZgZ7+7rYNP3/w0/oX32mZ8ejqiPQwIJQlBD1/99346Juz+0/VyQCs+7jl6cO3LovIy5Ns2+OH73Y9s33dsmr32i6R5FUR2TqKbS1fW3/xyHZnWc9rO7+VsLxDRLaIyCsisql39xuXj82Z0woApn4YCVlGOhRDiY0ZACLrqZQl1aQUoZYg7VcpsoC1MJ6nCJxYB5qsJCgUVNzEpK2FmdKgiDlRrkvjBA3lm1EhkqUrjhY+VbYWAwIxnj8S2Ri3K0XmyhL07jiOKkWkABj2lI3k0lC2uFMPL4r27j0WiVRAUA7gohIGg42N4UQFABSRjcU8IswABIoNCPKXuEwgslBJk9G2CQRAEwQYcKwQDFlj00adpI1EBKMUQBSOxTUAkPWMgrAiTixJIoCAWBNByOiMZo4JKWyakhABmoggBC9wtTBRTYRTIgsiEgixgMRxFEafJN2/mA+t8mri5rTVvrHaN+JmdQqD7ovnKo5OgCy08WG0D4MstGNSunC2v+JwgozWygecADANSussOKne+DGsdwWAPe8dau0abjkVz3vB0zYiALDak6l9PwwvTn+9vnFpfsnmZwtNNlYkAnJ85nOXp5RPdj93beP97se2ctxclXqsDIl8GYqcb1+148TBt3+hI6e+D86dPtl177fujqZccNUYByxCAAugcnAyzZWqlCBcJlUPIiIi0NlcgCkhc0mEy5pAAAkzy0Cp3N7Wuvj6yhWrVpnbNy4tHBzoWzYSpRJzrZ0lGm9PEQF4CFpTM0iNtw0IgAhKRYYi1UyTpIKUgq5FUiz0L/lzaKDNjBTDoUw2V9ZGT2ObyGT5oNGJWUCwD8kXESDgCWIQxLJAacpkcyNptThAANSW1996M4ri/eFIOUeAnpQOoIjYkqQs45omAhhFUFrICsAyQQHAZrKZMOv7h86cOPoJYflyB/l8MLdj8wp/xux5thYqiCJoBS7e46TwBy+YG6iFszyVWK4rm1a42xvLzbs1Oz8XqPmZQFkAsIDvGVsol3rOXLlyCUBIANC2+3hDadGm1eJnNaB5LP1qeaDW+Nmq279/5bWaaY0uwHVMC6GUpus3XL91YuFLC2c0eB5E8Wh5VGErX5Qq3+26cGHIAED/E89TrmozHJessCUA0Iop0Vmz58M9oXFOBmEh0IAVANCwQOC6n+9bF+rTzX4fqg5E1TFiIcd1ts1qpl1j2r/AH65aMYNQWpRxUuX6CSvfBlqKxphiKmbIdVLrepS4HiXaUaxTNVRtHCkaqhVdUewrSRziVBOJsC32DQ6GeODD6RTTlikEgyELAHBGUXt4tXrhwNpUzq8xmJkEsE79MnVC+UocdXTkk/Nr1pj2pqaAPU8AQMUx3entjTry+QQA/gF0+YdyFnDz5wAAAABJRU5ErkJggg=='            # PSG Dock icon, 24 px, beside the title
 
 dock_icon_64 = b'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAANlklEQVR4nO1afXBc1XX/nXvve7tvV9JKlvwhW7YsgY2xKV82CYZQORA+CkNKQu3pkATP0A6fiYFJk5AZQHFJJ2TSmVBTkgwkIVOgAdvQEkM6qSFU1CYmtmNiQ4SpiZAtf8j61q60u2/fPad/vJUtS7vyytBSqH4zRzurve/cc3/33nPOvecBU5jCFKYwhSlMYQpTmMIUpjCFKUzh/xvoA2ozAvmA9Pxv6ir6DEGEQAolidKAiCpknDRDGU1QCiWJ0QQRqIJWNTcrTQRVohgiNKOwLkzAJI1iraIEtgiADyANIkCOEy4CIoLk21SUMBsKQApAMOrZ8AcicKg7AiBagi4CMICwIVGB9mbcIyIEInFrFy6quvbb91BVw3Jm9iboS6AUtARH/X1bnu157uvfB6kshEnCXuXWVdOvvPEvZ6yZVUVnwrIpRjuBRAxx7yDaNr3Y+yjRoafzJIQMiuDbZ591y5W1s77kAXOsMEGoiDaBUdrv8LNv/MM7e79HBztfL0TCWAIUlOZo5fz6qht+/K/uwkvOcIe6hxKe2s8CXaQfYUD355xl7tyly1S8srbriZvvXi9CSpFd88UZl99/15znqhdEY+iNdEJ5vYDognwSMdgva6gY/vSChuiKSJwcpQ4+IbJSE22w65ae9/WbT2v8bkQrDEe990ibNETUWFUEAIqspIdnLRZcP8+LfYpl95+pQ4d2NQNqLcAntD0+GFEg4ppVDzXHV6z5VnVwdMdLf1X5QFUskhyzLcb2FzzU0r9s3S56wB84oo8+/qUL+cCONyyL85v1izddeFXiylzX6U9T4z89dgJ1BewWwErbl1e5iZ23t24f2r34qj2XGE2D5U5k7tZLm7YvrKioSS6/+DuVa+7cDMAE4SwW0iUB4CbvuO2rVQP9l29s3/+TlVte+2sRISI6vq1OnMxQkamuX8Qi8ueL3H+pikX6OoeDRADEskFQVkDifcNB1V1NldtmRzM7UTYzEmtc1sgsAFAxs8acjh6xqvb+5wygDYbLEGTjJsiWjZG4QTbuAHG34R83oc/pm5agBiAyI7CCc6eVz51mzMzhqPdu5Zo7Xw6y2QSy2Tiy2XiQzZaNFgRBLEgmKwzge5+7fiPYSp3nLQSgHKVk9MSP9wEARMQSmCKGAgBOuWusAcQYU9ARZG1AAFzHOGlABHxsiQlEGJYEsBT253IxPSOzFwDakM4yw4ysFE3EAogyOnPM7kiECw4AgPE8C8BBfsAM4YLtCj4tIIDgKGUBUGBBwQSxN22hKgAoEgbU2Hbh0haHwxVnJ47hga9gYjkg9FhjFJGABIDA9xW0Lk6ktRQYo+C6FggfLNSsIAFEECGN1i5/LoBXKyJwANhifc00JgOA+4bt3NC8YySQCFl4oiWzuxqxxj1ApByjnNDYrmFMhtJ7Z0H5CYAyEYCyI9wAotLpmQAcU14+WHQCAcAYZYD+9DtvL42CIAQuFPYLbwFSpG0Wv27Lrb77xb5MU6O7LxuQLkaB0pAfb09d05VRS5TNAOq4bxFAYIRUz7qvgo8+ClM3ALJqrKowxCixQX8U/U+uRizwAJWKRLLIZgFXRDEo5/jZWYN33PYN97PXrYcxrAvMjAYgjmPtvn2f4Jc335q3o/QVABGCWPiWKze2yjeee7Nfxi/I442FNIlyoTiTj9rHQQDBJ2gMLsDgY9+zPgnReGUcJk2iHQl/yh7LLE/gOiMCp/PIitxjP1oRAEJFBiaARAGCCBBx89t6PIqmiACBSAJl01x88ABARMLQNl1sWQME5AKy1idRVNyXKALZHEngky2eLAEZwAaAqAn8kgIoA7AlCorbPiEBx5zhxG2ON52wHQFEBJrI/Uvof+ikdoWe9uS6AAWRCZ1uSYP7OGOKgA/bgA8bUwR82AZMBCKIjApfhc7z7xeFb12KxMzStR6LCOb9Miz5HIlECh/HSzUp/Bg3rtH20aoN4XdCwPnIP1nGhYiA9ACeWblSe56ngzAHlUnpIggLhJkIrqtWrl+p+wBweI6dnE1EApDk8jdLOeYTSDhhgjZ89xa1cv163bXn17/IDSehTcRALAN8cuGATVmNGu491Drwmyd2rNqwIZ5Op/v+0HrkRRVTBCjFDGYBMxeR/G/CgKoy1H6g599TKb9j56oNZa8d7t7bNdC3pTwaJSsiLBK2n0CsCCsiA7b0+wP7n29uFv7WkiXO6JVAoz5VXV2d29HRkf78jTf9aWviiq8Nzr/qQkVUIzIx6RQyjeH+o+8sPvDUm+ctrK1NpzOO53n2cMfB3ns+szF2/vnuRVDGgRRaiHmMdCPM774ztP2+5z/bOb1uwUx/OKUiXrkdaN11pPlwa8OcROKcMOM+mTKCYTv4b1m74/s1DQ9t/tnDm+rr66Pt7e1B/gghNDL4+vomp729JXPb2of/xo14D7617eWDe/YP/LbmohuSYCiGLZx8CUOZqFC6J9Ctz8dra2deqiJl05itEAGkjN3f1vHaNUuP/vGi87Rhn1Uxm1kAN6r493s5eOY/KmfPrq9vUkpcYYEiRVnmVE/Hu698MW56GhzjZJgnTD8dbfjJtgOxtnlnnNP0qcsWgfnv19176z31TU1Oe0tLDgCHg29qcttbWjK3Na+7XTvuI6/+6nlOpVIq5mrceN2lP0mUl2eCgBVRoaWgADACJjejYgnLnIHYQJEChCEQMo4TS6adrLVO8qTuVQClbKws5sclyA1DwCAFFoYCadKul1IqyY7KqJMEMQbj2ac2rg5SqbhxHNt09ee0VurBR+6/45v19U3R9vYWn5qamkxLS4tc/fmb6hqXfmL3tld+VdbdeQiRqEccJuclRQQRABzkm4+9amQoRVDj7kqK6GKBZQEVmF8RhiYq1axwVxFJLufDi8V5xVXXqb7DRy745x8+sGvp0qXaeJ6nAWTnn33uFYN9vRXdnYds1ItpZh65yinJ64Y3sYVnZGQgXPy8OE5bMbKI1CRDCggi5LoRJAf6pavzMM2aO+c6ADsdpzGi+vvLFQA4jrswlRyQEOPG9lEWID+PRAqDA31QSi8I/3sAKpdL5yeaC5a1Po6QfAkvl8udsMn4FIuIHyVQ3l3xMQIcp1sAqMGB3r0VldMoxIdt5wcPIgURlqrq6eSn03vD/86E2ta9jQHEX9+8qaWsPNE1p75RDw+lrFIqvML5GIhSCpn0EFdPn6Wqp8/039zxn78E4PX2trLBPnBVVaNqfeP1riUXXHLf+cubfhQEgT584D1LpGhMsfcjBcr/YWaZNn2WvvgzV6Ov68h3tvzy2b2JxDy3o2P/UL5aAzcWq0kMD3era1d/+QsNZ/zJN3t7uip7j3aChYsWBf8vY3SiXFk9HTUzatNHD7Y9/MwPHnzEq64O0j09gwCylL9GdwB4kUiiMpsdMHWnLVzyycuuvaK8onoRi/WErZZ8ueSkPYucQNbILJzSKx1jjn7HDi4nUUZEAoEorawik02lBvbt2vrSy/+1Z+fvIpGKIJsd7AcwDCA3cgOr8y8dxFy3vNL3k7H897K8RPIkjU/zxvR9sjFNAqeqayRPCvIvbaQAJAFkXbcs7fupfgBDALIAgpHiI+cfyPp+MgkgqGg4tzpy5jUOGyPiZ3IQCSBcfBVoDdu9T9K7XwhC48Oaje9Dlp1Xpi9fnlB6ElcaW383wK9sTVnXPU6ED8jVtbX6nIqKcZWlEYyUvjURO0pZiDgvdXVh68GDSe2nhgGkAeRGwv6IcgVAoa7OQUeHTlx214yKy+4+S8VqNNQkZk5rDL212e9+dFW3QQ5BEPB9X5lT/rdfm5eAW/rgAQBW6Ic/7Uzefl9bvzFQQQB+avkF1TfMb/AmpUeEkr4vP2vveHvNzp0dtQAfDgmwownIL+0mBbSoOX/XdjGcaI2yvi9celZASoQiFc7Qb598r+fprxz+5Lk1sS0/P+1MKNZ+lqTUFWABaBKKeBo33fne3sd/cWTg3iVLau5dcsbpycAWLdIWNorEiBgWHlq9bcerLxw+7I9K+o7V3vL7piWoX/24gjYxAgeiDMFolCwwgPVRtuAiB0DPHV+YFkDDgRC7LqB1aeJqQCtiMOubr68WAF1/MXeWyrEoTSQmH7pKEhEKAKtIRfO3QYGMuqIbnQoLAMTnX1Dyma0ghEl58QBAZsmCeLaEJ4rCMmh2XdQH4JdH3AlrfBNhpAJcH4uNG9u486s3e8n7DvnK9RgA5sx0J7dcC2DGNGMBIOE61pYShidATSQybmz/I3UBydd24/H3rysaDT8n60NLxTgCdt6CQBNlhEkThIkhpQpEhNlqscEgALT3RIfAYgEQNPGoGF2KhDmVcBIAfFcPWhGCIhGahGjFYFYM+Fi8OIMxBZYTCRAhgCQTmDcBMARR0sotTcSF1p6Q7pxW3dcmAJ316ZaUhX2bwBGyEiHAJV2CAC4TeZzjd2nx9h4R0MNPnX3IaNqvxMYUkVuyCCJkjCbot2jt2mDsmyJF91R9c1tlEPfmacsOVAnHISYKhJOHsnP+iLXhSwkj+XjqD0tr48adBRLyJ1jOJ/4WdNGCHQdG2SkioP5VK+dTLjdNaMLXA0I44RW7Nraj4ucvdBd7XbYQPoY3AoUxwUCFTukIWGBmTrXWSAUsKPay00l1FZn5/wbjepkPMOCMewAAAABJRU5ErkJggg=='            # PSG Dock icon, 64 px, window / taskbar icon
+ICON = dock_icon_64                                                     # (the UPDATE block's pop-up takes ICON)
 
 if __name__ == '__main__':
     try:

@@ -10,9 +10,11 @@ Log (pythonw has no console): psg_local_tray.log in the PySimpleGUI settings fol
 
 Needs psg_local.py in the same folder (it does the actual switching: a psg_local.pth file in site-packages).
 Run it with the Python whose programs you want switched, e.g. a shortcut:  D:\\python\\Python312\\pythonw.exe psg_local_tray.pyw
+Right-click > Start with Windows: a shortcut in your Startup folder starts it with Windows - with the same Python it runs on now.
 A switch applies to programs started AFTER it - running ones (this tray included) keep what they loaded.
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-11  v1.7  Right-click > Start with Windows (a Startup shortcut, same Python);  the menu laid out like every tray app: name + version on top
 2026-11-03  v1.6  A real menu (tray_app_recipe.md's TRAY block): right-click is colored too (the old hook never took), active copy checked
 2026-11-01  v1.5  FIX: own port 47323 - it shared 47322 with psghotkey, so starting either one told the other to quit (both vanished from the tray)
 2026-10-29  v1.4  Single instance: a new launch tells the running copy to exit first (localhost port, same scheme as Download Mover / hotkey)
@@ -30,6 +32,8 @@ import logging
 import logging.handlers
 import os
 import socket
+import struct
+import subprocess
 import sys
 import threading
 import time
@@ -40,7 +44,8 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import psg_local
 
-VERSION = '1.6'
+VERSION = '1.7'
+APP_NAME = 'psg_local_tray'    # the Startup shortcut's name
 CHECK_SECONDS = 5           # how often the tray re-checks which copy is active (cheap: looks at the switch file first)
 FULL_PROBE_SECONDS = 60     # how often it starts a fresh interpreter to re-read version + file
 INSTANCE_PORT = 47323       # localhost port used to make sure only one copy runs: a new launch tells the old one to quit (Download Mover 47321, psghotkey 47322)
@@ -240,13 +245,61 @@ def style_menus(window):
 # --- end TRAY ---
 
 
+# --- STARTUP: start with Windows, hidden in the tray - the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) ---
+# The program supplies APP_NAME (the shortcut's name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC.
+START_IN_TRAY = '--tray' in sys.argv[1:]                          # started by the Startup shortcut: stay hidden in the tray
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows, hidden in the tray """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows, in the tray: make the shortcut (pythonw "<this file>" --tray) or remove it.  icon = the program's PNG
+        (base64): it goes beside the program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\" --tray';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
+
+
 def make_menu(state, version):
     """ the menu for the tray icon (click or right-click): the active copy at the top, a check mark on it """
     tick = lambda on: '✓ ' if on else '    '
     head = {'local': 'LOCAL', 'installed': 'INSTALLED', 'broken': 'import FAILS'}[state]
-    return ['', [f'!    PySimpleGUI {version or "?"}  -  {head}', '---', f'{tick(state == "local")}Use LOCAL copy::{M_LOCAL}',
-                 f'{tick(state == "installed")}Use INSTALLED copy::{M_INSTALLED}', '---', f'    Status...::{M_STATUS}', f'    Refresh::{M_REFRESH}', '---',
-                 '    Edit Me::Edit Me', '    Version::Version', f'    Exit::{K_EXIT}']]
+    tray = [f'{tick(startup_on())}Start with Windows, in the tray::{K_STARTUP}'] if sg.running_windows() else []     # no window: no Minimize to tray
+    return ['', [f'    {APP_NAME} {VERSION}::Version', '---',                                     # the same layout in every tray app (tray_app_recipe.md)
+                 f'!    PySimpleGUI {version or "?"}  -  {head}', f'{tick(state == "local")}Use LOCAL copy::{M_LOCAL}',
+                 f'{tick(state == "installed")}Use INSTALLED copy::{M_INSTALLED}', '---', f'    Status...::{M_STATUS}', f'    Refresh::{M_REFRESH}', '---', *tray, '---',
+                 '    Edit Me::Edit Me', f'    Version {VERSION}::Version', f'    Exit::{K_EXIT}']]
 
 
 def apply_menu(window, state, version):
@@ -354,6 +407,14 @@ def main():
             show_status(state, version, where)
         elif event == M_REFRESH:
             refresh(force=True)
+        elif event == K_STARTUP:
+            error = set_startup(not startup_on(), make_icon(state))
+            logging.info('start with Windows: %s %s', 'on' if startup_on() else 'off', error)
+            if error:
+                sg.popup_error(f'Start with Windows:\n{error}', keep_on_top=True)
+            else:
+                notify(f'psg_local_tray {"starts" if startup_on() else "no longer starts"} with Windows')
+            apply_menu(window, state, version)
         elif event == 'Version':
             sg.popup_scrolled(__file__, sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
         elif event == 'Edit Me':

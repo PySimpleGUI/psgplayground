@@ -2,7 +2,7 @@
 """
 iD880 Launcher - one window with a button for each iD880 program.  Each program opens in its own window; the launcher stays up.
 
-    Keys 1-6 launch the programs.   Esc closes the launcher (the other programs keep running).
+    Keys 1-7 launch the programs.   Esc closes the launcher (the other programs keep running).
 Needs id880_lib.py and the other iD880 programs in the same folder.
 """
 import os
@@ -22,7 +22,8 @@ PROGRAMS = [('iD880_Setup', 'Printer Setup', 'Connection, test prints, nudge, ra
             ('iD880_Address_Labels', 'Address Labels', 'Mailing, To-only and return labels', lib.GREEN),
             ('iD880_Ship_Label', 'Ship Label', 'Print a carrier PDF label as 4x6', lib.GREEN),
             ('iD880_Picture', 'Picture', 'Photos, drawings and screenshots', lib.GREEN),
-            ('iD880_Figlet', 'Figlet', 'Big FIGlet lettering and banners', lib.GREEN)]
+            ('iD880_Figlet', 'Figlet', 'Big FIGlet lettering and banners', lib.GREEN),
+            ('iD880_Banner', 'Banner', 'Big lettering in any font on this PC - banner or across', lib.GREEN)]
 
 
 def make_window():

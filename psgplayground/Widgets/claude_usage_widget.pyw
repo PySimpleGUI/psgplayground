@@ -6,18 +6,25 @@ THE WIDGET
     Claude  Max (20x)                              ● dot: green ok · amber warn · red near limit · blue checking · grey no data
       Session      ▓▓▓░░░░░░░░░   9%   in 4h 51m   bar: % of that limit used · the thin grey tick is where you'd be at an even pace
       All models   ▓▓░░░░░░░░░░   8%   Mon 3 PM
-      Fable        ▓▓▓▓░░░░░░░░  16%   Mon 3 PM
+      Fable        ▓▓▓▓░░░░░░░░  16%   Mon 3 PM        a model's own limit, in the accent (right-click > Accent - pink unless you pick another)
       Credits      ▓▓▓░░░░░░░░░  31%   $103.50 left    the month's usage credits against your monthly limit (green bar)
                    $46.50 of $150.00 spent · about $13.20/day
       [ graph ]    % over time for one limit (0-100 on the Y axis), solid = what happened, dashed = where your current rate leads
       ⚠ Session runs out ~7:40 PM - 1h 23m before its reset
     Click it          ->  Detail window: every limit with its own history graph + forecast, reset time, spend, raw JSON.
+    Sizes             ->  right-click > Size, or Ctrl + mouse wheel over it: Tiny (one strip: ● Fable 5 ▓▓░░ 16% - the favorite model, else the most
+                          urgent limit; a click opens the Detail window) · Small · Medium · Large.  Remembered between runs.
 
 THE FORECAST
     Rate = least-squares slope of the recent checks (last 90 min for the session limit, last 24 h for weekly ones); when there aren't
     enough checks yet it falls back to the average rate since the window started.  From that: when 100% would arrive, and whether
     that's before or after the reset.  A finite monthly spend limit gets the same treatment in $/day.
-    ≡ or right-click  ->  Refresh · Detail · Pause · Keep on top · Theme · Brightness · Snap to corner · Settings · Sign in · Edit Me · Version · Exit
+    ≡ or right-click  ->  Refresh · Detail · Pause · Keep on top · Theme · Brightness · Accent · Size · Snap to corner · Settings · Sign in · Edit Me ·
+                          Version · New versions · Restart · Exit
+    Restart starts a fresh copy that comes back as it was (place, size, theme, accent).  When a newer version of this file is saved over it (Dropbox),
+    right-click > New versions decides: by itself once the mouse is off the widget and nothing of it is open (the default), ask first, or only say so.
+    Start with Windows (right-click, Windows only, off to start): a shortcut, Claude Usage.lnk, in your Startup folder and its icon, Claude Usage.ico,
+    beside the settings file; unticking removes the shortcut.  The Version window names it.
     Drag it anywhere; its position is remembered.  Esc closes it.  The other windows are moved by their title strip.
 
 WHERE THE NUMBERS COME FROM
@@ -38,6 +45,9 @@ Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings and history 
 user-settings folder; problems are logged to claude_usage_widget.log in the same folder.
 
 CHANGELOG
+    1.7.3  11-Nov-2026   Restart and New versions (right-click, just above Exit) - the UPDATE block: a newer version of this file restarts it by itself, unless you pick otherwise
+    1.7.2  11-Nov-2026   Start with Windows (right-click, Windows only): a shortcut in your Startup folder, off to start - the STARTUP block (recipe section 7); sub-menu arrows
+    1.7.1  11-Nov-2026   Size: Tiny (one strip - the favorite model's bar and %) / Small / Medium / Large, right-click > Size or Ctrl + mouse wheel; Accent: the models' color
     1.7.0  06-Nov-2026   The standard widget themes: right-click > Theme (32, as color chips) and Brightness...; every window themed with no OS title
                          bar (moved by its title strip, round corners on Windows 11); flat themed menus; Esc closes the widget; --demo has its own settings
     1.6.6  03-Nov-2026   Credits get a bar row like the limits - % of the monthly limit, $ left, $ spent and $/day - and count in the
@@ -53,23 +63,179 @@ import io
 import json
 import math
 import os
+import re
 import secrets
+import struct
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
+import tkinter.font
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from tkinter import colorchooser
 
 import PySimpleGUI as sg
 from PIL import Image, ImageDraw, ImageFont
 
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026, block 2) - paste unchanged ---
+# Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
+# a NEWER VERSION saved over it counts once it has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts).
+# Then right-click > New versions decides (remembered, -NEW VERSIONS-; the program sets Update.default for its kind):
+#   'auto'  By itself - hidden in the tray at once, showing once the mouse has been off the window UPDATE_QUIET seconds and nothing of it is open
+#   'ask'   Ask me first - a small pop-up, Restart now / Later (Later by itself after 30 s); hidden in the tray it goes by itself
+#   'menu'  Only say so here - never by itself; the menu reads "Restart - x.y.z is ready"
+# Not the internet: the file itself, which Dropbox brings to every PC.
+# Wiring (Tools\update_block.md):  main() start: Update.default = 'auto' / 'ask' / 'menu';   menu, just above Exit: *update_menu(tick)
+#   each event: if update_event(event): end the loop if Update.restart, else remake the menu
+#   timer (every 2-5 s): if update_tick(window, hidden, busy, colors): remake the menu;  if Update.restart: end the loop
+#   the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+UPDATE_SETTLE = 60
+UPDATE_QUIET = 10
+UPDATE_CHOICES = (('auto', "By itself, while I'm not using it"), ('ask', 'Ask me first'), ('menu', 'Only say so in this menu'))
+
+
+class Update:
+    default = 'ask'                   # the program's kind: 'auto' widgets + tray apps, 'ask' other programs that run all day, 'menu' open-and-close
+    seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
+    ready = ''                        # a newer VERSION saved over this file (settled, compiles)
+    asked = ''                        # the version the pop-up already asked about - not asked again
+    away = None                       # when the mouse left the window (for 'auto')
+    restart = False                   # set -> the main loop ends, then restart_self()
+
+
+def update_mode():
+    mode = sg.user_settings_get_entry('-NEW VERSIONS-', Update.default)
+    return mode if mode in dict(UPDATE_CHOICES) else Update.default
+
+
+def update_check():
+    """ Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only after it changed and settled """
+    try:
+        mtime = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        return ''
+    if Update.seen is None:
+        Update.seen = (mtime, None)
+    if mtime != Update.seen[0]:
+        Update.seen = (mtime, time.time())
+        return ''
+    if Update.seen[1] is None or time.time() - Update.seen[1] < UPDATE_SETTLE:
+        return ''
+    Update.seen = (mtime, None)                                           # looked at: wait for the next change
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            text = f.read()
+        compile(text, __file__, 'exec')
+        found = re.search(r"^VERSION = '([0-9.]+)'", text, re.M)
+    except (OSError, SyntaxError, ValueError):
+        return ''
+    newer = found and tuple(int(x) for x in found.group(1).split('.')) > tuple(int(x) for x in VERSION.split('.'))
+    if newer and found.group(1) != Update.ready:
+        Update.ready = found.group(1)
+        return Update.ready
+    return ''
+
+
+def restart_label():
+    """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
+    return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
+
+
+def update_menu(tick=None, indent='    '):
+    """ The right-click items to put just above Exit: the New versions sub-menu (its choice ticked) and Restart.  tick(on) = the program's own
+        check-mark prefix, so the items line up with its other ones """
+    tick = tick or (lambda on: '✓ ' if on else indent)
+    mode = update_mode()
+    return [f'{indent}New versions', [f'{tick(k == mode)}{text}::-NEW VERSIONS {k}-' for k, text in UPDATE_CHOICES], f'{indent}{restart_label()}::Restart']
+
+
+def update_event(event):
+    """ True when the event was one of this block's: Restart (sets Update.restart) or a New versions choice (saved - remake the menu) """
+    key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event
+    if key == 'Restart':
+        Update.restart = True
+        return True
+    for k, _ in UPDATE_CHOICES:
+        if key == f'-NEW VERSIONS {k}-':
+            sg.user_settings_set_entry('-NEW VERSIONS-', k)
+            return True
+    return False
+
+
+def mouse_away(window):
+    """ True once the mouse has been off the window UPDATE_QUIET seconds in a row """
+    try:
+        root = window.TKroot
+        px, py = root.winfo_pointerxy()
+        x, y, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        inside = x <= px < x + w and y <= py < y + h
+    except Exception:
+        inside = False
+    if inside:
+        Update.away = None
+        return False
+    Update.away = Update.away or time.time()
+    return time.time() - Update.away >= UPDATE_QUIET
+
+
+def update_tick(window, hidden=False, busy=False, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Call on the timer.  hidden = the window is hidden in the tray;  busy = a dialog, panel or edit of the program is open (nothing happens
+        then);  colors = (background, text, button) of the pop-up - the program's own theme.  Sets Update.restart when it is time.
+        Returns True when the menu should be remade (a version became ready, or the pop-up was answered Later) """
+    new = update_check()
+    if not Update.ready or Update.restart:
+        return bool(new)
+    mode = update_mode()
+    if mode == 'menu':
+        return bool(new)
+    if hidden:
+        Update.restart = True
+        return False
+    quiet = mouse_away(window) and not busy
+    if mode == 'auto':
+        Update.restart = quiet
+        return bool(new)
+    if Update.asked != Update.ready and not busy:
+        Update.asked = Update.ready                                       # once per version
+        update_offer(window, Update.ready, colors)
+        return not Update.restart
+    return bool(new)
+
+
+def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  Sets Update.restart """
+    Update.asked = new
+    bg, fg, button = colors
+    try:
+        x, y = window.current_location()
+        spot = (x + 20, y + 20)
+    except Exception:
+        spot = (None, None)
+    name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', '(Right-click > New versions: by itself, ask, or only say so)',
+                      title='New version', custom_text=('Restart now', 'Later'), keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot,
+                      background_color=bg, text_color=fg, button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    Update.restart = answer == 'Restart now'
+
+
+def restart_self(extra=()):
+    """ Start this file again with the same arguments (pythonw on Windows - no console).  Call it LAST: after the window, the tray icon and any
+        socket this program listens on are closed, so a one-copy-at-a-time program's new copy finds the way clear """
+    exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = exe if sys.platform.startswith('win') and os.path.isfile(exe) else sys.executable
+    args = [a for a in sys.argv[1:] if a != '--tray'] + list(extra)
+    subprocess.Popen([exe, os.path.abspath(__file__)] + args, cwd=os.path.dirname(os.path.abspath(__file__)))
+# --- end UPDATE ---
+
+
 APP_NAME = 'Claude Usage'
-VERSION = '1.7.0'
+VERSION = '1.7.3'
 SETTINGS_FILE = 'claude_usage_widget.json'
 DEMO_SETTINGS_FILE = 'claude_usage_widget_demo.json'             # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'claude_usage_widget.log'
@@ -100,6 +266,8 @@ C_SESSION, C_WEEKLY, C_MODEL, C_SPEND = C_BLUE, C_PURPLE, C_PINK, C_GREEN       
 C_OK, C_WARN, C_CRIT, C_BUSY = C_GREEN, C_AMBER, C_RED, C_AMBER
 KIND_COLOR = {'session': C_SESSION, 'weekly_all': C_WEEKLY, 'weekly_scoped': C_MODEL, 'spend': C_SPEND}
 MEANING = {C_GREEN, C_RED, C_AMBER, C_BLUE, C_PURPLE, C_PINK}  # the colors paint() / ink() deepen on a light card
+ACCENTS = {'Pink': C_MODEL, 'Blue': '#1e9bff', 'Green': '#2ecc71', 'Teal': '#2ad4c8', 'Purple': '#c48cff', 'Orange': '#ff7f50', 'Gold': '#e8a33d'}  # right-click > Accent
+ACCENT_DEFAULT = C_MODEL                                         # the models' own limits (Fable...) - their label, bar and graph, the Tiny bar - until another is picked
 C_MENU_SEL = '#2a62a8'                                           # menu highlight, white text on it
 C_CLOSE = '#c0392b'                                              # a close x under the mouse
 C_SWATCH_EDGE = '#7c8594'                                        # outline of the color chips in the Theme menu
@@ -111,6 +279,7 @@ TRANSPARENT = '#010203'                                          # Windows color
 RADIUS = 18                                                      # the Brightness panel's corner radius in design pixels - the windows get Windows 11's own round corners
 DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWMWA_BORDER_COLOR = 33, 2, 34                     # Windows 11: round a window's corners, color its outline
 SYMBOL = {'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥'}
+DOT_TIP = 'Green ok · amber getting high or checking · red near limit / problem'
 
 # --- WIDGET THEMES: the same block in every card widget (master copy in modern_widget_recipe.md) - change it in all of them at once ---
 # card = background, border = outline, track = gauge track / lines, text = main text, dim = labels.   16 dark first, then 16 light: the Theme menu
@@ -169,6 +338,9 @@ K_GRAPH_ROW = '-GRAPH ROW-'
 K_GRAPH = '-GRAPH-'
 K_GRAPH_NAME = '-GRAPH NAME-'
 K_FORECAST = '-FORECAST-'
+K_TINY_LABEL = '-TINY LABEL-'                                    # Tiny: the limit's name, its bar and its %
+K_TINY_BAR = '-TINY BAR-'
+K_TINY_PCT = '-TINY PCT-'
 K_POLL_BUSY = '-POLL BUSY-'
 K_POLL_RESULT = '-POLL RESULT-'                                  # value = snapshot dict from the poller thread
 K_ROW = '-ROW-';              KT_ROW = lambda i: (K_ROW, i)
@@ -460,6 +632,7 @@ class G:
     swatches = {}                                                # (theme, level) -> Theme menu chip - tk keeps an image only while someone holds it
     fonts = {}                                                   # (bold, px) -> Pillow font
     scale = 1.0                                                  # display scale, 2.0 on a 200% screen - the Brightness panel and the x are drawn at it
+    accent = ACCENT_DEFAULT                                      # right-click > Accent (K_ACCENT): the color of the models' own limits
     window = None                                                # the widget window
     app = None                                                   # the App - redraw() recolors its widget
 
@@ -512,6 +685,19 @@ def ink(color):
 def paint(color):
     """A meaning color as a bar, dot or line: a shade darker on a light card.  Theme colors pass through"""
     return mix(color, '#000000', 0.18) if color in MEANING and P()['light'] else color
+
+
+def kind_paint(kind):
+    """A limit's bar / graph line: the accent for the models' own limits (accent_on), the fixed session / weekly / credits colors for the rest"""
+    return accent_on(P()['card']) if kind == 'weekly_scoped' else paint(KIND_COLOR.get(kind, C_WEEKLY))
+
+
+def kind_ink(kind):
+    """A limit's name as text: the accent for the models' own limits - a preset a shade deeper on a light card, as ink() does, an Any... color as
+       picked - the fixed colors for the rest"""
+    if kind == 'weekly_scoped':
+        return mix(G.accent, '#000000', 0.3) if P()['light'] and G.accent in ACCENTS.values() else G.accent
+    return ink(KIND_COLOR.get(kind, C_WEEKLY))
 
 
 def sbar():
@@ -610,6 +796,31 @@ def theme_swatch(name):
     return G.swatches[(name, G.bright)]
 
 
+def menu_arrows(menu, dark):
+    """ Windows draws a sub-menu's arrow in Windows' own menu-text color (black, white only on the lit row) whatever the menu's colors, so on a dark
+        menu it can't be seen (Mike, 10-Nov).  This puts a › in the menu's own text color at the right end of each sub-menu's label instead.  Windows
+        and dark menus only - a light menu shows Windows' arrow, and Linux / Mac draw theirs in the menu's colors.  Safe to call again """
+    if not (dark and sg.running_windows()) or menu.index('end') is None:
+        return
+    f = tk.font.Font(root=menu, font=menu.cget('font'))
+    labels = {}
+    for i in range(menu.index('end') + 1):
+        if menu.type(i) in ('command', 'cascade', 'checkbutton', 'radiobutton'):
+            label = menu.entrycget(i, 'label')
+            labels[i] = label.rstrip(' \u2009›') if menu.type(i) == 'cascade' and label.endswith('›') else label
+    cascades = [i for i in labels if menu.type(i) == 'cascade']
+    if not cascades:
+        return
+    end = max(f.measure(text) for text in labels.values()) + f.measure('      ›')       # the arrows line up a little past the longest label
+    for i in cascades:
+        label = labels[i] + '  '
+        while f.measure(label + ' ›') <= end:
+            label += ' '
+        while f.measure(label + '\u2009›') <= end:                                       # thin spaces for the last few pixels
+            label += '\u2009'
+        menu.entryconfigure(i, label=label + '›')
+
+
 def style_menus(window):
     """tk draws menus Windows-gray and PySimpleGUI colors only the top level: recolor every menu of the window - each element's copy of the right-click
        menu, the ≡ menu and their sub-menus - flat and compact in the theme's colors, with a chip beside each theme name (the lights in a column of their own)"""
@@ -626,6 +837,7 @@ def style_menus(window):
                 if first_light and is_light(THEMES[name]['card']):
                     menu.entryconfigure(i, columnbreak=1)                     # the light themes get a column of their own
                     first_light = False
+        menu_arrows(menu, not is_light(bg))                                   # sub-menu arrows you can see on a dark menu
 
 
 def close_x_images():
@@ -888,6 +1100,120 @@ def brightness_panel(card, keep_going):
 # --- end BRIGHTNESS ---
 
 
+# --- SIZE STEPS: the same block in every card widget (master copy in modern_widget_recipe.md) - Tiny / Small / Medium / Large and Ctrl + mouse wheel ---
+# Right-click > Size, or Ctrl + mouse wheel anywhere over the widget: up = a size bigger, down = smaller, stopping at the ends; remembered (-SIZE-).
+# Tiny is the widget collapsed to one small strip with only its one reading (the program draws it, with no close x - right-click > Exit or Alt-F4 close it);
+# Small / Medium / Large are the card at 0.8 / 1.0 / 1.3.  A new size keeps the card's top-left corner where it was, and the card on its monitor.
+# The program supplies G.size_name; on K_SIZE_STEP it sets size_step(G.size_name, values[K_SIZE_STEP]) the way its Size menu does, then keep_on_monitor().
+SIZES = {'Tiny': 1.0, 'Small': 0.8, 'Medium': 1.0, 'Large': 1.3}  # the scale each size is drawn at - Tiny's strip has its own, smaller geometry
+K_SIZE = '-SIZE-'                                                 # settings-file entry, and the start of the Size menu's keys
+KT_SIZE = lambda name: f'{K_SIZE}{name}'
+K_SIZE_STEP = '-SIZE STEP-'                                       # Ctrl + mouse wheel over the widget - value: +1 = a size bigger, -1 = smaller
+
+
+def size_step(name, step):
+    """The size one step bigger (+1) or smaller (-1) than name, stopping at Tiny and Large"""
+    names = list(SIZES)
+    i = names.index(name) if name in names else names.index('Medium')
+    return names[max(0, min(len(names) - 1, i + step))]
+
+
+def bind_size_wheel(window):
+    """Ctrl + mouse wheel anywhere over the window -> K_SIZE_STEP.  Bound on the window itself, so every part of it passes it on.  Linux sends the wheel
+       as Button-4 / 5 - on Windows those are the mouse's Back / Forward buttons, so they are bound only elsewhere"""
+    root = window.TKroot
+    root.bind('<Control-MouseWheel>', lambda e: window.write_event_value(K_SIZE_STEP, 1 if e.delta > 0 else -1), add='+')
+    if not sg.running_windows():
+        root.bind('<Control-Button-4>', lambda e: window.write_event_value(K_SIZE_STEP, 1), add='+')
+        root.bind('<Control-Button-5>', lambda e: window.write_event_value(K_SIZE_STEP, -1), add='+')
+
+
+def work_area(window, x, y):
+    """The usable part (no taskbar) of the monitor that point x, y is on: left, top, right, bottom"""
+    if sg.running_windows():
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT), ('dwFlags', wintypes.DWORD)]
+            user32 = ctypes.WinDLL('user32')
+            user32.MonitorFromPoint.argtypes, user32.MonitorFromPoint.restype = (wintypes.POINT, wintypes.DWORD), wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.POINTER(MONITORINFO))
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if user32.GetMonitorInfoW(user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2), ctypes.byref(info)):      # 2 = the nearest monitor
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    root = window.TKroot
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
+
+def keep_on_monitor(window):
+    """After a size change: the top-left corner stays where it is, unless the card now runs past its monitor's right or bottom edge - then it slides back"""
+    window.refresh()
+    (x, y), (w, h) = window.current_location(), window.size
+    left, top, right, bottom = work_area(window, x, y)
+    nx, ny = max(left, min(x, right - w)), max(top, min(y, bottom - h))
+    if (nx, ny) != (x, y):
+        window.move(nx, ny)
+# --- end SIZE STEPS ---
+
+
+# --- ACCENT: the same block in every card widget (master copy in modern_widget_recipe.md) - right-click > Accent, remembered (-ACCENT-) ---
+# The accent colors the dot by the title and the widget's main bar / ring / line; colors that carry meaning (load, status, warnings) stay as they are.
+# The program supplies ACCENTS (name -> '#rrggbb', its default first; None = 'Follows load', only where the color can follow a load), ACCENT_DEFAULT,
+# G.accent, mix() and is_light(), and imports colorchooser (from tkinter import colorchooser).
+ACCENT_ANY = 'Any...'                                             # the last Accent item: the color dialog
+K_ACCENT = '-ACCENT-'                                             # settings-file entry ('#rrggbb', None = follows the load), and the start of the Accent menu's keys
+KT_ACCENT = lambda name: f'{K_ACCENT}{name}'
+
+
+def load_accent():
+    """The saved accent - ACCENT_DEFAULT the first time, or if what was saved is not a color"""
+    c = sg.user_settings_get_entry(K_ACCENT, ACCENT_DEFAULT)
+    if c is None:
+        return None if None in ACCENTS.values() else ACCENT_DEFAULT
+    ok = isinstance(c, str) and len(c) == 7 and c[0] == '#' and all(ch in '0123456789abcdefABCDEF' for ch in c[1:])
+    return c if ok else ACCENT_DEFAULT
+
+
+def accent_on(card, color=None):
+    """The accent as drawn on a card of color card (color = what it is right now when it follows the load): a preset - or the load color - a shade
+       darker on a light card, like the other status colors; a color picked in the Any... dialog exactly as picked"""
+    color = color or G.accent
+    return mix(color, '#000000', 0.18) if is_light(card) and G.accent in ACCENTS.values() else color
+
+
+def accent_menu(tick):
+    """The Accent sub-menu for make_menu(): its label and its items - the presets, then Any..., a tick on the one in use"""
+    current = next((n for n, c in ACCENTS.items() if c == G.accent), ACCENT_ANY)
+    return ['    Accent', [f'{tick(n == current)}{n}::{KT_ACCENT(n)}' for n in list(ACCENTS) + [ACCENT_ANY]]]
+
+
+def choose_accent(window, menu_key, now):
+    """Right-click > Accent > an item: G.accent set and saved.  Any... opens the color dialog on now (the color shown at the moment).  False if cancelled"""
+    name = menu_key[len(K_ACCENT):]
+    if name == ACCENT_ANY:
+        picked = colorchooser.askcolor(color=now, parent=window.TKroot, title='Accent color')[1]
+        if not picked:
+            return False
+        G.accent = picked
+    else:
+        G.accent = ACCENTS.get(name, ACCENT_DEFAULT)
+    sg.user_settings_set_entry(K_ACCENT, G.accent)
+    return True
+# --- end ACCENT ---
+
+
+SIZE_FONT_STEP = {'Tiny': -1, 'Small': -2, 'Medium': 0, 'Large': 3}  # each size's text against the Widget text size setting - never under 9 pt (12 px)
+SIZE_KEYS = {KT_SIZE(name): name for name in SIZES}              # the Size menu's keys -> the size
+TINY_BAR = (64, 8)                                               # Tiny's bar, in design pixels
+DEFAULTS[K_SIZE] = 'Medium'                                      # the widget as it always was, until another size is picked
+
+
 # ================================================================ tokens ================================================================
 class UsageError(Exception):
     pass
@@ -1147,8 +1473,18 @@ class Poller(threading.Thread):
             self.wake.wait(self.interval if not self.paused else 3600)
             self.wake.clear()
 
+    def send(self, key, value):
+        """An event to the widget window.  A new size rebuilds that window, so a send that catches the old one just as it closes goes again to the new one"""
+        for _ in range(10):
+            try:
+                self.window.write_event_value(key, value)
+                return
+            except Exception:
+                if self.quit.wait(0.3):
+                    return
+
     def poll(self):
-        self.window.write_event_value(K_POLL_BUSY, True)
+        self.send(K_POLL_BUSY, True)
         try:
             if DEMO:
                 snap = demo_snapshot()
@@ -1163,15 +1499,62 @@ class Poller(threading.Thread):
         except Exception as e:
             snap = {'ok': False, 'error': f'{type(e).__name__}: {e}', 'at': utcnow(), 'buckets': [], 'spend': None, 'plan': '', 'account': {}, 'raw': {}, 'source': ''}
             log('poll crashed: ' + traceback.format_exc())
-        self.window.write_event_value(K_POLL_RESULT, snap)
+        self.send(K_POLL_RESULT, snap)
 
 
 # ================================================================ the app ================================================================
+# --- STARTUP: start with Windows - the same block in every card widget (master copy in modern_widget_recipe.md) ---
+# Tray apps have their own copy that adds --tray (tray_app_recipe.md); the shortcut is made the same way.  The program supplies APP_NAME (the shortcut's
+# name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC, so each PC's shortcut points at that PC's copy.
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows: make the shortcut (pythonw "<this file>") or remove it.  icon = the program's PNG (base64): it goes beside the
+        program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\"';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
+
+
 class App:
     def __init__(self):
         G.app, self.scale = self, dpi_scale()
         self.snap, self.busy, self.detail, self.settings_win, self.signin_win, self.snap_pending = None, False, None, None, None, ''
         self.pkce, self.current_alpha, self.last_redraw, self.cards, self.close_x = ('', '', ''), None, datetime.now(), [], None
+        self.panel_open, self.update_at = False, 0.0                  # the Brightness panel is open;  when the UPDATE block last looked at this file
         self.history = [h for h in (sg.user_settings_get_entry(K_HISTORY, []) or []) if isinstance(h, dict)]
         if DEMO and len(self.history) < 5:
             self.history = demo_history()
@@ -1181,8 +1564,11 @@ class App:
         self.poller.start()
 
     # ---------------------------------------------------------------- look ----------------------------------------------------------------
-    def fonts(self):
-        fs = int(cfg(K_FONT_SIZE))
+    def fonts(self, size='Medium'):
+        """The fonts at the Widget text size setting - for the widget at Tiny / Small / Large a step or two smaller or bigger (SIZE_FONT_STEP), the
+           smaller sizes never under 9 pt (12 px at 96 dpi).  The other windows use Medium's"""
+        fs, step = int(cfg(K_FONT_SIZE)), SIZE_FONT_STEP.get(size, 0)
+        fs = fs + step if step >= 0 else max(fs + step, min(fs, 9))
         return {'name': (UI_FONT, fs + 1, 'bold'), 'body': (UI_FONT, fs), 'bold': (UI_FONT, fs, 'bold'), 'small': (UI_FONT, max(fs - 2, 9)), 'dot': (UI_FONT, fs + 2),
                 'h1': (UI_FONT, fs + 6, 'bold'), 'h2': (UI_FONT, fs + 2, 'bold'), 'big': (UI_FONT, fs + 4, 'bold'), 'mono': (MONO_FONT, max(fs - 1, 9))}
 
@@ -1211,9 +1597,10 @@ class App:
         return f'on pace for {min(999, round(bucket["percent"] / p * 100))}% by reset'
 
     def draw_bar(self, graph, pct, color, pace=None):
+        """A limit's bar in color - already as drawn on this card (kind_paint / paint)"""
         graph.erase()
         w, h = graph.CanvasSize
-        p, color = P(), paint(color)
+        p = P()
         graph.draw_rectangle((0, h), (w, 0), fill_color=p['track'], line_color=p['track'])
         fill = max(0.0, min(100.0, pct or 0)) / 100 * w
         if fill >= 1:
@@ -1224,32 +1611,10 @@ class App:
 
     # ---------------------------------------------------------------- widget window ----------------------------------------------------------------
     def build_widget(self):
-        f, bar, p = self.fonts(), (int(150 * self.scale), int(10 * self.scale)), P()
-        rows = [[sg.Text('●', font=f['dot'], text_color=p['faint'], key=K_DOT, pad=((8, 4), (4, 0)), tooltip='Green ok · amber getting high or checking · red near limit / problem'),
-                 sg.Text('Claude', font=f['name'], text_color=p['text'], key=K_TITLE, pad=((0, 6), (4, 0))),
-                 sg.Text('', font=f['small'], text_color=p['dim'], key=K_PLAN, pad=((0, 8), (6, 0))),
-                 sg.Text('v' + VERSION, font=f['small'], text_color=p['faint'], key=K_VERSION, pad=((0, 26), (6, 0)), tooltip=__file__)]]
-        for i in range(MAX_BARS):
-            row = [sg.Text('', size=(12, 1), font=f['body'], key=KT_LABEL(i), pad=((10, 6), 1)),
-                   sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=KT_BAR(i), pad=((0, 6), 1)),
-                   sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=KT_PCT(i), pad=(0, 1)),
-                   sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=KT_RESET(i), pad=((6, 8), 1))]
-            rows.append([sg.Column([row], key=KT_ROW(i), pad=0, visible=False, background_color=p['card'])])
-        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=ink(C_SPEND), key=K_SPEND_LABEL, pad=((10, 6), 1)),
-                                 sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_SPEND_BAR, pad=((0, 6), 1)),
-                                 sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_SPEND_PCT, pad=(0, 1)),
-                                 sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=K_SPEND_LEFT, pad=((6, 8), 1))],
-                                [sg.Text('', font=f['small'], text_color=p['dim'], key=K_SPEND_TEXT, pad=((10, 8), (0, 3)))]],
-                               key=K_SPEND_ROW, pad=0, visible=False, background_color=p['card'])])
-        graph_size = (int(280 * self.scale), int(46 * self.scale))
-        rows.append([sg.Column([[sg.Text('', size=(12, 1), font=f['small'], key=K_GRAPH_NAME, pad=((10, 6), 1)),
-                                 sg.Graph(graph_size, (0, 0), graph_size, background_color=p['card'], key=K_GRAPH, pad=((0, 8), (3, 2)),
-                                          tooltip='Solid: checks so far · dashed: at the current rate · dotted line: the reset')]],
-                               key=K_GRAPH_ROW, pad=0, visible=False, background_color=p['card'])])
-        rows.append([sg.Text('', font=f['small'], text_color=p['faint'], key=K_FORECAST, pad=((10, 8), (0, 2)))])
-        rows.append([sg.Text('starting…', font=f['small'], text_color=p['faint'], key=K_STATUS, pad=((10, 0), (0, 3))), sg.Push(background_color=p['card']),
-                     sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=f['name'], button_color=(p['dim'], p['card']), border_width=0, pad=((0, 8), (0, 3)),
-                                   tooltip='Menu (or right-click anywhere)')])
+        """The widget window at its size: Small / Medium / Large the card - its text, bars and graph smaller or bigger - Tiny one strip"""
+        self.wsize = self.size_choice()
+        f, p = self.fonts(self.wsize), P()
+        rows = self.tiny_rows(f, p) if self.wsize == 'Tiny' else self.card_rows(f, p, SIZES[self.wsize])
         menu_bg, menu_text = menu_colors()
         self.widget = sg.Window(APP_NAME, rows, no_titlebar=True, keep_on_top=bool(cfg(K_KEEP_ON_TOP)), grab_anywhere=True, alpha_channel=int(cfg(K_OPACITY)) / 100, auto_save_location=True,
                                 right_click_menu=self.make_menu(), right_click_menu_background_color=menu_bg, right_click_menu_text_color=menu_text,
@@ -1258,13 +1623,56 @@ class App:
         style_menus(self.widget)
         round_corners(self.widget)
         self.current_alpha = int(cfg(K_OPACITY)) / 100
-        bind_click(self.widget, set(descendants(self.widget.TKroot)) - {self.widget[K_MENU].Widget}, 'widget')
-        self.close_x = add_close_x(self.widget, K_CLOSE_X)  # added after the click map, so clicking it can't also open the detail window
+        menu = {self.widget[K_MENU].Widget} if K_MENU in self.widget.AllKeysDict else set()           # Tiny has no ≡ - right-click for the menu
+        bind_click(self.widget, set(descendants(self.widget.TKroot)) - menu, 'widget')
+        self.close_x = None if self.wsize == 'Tiny' else add_close_x(self.widget, K_CLOSE_X)  # added after the click map, so clicking it can't also open the detail window
+        bind_size_wheel(self.widget)                        # Ctrl + mouse wheel anywhere over it: a size bigger / smaller
         self.widget.bind('<Escape>', 'Exit')
         self.widget.timer_start(1000)                       # the countdowns tick each second - a timer, so they keep going while the Brightness panel is open
         self.snap_pending = 'TR' if sg.user_settings_get_entry('-LAST WINDOW LOCATION-' + APP_NAME) is None else ''
         if self.snap_pending:
             self.snap_to(self.snap_pending)
+
+    def card_rows(self, f, p, k):
+        """Small / Medium / Large - the card: a row per limit, the credits, the graph, the forecast line, the status line and ≡.  k = the size's scale
+           for the bars, the graph and the spacing (Medium 1.0 - the widget as it always was); the text follows f"""
+        z = lambda n: round(n * k)
+        bar = (int(150 * self.scale * k), int(10 * self.scale * k))
+        rows = [[sg.Text('●', font=f['dot'], text_color=p['faint'], key=K_DOT, pad=((z(8), z(4)), (z(4), 0)), tooltip=DOT_TIP),
+                 sg.Text('Claude', font=f['name'], text_color=p['text'], key=K_TITLE, pad=((0, z(6)), (z(4), 0))),
+                 sg.Text('', font=f['small'], text_color=p['dim'], key=K_PLAN, pad=((0, z(8)), (z(6), 0))),
+                 sg.Text('v' + VERSION, font=f['small'], text_color=p['faint'], key=K_VERSION, pad=((0, max(26, z(26))), (z(6), 0)), tooltip=__file__)]]
+        for i in range(MAX_BARS):
+            row = [sg.Text('', size=(12, 1), font=f['body'], key=KT_LABEL(i), pad=((z(10), z(6)), z(1))),
+                   sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=KT_BAR(i), pad=((0, z(6)), z(1))),
+                   sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=KT_PCT(i), pad=(0, z(1))),
+                   sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=KT_RESET(i), pad=((z(6), z(8)), z(1)))]
+            rows.append([sg.Column([row], key=KT_ROW(i), pad=0, visible=False, background_color=p['card'])])
+        rows.append([sg.Column([[sg.Text('Credits', size=(12, 1), font=f['body'], text_color=ink(C_SPEND), key=K_SPEND_LABEL, pad=((z(10), z(6)), z(1))),
+                                 sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_SPEND_BAR, pad=((0, z(6)), z(1))),
+                                 sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_SPEND_PCT, pad=(0, z(1))),
+                                 sg.Text('', size=(10, 1), font=f['small'], text_color=p['dim'], key=K_SPEND_LEFT, pad=((z(6), z(8)), z(1)))],
+                                [sg.Text('', font=f['small'], text_color=p['dim'], key=K_SPEND_TEXT, pad=((z(10), z(8)), (0, z(3))))]],
+                               key=K_SPEND_ROW, pad=0, visible=False, background_color=p['card'])])
+        graph_size = (int(280 * self.scale * k), int(46 * self.scale * k))
+        rows.append([sg.Column([[sg.Text('', size=(12, 1), font=f['small'], key=K_GRAPH_NAME, pad=((z(10), z(6)), z(1))),
+                                 sg.Graph(graph_size, (0, 0), graph_size, background_color=p['card'], key=K_GRAPH, pad=((0, z(8)), (z(3), z(2))),
+                                          tooltip='Solid: checks so far · dashed: at the current rate · dotted line: the reset')]],
+                               key=K_GRAPH_ROW, pad=0, visible=False, background_color=p['card'])])
+        rows.append([sg.Text('', font=f['small'], text_color=p['faint'], key=K_FORECAST, pad=((z(10), z(8)), (0, z(2))))])
+        rows.append([sg.Text('starting…', font=f['small'], text_color=p['faint'], key=K_STATUS, pad=((z(10), 0), (0, z(3)))), sg.Push(background_color=p['card']),
+                     sg.ButtonMenu('≡', self.make_menu(), key=K_MENU, font=f['name'], button_color=(p['dim'], p['card']), border_width=0, pad=((0, z(8)), (0, z(3))),
+                                   tooltip='Menu (or right-click anywhere) · Ctrl + mouse wheel changes the size')])
+        return rows
+
+    def tiny_rows(self, f, p):
+        """Tiny - one strip: the status dot, then the favorite model's name, bar and % (tiny_bucket).  No x and no ≡: right-click for the menu (Exit is
+           there, and Escape / Alt-F4 close it too); a click opens the Detail window"""
+        bar = (int(TINY_BAR[0] * self.scale), int(TINY_BAR[1] * self.scale))
+        return [[sg.Text('●', font=f['dot'], text_color=p['faint'], key=K_DOT, pad=((8, 4), 2), tooltip=DOT_TIP),
+                 sg.Text('Claude', font=f['body'], text_color=p['dim'], key=K_TINY_LABEL, pad=((0, 6), 2)),
+                 sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_TINY_BAR, pad=((0, 4), 2)),
+                 sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_TINY_PCT, pad=((0, 10), 2))]]
 
     def make_menu(self):
         """The right-click / ≡ menu with a ✓ on the current choices - every label starts with a ✓ or the same width of spaces, so they line up"""
@@ -1273,11 +1681,14 @@ class App:
         paused = getattr(self, 'poller', None) is not None and self.poller.paused
         return ['', [f'    Refresh now::{K_M_REFRESH}', f'    Detail window::{K_M_DETAIL}', '---',
                      f'{tick(paused)}Pause polling::{K_M_PAUSE}', f'{tick(cfg(K_KEEP_ON_TOP))}Keep on top::{K_M_TOP}',
+                     *([f'{tick(startup_on())}Start with Windows::{K_STARTUP}'] if sg.running_windows() and not DEMO else []),
                      '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],
                      f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
+                     *accent_menu(tick),
+                     '    Size', [f'{tick(n == self.wsize)}{n}::{KT_SIZE(n)}' for n in SIZES],
                      '    Snap to corner', [f'    {name}::{KT_M_SNAP(corner)}' for corner, name in SNAP_CORNERS.items()], '---',
                      f'    Settings...::{K_M_SETTINGS}', f'    Sign in to Claude...::{K_M_SIGN_IN}', f'    Open log file::{K_M_LOG}', '---',
-                     '    Edit Me::Edit Me', '    Version::Version', '    Exit::Exit']]
+                     '    Edit Me::Edit Me', f'    Version {VERSION}::Version', *update_menu(tick), '    Exit::Exit']]
 
     def rebuild_menus(self):
         """After any choice: every element's copy of the right-click menu (PySimpleGUI makes one per element) and the ≡ menu rebuilt - new ✓ marks,
@@ -1287,9 +1698,10 @@ class App:
             if element.TKRightClickMenu is not None:
                 element.set_right_click_menu(menu, propogate_to_window=first)
                 first = False
-        old, p = self.widget[K_MENU].TKMenu, P()
-        self.widget[K_MENU].update(menu_definition=menu, button_color=(p['dim'], p['card']))     # without button_color, update() puts back the colors it was built with
-        old.destroy()
+        if K_MENU in self.widget.AllKeysDict:                   # Tiny has no ≡
+            old, p = self.widget[K_MENU].TKMenu, P()
+            self.widget[K_MENU].update(menu_definition=menu, button_color=(p['dim'], p['card']))     # without button_color, update() puts back the colors it was built with
+            old.destroy()
         style_menus(self.widget)
 
     def recolor_widget(self):
@@ -1302,13 +1714,16 @@ class App:
                     tkw.configure(bg=p['card'])
                 except tk.TclError:
                     pass
-        for key in [KT_BAR(i) for i in range(MAX_BARS)] + [K_SPEND_BAR]:
-            w[key].Widget.configure(bg=p['track'])
-        for key, color in [(K_TITLE, p['text']), (K_PLAN, p['dim']), (K_VERSION, p['faint']), (K_SPEND_TEXT, p['dim']), (K_SPEND_LABEL, ink(C_SPEND))] + \
-                          [(KT_RESET(i), p['dim']) for i in range(MAX_BARS)]:
-            w[key].update(text_color=color)
-        w[K_MENU].Widget.configure(fg=p['dim'], activeforeground=p['text'], activebackground=p['card'])
-        set_close_x(self.close_x)
+        if self.wsize == 'Tiny':                                # the strip: its bar's track - refresh_widget() repaints the rest
+            w[K_TINY_BAR].Widget.configure(bg=p['track'])
+        else:
+            for key in [KT_BAR(i) for i in range(MAX_BARS)] + [K_SPEND_BAR]:
+                w[key].Widget.configure(bg=p['track'])
+            for key, color in [(K_TITLE, p['text']), (K_PLAN, p['dim']), (K_VERSION, p['faint']), (K_SPEND_TEXT, p['dim']), (K_SPEND_LABEL, ink(C_SPEND))] + \
+                              [(KT_RESET(i), p['dim']) for i in range(MAX_BARS)]:
+                w[key].update(text_color=color)
+            w[K_MENU].Widget.configure(fg=p['dim'], activeforeground=p['text'], activebackground=p['card'])
+            set_close_x(self.close_x)
         round_corners(w)
         self.refresh_widget()
 
@@ -1357,6 +1772,8 @@ class App:
             self.tick()
         elif event in (K_POLL_BUSY, K_POLL_RESULT):
             self.widget_event(event, values)
+        elif event == K_SIZE_STEP and size_step(self.wsize, values[K_SIZE_STEP]) == self.wsize:
+            pass                                                # Ctrl + wheel past Tiny / Large: nothing to change (any other size step reopens the panel)
         else:
             return False
         return True
@@ -1391,17 +1808,27 @@ class App:
         cb = self.credit_bucket() if cfg(K_SHOW_SPEND) else None
         worst = max([b['percent'] for b in buckets] + ([cb['percent']] if cb else []), default=None)
         self.widget[K_DOT].update(text_color=paint(C_BUSY if self.busy else C_CRIT if snap and not snap.get('ok') else self.level_color(worst)))
+        if self.wsize == 'Tiny':
+            self.refresh_tiny()
+        else:
+            self.refresh_card(snap, buckets, cb)
+        if self.snap_pending and buckets:                       # the first snap happened while the rows were still hidden, so the window was narrower
+            self.snap_to(self.snap_pending)
+            self.snap_pending = ''
+        self.refresh_status()
+
+    def refresh_card(self, snap, buckets, cb):
+        """Small / Medium / Large: the plan, a row per limit, the credits, the graph and the forecast line"""
         self.widget[K_PLAN].update(snap['plan'] if snap and snap.get('ok') and snap['plan'] else ('demo' if DEMO else ''))
         for i in range(MAX_BARS):
             self.widget[KT_ROW(i)].update(visible=i < len(buckets))
             if i >= len(buckets):
                 continue
             b = buckets[i]
-            color = KIND_COLOR.get(b['kind'], C_WEEKLY)
-            self.widget[KT_LABEL(i)].update(b['label'], text_color=ink(color))
+            self.widget[KT_LABEL(i)].update(b['label'], text_color=kind_ink(b['kind']))
             self.widget[KT_PCT(i)].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
             self.widget[KT_RESET(i)].update(reset_short(b['resets_at']))
-            self.draw_bar(self.widget[KT_BAR(i)], b['percent'], color, self.pace(b))
+            self.draw_bar(self.widget[KT_BAR(i)], b['percent'], kind_paint(b['kind']), self.pace(b))
             tip = f'{b["label"]} · {round(b["percent"])}% used ({self.level_word(b["percent"])}) · {reset_long(b["resets_at"])}'
             self.widget[KT_LABEL(i)].set_tooltip(tip + (' · ' + self.projection(b) if self.projection(b) else ''))
         spend = snap.get('spend') if snap and snap.get('ok') else None
@@ -1412,7 +1839,7 @@ class App:
             self.widget[K_SPEND_PCT].update(visible=bool(cb))
             if cb:
                 left = max(0.0, spend['limit_num'] - spend['used_num'])
-                self.draw_bar(self.widget[K_SPEND_BAR], cb['percent'], C_SPEND, self.pace(cb))
+                self.draw_bar(self.widget[K_SPEND_BAR], cb['percent'], paint(C_SPEND), self.pace(cb))
                 self.widget[K_SPEND_PCT].update(f'{round(cb["percent"])}%', text_color=ink(self.level_color(cb['percent'])))
                 self.widget[K_SPEND_LEFT].update(f'{spend["symbol"]}{left:,.2f} left', text_color=ink(C_CRIT) if left <= 0 else P()['dim'])
             else:
@@ -1422,18 +1849,32 @@ class App:
             self.widget[K_SPEND_LABEL].set_tooltip(tip)
             self.widget[K_SPEND_TEXT].set_tooltip(tip)
         self.refresh_forecast()
-        if self.snap_pending and buckets:                       # the first snap happened while the rows were still hidden, so the window was narrower
-            self.snap_to(self.snap_pending)
-            self.snap_pending = ''
-        self.refresh_status()
+
+    def refresh_tiny(self):
+        """Tiny: the limit tiny_bucket() picks - its name in its color (the accent for a model), its bar and its %; the details in the tooltip"""
+        b, w, p = self.tiny_bucket(), self.widget, P()
+        if b is None:
+            w[K_TINY_LABEL].update('Claude', text_color=p['dim'])
+            w[K_TINY_PCT].update('')
+            self.draw_bar(w[K_TINY_BAR], 0, p['track'])
+            tip = self.snap['error'] if self.snap and not self.snap.get('ok') else 'waiting for the first check…'
+        else:
+            w[K_TINY_LABEL].update(b['label'], text_color=kind_ink(b['kind']))
+            w[K_TINY_PCT].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
+            self.draw_bar(w[K_TINY_BAR], b['percent'], kind_paint(b['kind']), self.pace(b))
+            tip = f'{b["label"]} · {round(b["percent"])}% used ({self.level_word(b["percent"])}) · {reset_long(b["resets_at"])}'
+        for key in (K_TINY_LABEL, K_TINY_BAR, K_TINY_PCT):
+            w[key].set_tooltip(tip + '\nClick for the detail window · right-click for the menu · Ctrl + mouse wheel for a bigger size')
 
     def refresh_forecast(self):
         """The widget's small graph and its one-line verdict: the first limit that would run out before its reset, or all-clear."""
+        if self.wsize == 'Tiny':                                # no graph and no forecast line in the strip - the Detail window has them
+            return
         buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
         shown = self.widget_bucket()
         self.widget[K_GRAPH_ROW].update(visible=bool(shown) and bool(cfg(K_SHOW_GRAPH)))
         if shown and cfg(K_SHOW_GRAPH):
-            self.widget[K_GRAPH_NAME].update(shown['label'], text_color=ink(KIND_COLOR.get(shown['kind'], C_WEEKLY)))
+            self.widget[K_GRAPH_NAME].update(shown['label'], text_color=kind_ink(shown['kind']))
             self.draw_graph(self.widget[K_GRAPH], shown, full=False)
         if not buckets:
             self.widget[K_FORECAST].update('')
@@ -1452,6 +1893,8 @@ class App:
 
     def refresh_status(self):
         snap = self.snap
+        if self.wsize == 'Tiny':                                # the strip has no status line - its dot and tooltip say it
+            return
         if snap and not snap.get('ok'):
             self.widget[K_STATUS].update(snap['error'][:64], text_color=ink(C_CRIT))
             self.widget[K_STATUS].set_tooltip(snap['error'])
@@ -1619,12 +2062,18 @@ class App:
                 text += f' - limit reached ~{hit.astimezone():%b} {hit.astimezone().day} {clock(hit.astimezone())}'
         return text
 
-    def widget_bucket(self):
-        """Which limit the widget's small graph follows."""
+    def tiny_bucket(self):
+        """The limit Tiny shows: the favorite model's (the fullest, if several match), else the most urgent one.  None before the first good check"""
+        buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
+        favs = [b for b in buckets if b['kind'] == 'weekly_scoped' and is_favorite(b)]
+        return max(favs, key=lambda b: b['percent']) if favs else self.widget_bucket('Most urgent')
+
+    def widget_bucket(self, want=None):
+        """Which limit the widget's small graph follows (want: one of GRAPH_CHOICES instead of the setting)."""
         buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
         if not buckets:
             return None
-        want, cb = cfg(K_GRAPH_OF), self.credit_bucket()
+        want, cb = want or cfg(K_GRAPH_OF), self.credit_bucket()
         if want == 'Credits':
             if cb:
                 return cb
@@ -1648,7 +2097,7 @@ class App:
         graph.erase()
         w, h = graph.CanvasSize
         now, fc, p = utcnow(), self.forecast(bucket), P()
-        color, level = paint(KIND_COLOR.get(bucket['kind'], C_WEEKLY)), paint(self.level_color(bucket['percent']))
+        color, level = kind_paint(bucket['kind']), paint(self.level_color(bucket['percent']))
         span, dollars = span_of(bucket) or 86400, bucket['kind'] == 'spend'
         t1 = bucket['resets_at'] or now + timedelta(seconds=span / 4)
         t0 = min(now - timedelta(seconds=span), fc['points'][0][0] if fc['points'] else now)
@@ -1763,10 +2212,10 @@ class App:
             if not visible:
                 continue
             b = snap['buckets'][i]
-            color, pace = KIND_COLOR.get(b['kind'], C_WEEKLY), self.pace(b)
-            self.detail[KT_D_LABEL(i)].update(b['label'], text_color=ink(color))
+            pace = self.pace(b)
+            self.detail[KT_D_LABEL(i)].update(b['label'], text_color=kind_ink(b['kind']))
             self.detail[KT_D_PCT(i)].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
-            self.draw_bar(self.detail[KT_D_BAR(i)], b['percent'], color, pace)
+            self.draw_bar(self.detail[KT_D_BAR(i)], b['percent'], kind_paint(b['kind']), pace)
             bits = [self.level_word(b['percent']), reset_long(b['resets_at'])]
             if pace is not None:
                 bits.append(f'even pace would be {round(pace)}%')
@@ -1782,7 +2231,7 @@ class App:
         self.detail[K_D_CRED_PCT].update(f'{round(cb["percent"])}%' if cb else '', text_color=ink(self.level_color(cb['percent'])) if cb else P()['text'])
         if cb:
             fc, pace, sym = self.forecast(cb), self.pace(cb), spend['symbol']
-            self.draw_bar(self.detail[K_D_CRED_BAR], cb['percent'], C_SPEND, pace)
+            self.draw_bar(self.detail[K_D_CRED_BAR], cb['percent'], paint(C_SPEND), pace)
             bits = [f'{spend["used"]} of the {spend["limit"]} monthly limit spent', f'{sym}{max(0.0, spend["limit_num"] - spend["used_num"]):,.2f} left',
                     f'resets{day_text(spend["resets_at"]).replace(" · resets", "")}']
             if pace is not None:
@@ -1911,7 +2360,7 @@ class App:
                   [sg.Checkbox('Keep the widget on top of other windows', bool(v(K_KEEP_ON_TOP)), font=f['body'], key=K_KEEP_ON_TOP, pad=((10, 10), (0, 0)))],
                   [sg.Checkbox('Show a graph in the widget of', bool(v(K_SHOW_GRAPH)), font=f['body'], key=K_SHOW_GRAPH, pad=((10, 4), (0, 0))),
                    sg.Combo(GRAPH_CHOICES, default_value=v(K_GRAPH_OF), readonly=True, size=(14, 1), font=f['body'], key=K_GRAPH_OF, pad=((0, 10), (0, 0)))],
-                  [sg.Text('Favorite models', size=(14, 1), font=f['body'], text_color=ink(C_MODEL), pad=((10, 4), 2)),
+                  [sg.Text('Favorite models', size=(14, 1), font=f['body'], text_color=kind_ink('weekly_scoped'), pad=((10, 4), 2)),
                    sg.Input(str(v(K_FAVORITE)), size=(24, 1), font=f['body'], key=K_FAVORITE),
                    sg.Text('name matches, comma-separated - they sort to the top', font=f['small'], text_color=p['dim'])],
                   [sg.Push(), sg.Button('Save', key=K_SAVE, font=f['body'], pad=(6, (4, 10))), sg.Button('Cancel', key=K_CANCEL, font=f['body'], pad=((6, 12), (4, 10)))]]
@@ -1939,6 +2388,28 @@ class App:
         self.refresh_widget()
         self.poller.wake.set()
 
+    # ---------------------------------------------------------------- sizes ----------------------------------------------------------------
+    def size_choice(self):
+        return cfg(K_SIZE) if cfg(K_SIZE) in SIZES else 'Medium'
+
+    def set_size(self, size):
+        """Right-click > Size, or Ctrl + mouse wheel: the widget window rebuilt at the new size, remembered.  Its top-left corner stays where it was (and
+           it stays on its monitor); the Detail, Settings and Sign-in windows are left as they are"""
+        if size == self.wsize:
+            return
+        sg.user_settings_set_entry(K_SIZE, size)
+        old, spot = self.widget, self.widget.current_location()
+        old.timer_stop_all()
+        self.build_widget()
+        self.snap_pending = ''                                  # a rebuilt widget stays where it was
+        self.widget.move(*spot)
+        self.poller.window = self.widget
+        old.close()
+        while old.thread_queue is not None and not old.thread_queue.empty():      # poll results (and wheel notches) sent to the old window go to the new one
+            self.widget.write_event_value(*old.thread_queue.get_nowait())
+        self.refresh_widget()
+        keep_on_monitor(self.widget)
+
     # ---------------------------------------------------------------- event loop ----------------------------------------------------------------
     def run(self):
         while True:
@@ -1947,6 +2418,8 @@ class App:
                 break
             if window is self.widget and event == sg.EVENT_TIMER:
                 self.tick()
+                if Update.restart:                              # a newer version of this file, and it is time (UPDATE block)
+                    break
                 continue
             if window in self.cards:                            # Version / Raw JSON
                 if event in (sg.WIN_CLOSED, K_CLOSE, K_STRIP_CLOSE):
@@ -1979,16 +2452,30 @@ class App:
             self.widget.set_alpha(alpha)
             self.current_alpha = alpha
         if self.snap and self.snap.get('ok'):                   # keep the countdowns honest between polls
-            for i, b in enumerate(self.snap['buckets']):
+            for i, b in enumerate(self.snap['buckets'] if self.wsize != 'Tiny' else []):
                 self.widget[KT_RESET(i)].update(reset_short(b['resets_at']))
             if datetime.now().second < 1 or (datetime.now() - self.last_redraw).total_seconds() >= 60:
                 self.last_redraw = datetime.now()
-                self.refresh_forecast()
+                self.refresh_tiny() if self.wsize == 'Tiny' else self.refresh_forecast()     # Tiny: its tooltip's countdown and the pace tick
                 self.refresh_detail()
         self.refresh_status()
+        if time.time() - self.update_at >= 3:                   # the UPDATE block looks at this file every 3 s (one stat)
+            self.update_at = time.time()
+            p = P()
+            if update_tick(self.widget, False, self.update_busy(), (p['card'], p['text'], C_PANEL_DONE)):
+                self.rebuild_menus()                            # 'Restart - x.y.z is ready'
+
+    def update_busy(self):
+        """Something of the widget is open - Detail, Settings, Sign in, a Version / raw JSON card or the Brightness panel: no restart by itself then"""
+        return any(w is not None for w in (self.detail, self.settings_win, self.signin_win)) or bool(self.cards) or self.panel_open
 
     def widget_event(self, event, values):
         item = values.get(K_MENU) if event == K_MENU else event
+        if update_event(item):                                  # right-click > Restart, or a New versions choice (UPDATE block)
+            if Update.restart:
+                return False
+            self.rebuild_menus()                                # the ✓ moved
+            return True
         key = item.split('::')[-1] if isinstance(item, str) and '::' in item else item       # a menu choice arrives as its whole 'label::key'
         if key in ('Exit', sg.WINDOW_CLOSED, K_CLOSE_X):
             return False
@@ -2016,14 +2503,34 @@ class App:
             self.open_settings()
         elif key == K_M_SIGN_IN:
             self.open_signin()
+        elif key == K_STARTUP:
+            error = set_startup(not startup_on(), ICON)
+            if error:
+                sg.popup_error(f'Start with Windows did not work:\n{error}', title=APP_NAME, keep_on_top=True, non_blocking=True)
+            self.rebuild_menus()
         elif key == K_M_TOP:
             self.set_keep_on_top(not cfg(K_KEEP_ON_TOP))
+        elif key in SIZE_KEYS:
+            self.set_size(SIZE_KEYS[key])
+        elif key == K_SIZE_STEP:
+            self.set_size(size_step(self.wsize, values[K_SIZE_STEP]))
+        elif isinstance(key, str) and key.startswith(K_ACCENT):
+            if choose_accent(self.widget, key, G.accent):
+                self.retheme()                                  # the widget, its menus and the open windows in the new accent
         elif isinstance(key, str) and key.startswith(K_THEME):
             G.theme = key[len(K_THEME):]
             sg.user_settings_set_entry(K_THEME, G.theme)
             self.retheme()
         elif key == K_BRIGHT:
-            pending = brightness_panel(self.widget, self.keep_going)
+            self.panel_open = True                              # (no restart by itself while it is open)
+            try:
+                pending = brightness_panel(self.widget, self.keep_going)
+                while pending and pending[0] == K_SIZE_STEP:   # Ctrl + wheel with the panel open: the widget at its new size, the panel open again under it
+                    apply_theme()                               # the PySimpleGUI theme at the level being tried, for the rebuilt widget
+                    self.set_size(size_step(self.wsize, pending[1][K_SIZE_STEP]))
+                    pending = brightness_panel(self.widget, self.keep_going)
+            finally:
+                self.panel_open = False
             sg.user_settings_set_entry(K_BRIGHT, G.bright)
             self.retheme()
             if pending:                                     # the widget event that closed the panel (a menu choice, the x...)
@@ -2034,7 +2541,9 @@ class App:
                 log('log created')
             os.startfile(path) if hasattr(os, 'startfile') else webbrowser.open('file://' + path)
         elif key == 'Version':
-            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__, sg.get_versions()]), (70, 10))
+            self.text_card(f'{APP_NAME} - version', '\n'.join([f'{APP_NAME} {VERSION}', __file__,
+                                                                               f'Start with Windows:  {startup_link() if startup_on() else "off"}',
+                                                                               f'New versions:  {dict(UPDATE_CHOICES)[update_mode()]}', sg.get_versions()]), (70, 11))
         elif key == 'Edit Me':
             sg.execute_editor(__file__)
         return True
@@ -2085,11 +2594,13 @@ class App:
 
 
 def main():
+    Update.default = 'auto'                                     # a desktop widget: a newer version restarts it by itself (it comes back as it was)
     sg.user_settings_filename(filename=DEMO_SETTINGS_FILE if DEMO else SETTINGS_FILE)
     G.theme = sg.user_settings_get_entry(K_THEME, 'Toybox')
     G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')
     G.bright = sg.user_settings_get_entry(K_BRIGHT, 0)
     G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
+    G.accent = load_accent()
     sg.set_options(dpi_awareness=True, font=(UI_FONT, 11), tooltip_font=(UI_FONT, 10), icon=ICON)
     apply_theme()
     try:
@@ -2097,6 +2608,11 @@ def main():
     except Exception as e:
         log(traceback.format_exc())
         sg.popup_error_with_traceback(f'{APP_NAME} crashed', e, traceback.format_exc())
+    if Update.restart:                                          # right-click > Restart, or a newer version: every window is closed by now
+        poller = getattr(G.app, 'poller', None)
+        if poller is not None:
+            poller.join(timeout=30)                             # a check under way finishes first, so two copies never poll at once
+        restart_self()
 
 
 if __name__ == '__main__':
