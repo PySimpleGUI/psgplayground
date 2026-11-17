@@ -14,6 +14,9 @@ iD880 Notes - type a note, list or receipt and print it on the receipt paper (or
     The file you're working on opens again next time, and Save writes straight back to it - also for files from Open other file...
 
 Needs id880_lib.py in the same folder.   Run iD880_Setup.pyw once first to pick the printer.
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Feed goes to the printer that holds the roll picked here (id880_lib 15-Nov)
 """
 import datetime
 import os
@@ -473,7 +476,7 @@ def main():
         elif event == K_FEED:
             try:
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color='#9CCC65')
-                lib.feed(1)
+                lib.feed(1, values[K_MEDIA])
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)

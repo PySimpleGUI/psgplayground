@@ -12,8 +12,8 @@ THE WIDGET
       [ graph ]    % over time for one limit (0-100 on the Y axis), solid = what happened, dashed = where your current rate leads
       ⚠ Session runs out ~7:40 PM - 1h 23m before its reset
     Click it          ->  Detail window: every limit with its own history graph + forecast, reset time, spend, raw JSON.
-    Sizes             ->  right-click > Size, or Ctrl + mouse wheel over it: Tiny (one strip: ● Fable 5 ▓▓░░ 16% - the favorite model, else the most
-                          urgent limit; a click opens the Detail window) · Small · Medium · Large.  Remembered between runs.
+    Sizes             ->  right-click > Size, or Ctrl + mouse wheel over it: Tiny (two short rows: ● Fable 5 ▓▓░░ 16% - the favorite model, else the most
+                          urgent limit - and All models ▓░░░ 8% under it; a click opens the Detail window) · Small · Medium · Large.  Remembered between runs.
 
 THE FORECAST
     Rate = least-squares slope of the recent checks (last 90 min for the session limit, last 24 h for weekly ones); when there aren't
@@ -45,6 +45,7 @@ Needs PySimpleGUI and Pillow - everything else is stdlib.  Settings and history 
 user-settings folder; problems are logged to claude_usage_widget.log in the same folder.
 
 CHANGELOG
+    1.7.4  15-Nov-2026   Tiny: a second row under the favorite model's - All models, its bar and %, in the same style (Mike, 15-Nov); the names, bars and % line up
     1.7.3  11-Nov-2026   Restart and New versions (right-click, just above Exit) - the UPDATE block: a newer version of this file restarts it by itself, unless you pick otherwise
     1.7.2  11-Nov-2026   Start with Windows (right-click, Windows only): a shortcut in your Startup folder, off to start - the STARTUP block (recipe section 7); sub-menu arrows
     1.7.1  11-Nov-2026   Size: Tiny (one strip - the favorite model's bar and %) / Small / Medium / Large, right-click > Size or Ctrl + mouse wheel; Accent: the models' color
@@ -235,7 +236,7 @@ def restart_self(extra=()):
 
 
 APP_NAME = 'Claude Usage'
-VERSION = '1.7.3'
+VERSION = '1.7.4'
 SETTINGS_FILE = 'claude_usage_widget.json'
 DEMO_SETTINGS_FILE = 'claude_usage_widget_demo.json'             # --demo's own settings, so trying things never touches the real ones
 LOG_FILE_NAME = 'claude_usage_widget.log'
@@ -338,9 +339,13 @@ K_GRAPH_ROW = '-GRAPH ROW-'
 K_GRAPH = '-GRAPH-'
 K_GRAPH_NAME = '-GRAPH NAME-'
 K_FORECAST = '-FORECAST-'
-K_TINY_LABEL = '-TINY LABEL-'                                    # Tiny: the limit's name, its bar and its %
+K_TINY_LABEL = '-TINY LABEL-'                                    # Tiny: each row's limit name, its bar and its % - row 0 the favorite model, row 1 All models
+KT_TINY_LABEL = lambda row: (K_TINY_LABEL, row)
 K_TINY_BAR = '-TINY BAR-'
+KT_TINY_BAR = lambda row: (K_TINY_BAR, row)
 K_TINY_PCT = '-TINY PCT-'
+KT_TINY_PCT = lambda row: (K_TINY_PCT, row)
+TINY_ROWS = ('Claude', 'All models')                             # what each Tiny row says before the first good check
 K_POLL_BUSY = '-POLL BUSY-'
 K_POLL_RESULT = '-POLL RESULT-'                                  # value = snapshot dict from the poller thread
 K_ROW = '-ROW-';              KT_ROW = lambda i: (K_ROW, i)
@@ -1666,13 +1671,16 @@ class App:
         return rows
 
     def tiny_rows(self, f, p):
-        """Tiny - one strip: the status dot, then the favorite model's name, bar and % (tiny_bucket).  No x and no ≡: right-click for the menu (Exit is
-           there, and Escape / Alt-F4 close it too); a click opens the Detail window"""
+        """Tiny - a small strip: the status dot, then two rows - the favorite model's name, bar and % (tiny_bucket), and All models' under it - the names,
+           bars and % each in a column so they line up.  No x and no ≡: right-click for the menu (Exit is there, and Escape / Alt-F4 close it too);
+           a click opens the Detail window"""
         bar = (int(TINY_BAR[0] * self.scale), int(TINY_BAR[1] * self.scale))
+        column = lambda rows: sg.Column(rows, pad=(0, 0), background_color=p['card'])
+        rows = range(len(TINY_ROWS))
         return [[sg.Text('●', font=f['dot'], text_color=p['faint'], key=K_DOT, pad=((8, 4), 2), tooltip=DOT_TIP),
-                 sg.Text('Claude', font=f['body'], text_color=p['dim'], key=K_TINY_LABEL, pad=((0, 6), 2)),
-                 sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=K_TINY_BAR, pad=((0, 4), 2)),
-                 sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=K_TINY_PCT, pad=((0, 10), 2))]]
+                 column([[sg.Text(TINY_ROWS[r], font=f['body'], text_color=p['dim'], key=KT_TINY_LABEL(r), pad=((0, 6), 1))] for r in rows]),
+                 column([[sg.Graph(bar, (0, 0), bar, background_color=p['track'], key=KT_TINY_BAR(r), pad=((0, 4), 1))] for r in rows]),
+                 column([[sg.Text('', size=(4, 1), font=f['bold'], justification='r', key=KT_TINY_PCT(r), pad=((0, 10), 1))] for r in rows])]]
 
     def make_menu(self):
         """The right-click / ≡ menu with a ✓ on the current choices - every label starts with a ✓ or the same width of spaces, so they line up"""
@@ -1714,8 +1722,9 @@ class App:
                     tkw.configure(bg=p['card'])
                 except tk.TclError:
                     pass
-        if self.wsize == 'Tiny':                                # the strip: its bar's track - refresh_widget() repaints the rest
-            w[K_TINY_BAR].Widget.configure(bg=p['track'])
+        if self.wsize == 'Tiny':                                # the strip: its bars' track - refresh_widget() repaints the rest
+            for r in range(len(TINY_ROWS)):
+                w[KT_TINY_BAR(r)].Widget.configure(bg=p['track'])
         else:
             for key in [KT_BAR(i) for i in range(MAX_BARS)] + [K_SPEND_BAR]:
                 w[key].Widget.configure(bg=p['track'])
@@ -1851,20 +1860,22 @@ class App:
         self.refresh_forecast()
 
     def refresh_tiny(self):
-        """Tiny: the limit tiny_bucket() picks - its name in its color (the accent for a model), its bar and its %; the details in the tooltip"""
-        b, w, p = self.tiny_bucket(), self.widget, P()
-        if b is None:
-            w[K_TINY_LABEL].update('Claude', text_color=p['dim'])
-            w[K_TINY_PCT].update('')
-            self.draw_bar(w[K_TINY_BAR], 0, p['track'])
-            tip = self.snap['error'] if self.snap and not self.snap.get('ok') else 'waiting for the first check…'
-        else:
-            w[K_TINY_LABEL].update(b['label'], text_color=kind_ink(b['kind']))
-            w[K_TINY_PCT].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
-            self.draw_bar(w[K_TINY_BAR], b['percent'], kind_paint(b['kind']), self.pace(b))
-            tip = f'{b["label"]} · {round(b["percent"])}% used ({self.level_word(b["percent"])}) · {reset_long(b["resets_at"])}'
-        for key in (K_TINY_LABEL, K_TINY_BAR, K_TINY_PCT):
-            w[key].set_tooltip(tip + '\nClick for the detail window · right-click for the menu · Ctrl + mouse wheel for a bigger size')
+        """Tiny: row 0 the limit tiny_bucket() picks, row 1 All models - each its name in its color (the accent for a model), its bar and its %; the
+           details in the tooltip"""
+        w, p = self.widget, P()
+        for r, b in enumerate((self.tiny_bucket(), self.all_models_bucket())):
+            if b is None:
+                w[KT_TINY_LABEL(r)].update(TINY_ROWS[r], text_color=p['dim'])
+                w[KT_TINY_PCT(r)].update('')
+                self.draw_bar(w[KT_TINY_BAR(r)], 0, p['track'])
+                tip = self.snap['error'] if self.snap and not self.snap.get('ok') else 'waiting for the first check…'
+            else:
+                w[KT_TINY_LABEL(r)].update(b['label'], text_color=kind_ink(b['kind']))
+                w[KT_TINY_PCT(r)].update(f'{round(b["percent"])}%', text_color=ink(self.level_color(b['percent'])))
+                self.draw_bar(w[KT_TINY_BAR(r)], b['percent'], kind_paint(b['kind']), self.pace(b))
+                tip = f'{b["label"]} · {round(b["percent"])}% used ({self.level_word(b["percent"])}) · {reset_long(b["resets_at"])}'
+            for key in (KT_TINY_LABEL(r), KT_TINY_BAR(r), KT_TINY_PCT(r)):
+                w[key].set_tooltip(tip + '\nClick for the detail window · right-click for the menu · Ctrl + mouse wheel for a bigger size')
 
     def refresh_forecast(self):
         """The widget's small graph and its one-line verdict: the first limit that would run out before its reset, or all-clear."""
@@ -2067,6 +2078,11 @@ class App:
         buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
         favs = [b for b in buckets if b['kind'] == 'weekly_scoped' and is_favorite(b)]
         return max(favs, key=lambda b: b['percent']) if favs else self.widget_bucket('Most urgent')
+
+    def all_models_bucket(self):
+        """Tiny's second row: the All models weekly limit (the fullest, if there are several).  None before the first good check, or if the plan has none"""
+        buckets = self.snap['buckets'] if self.snap and self.snap.get('ok') else []
+        return max([b for b in buckets if b['kind'] == 'weekly_all'], key=lambda b: b['percent'], default=None)
 
     def widget_bucket(self, want=None):
         """Which limit the widget's small graph follows (want: one of GRAPH_CHOICES instead of the setting)."""

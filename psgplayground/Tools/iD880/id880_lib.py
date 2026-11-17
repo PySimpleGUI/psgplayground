@@ -6,12 +6,18 @@ id880_lib.py - shared code for the iD880 thermal printer programs (Setup, Notes,
     Send : the bitmap goes to the printer as ZPL (^GFA) or TSPL (BITMAP) - pick the language in iD880_Setup.pyw
     Path : USB = RAW job through the Windows printer queue (needs pywin32)      Ethernet = TCP port 9100
     Keep : all the iD880 programs share one PySimpleGUI User Settings file
+    Two  : one printer for both rolls, or a printer per roll (Setup's Printers frame) - every job goes to the printer that holds its roll
 
     Paper: two continuous rolls - receipt paper (3-1/8", or 4" since Nov 2026 - pick it in Setup) and continuous labels (4" wide unless changed in Setup)
 
 Install:  python -m pip install --upgrade PySimpleGUI pillow pywin32 pymupdf
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - the labels can have a printer of their own (label_connection 'same' / 'windows' / 'network', label_win_printer, label_ip,
+            label_port).  send_raw / feed / query_network take the roll (None = the receipt paper's printer); printer_where(media), two_printers();
+            printer_summary(media=None) names both printers when there are two.  One printer (label_connection 'same') works exactly as before
+2026-11-14  Edge to edge: EDGE_BLEED, print_width(media, edge), and edge=False on media_offset / zpl_job / tspl_job / build_job / print_bitmap / print_bitmaps.
+            edge=True prints about 1 mm past both sides of the paper (never past the head) so side-to-side drift never shows white.  Without it every job is byte-for-byte as before
 2026-11-07  receipt width choice: RECEIPT_WIDTHS + the receipt_width setting (3-1/8" or 4") - media_width(RECEIPT) reads it; Setup has the combo
 """
 import functools
@@ -35,9 +41,12 @@ RECEIPT_WIDTH = 640                                                 # 3-1/8" (80
 RECEIPT_WIDTHS = {'3-1/8" (80 mm)': 640, '4" (102 mm)': 812}
 LABEL_WIDTHS = {'4" (102 mm)': 812, '3" (76 mm)': 609, '2-1/4" (57 mm)': 457, '2" (51 mm)': 406}
 NUDGE_SETTING = {RECEIPT: 'receipt_nudge', LABELS: 'label_nudge'}     # dots to move the print right (+) or left (-) of centered
+EDGE_BLEED = 8                                                      # Edge to edge: dots (1 mm) the print runs past each side of the paper - never past the head
+SAME_PRINTER = 'same'                                               # label_connection when the labels are in the receipt paper's printer (one printer)
 
 DEFAULTS = {'connection': 'windows', 'win_printer': '', 'ip': '192.168.1.100', 'port': 9100, 'language': 'ZPL', 'darkness': 15, 'speed': 3,
-            'label_width': '4" (102 mm)', 'receipt_width': '3-1/8" (80 mm)', 'receipt_nudge': 0, 'label_nudge': 0}
+            'label_width': '4" (102 mm)', 'receipt_width': '3-1/8" (80 mm)', 'receipt_nudge': 0, 'label_nudge': 0,
+            'label_connection': SAME_PRINTER, 'label_win_printer': '', 'label_ip': '192.168.1.101', 'label_port': 9100}
 
 GREEN, RED, BLUE, ORANGE = '#2E7D32', '#C62828', '#1565C0', '#EF6C00'   # Print / destructive / setup / warning
 HINT_COLOR = '#A9C7E8'
@@ -50,7 +59,7 @@ NO_DITHER = getattr(Image, 'Dither', Image).NONE
 
 HELP_TEXT = '''Things to check:
   1. The printer is on, the lid is closed and paper is loaded
-  2. iD880_Setup.pyw has the right connection (USB printer name, or IP address for Ethernet)
+  2. iD880_Setup.pyw has the right printer for that roll (USB printer name, or IP address for Ethernet)
   3. Nothing prints, or commands print as text?  Change Language in Setup (ZPL <-> TSPL)
   4. USB printing needs pywin32 (python -m pip install pywin32) and the printer installed in Windows'''
 
@@ -75,17 +84,48 @@ def media_width(media):
     return LABEL_WIDTHS.get(setting('label_width'), 812)
 
 
-def media_offset(media):
-    """Dots from the left end of the print head to the left edge of the paper (centered paper + the nudge from Setup)"""
-    return max(0, (HEAD_DOTS - media_width(media)) // 2 + int(setting(NUDGE_SETTING.get(media, 'label_nudge')) or 0))
+def print_width(media, edge=False):
+    """Dots across that a job prints: the paper's width - or with edge, the paper plus EDGE_BLEED on each side, rounded up to whole bytes
+    (so to_1bit adds no padding) and never wider than the head.  4" paper (812) -> 832, the whole head; 3-1/8" (640) -> 656."""
+    width = media_width(media)
+    return min(HEAD_DOTS, (width + 2 * EDGE_BLEED + 7) // 8 * 8) if edge else width
 
 
-def printer_summary():
-    if setting('connection') == 'network':
-        where = f"Ethernet {setting('ip')}:{setting('port')}"
-    else:
-        where = f'USB "{setting("win_printer")}"' if setting('win_printer') else 'USB - no printer picked yet (open Printer setup)'
-    return f"Printer: {where}    Language: {setting('language')}"
+def media_offset(media, edge=False):
+    """Dots from the left end of the print head to the left edge of the print: the paper's left edge (centered paper + the nudge from Setup) -
+    or with edge, half the extra print width further left, so the print runs past both sides of the paper.  Always kept on the head."""
+    offset = max(0, (HEAD_DOTS - media_width(media)) // 2 + int(setting(NUDGE_SETTING.get(media, 'label_nudge')) or 0))
+    if edge:
+        wide = print_width(media, True)
+        offset = max(0, min(offset - (wide - media_width(media)) // 2, HEAD_DOTS - wide))
+    return offset
+
+
+def two_printers():
+    """True when the labels have a printer of their own (Setup: Labels row is USB or Ethernet, not Same printer)"""
+    return setting('label_connection') != SAME_PRINTER
+
+
+def printer_prefix(media=None):
+    """Settings prefix of the printer that holds media: '' = the receipt paper's printer (connection, win_printer, ip, port), 'label_' = the labels' own"""
+    return 'label_' if media == LABELS and two_printers() else ''
+
+
+def printer_where(media=None):
+    """'USB "Windows name"' or 'Ethernet ip:port' of the printer that holds media (None = the receipt paper's printer)"""
+    p = printer_prefix(media)
+    if setting(p + 'connection') == 'network':
+        return f"Ethernet {setting(p + 'ip')}:{setting(p + 'port')}"
+    return f'USB "{setting(p + "win_printer")}"' if setting(p + 'win_printer') else 'USB - no printer picked yet (open Printer setup)'
+
+
+def printer_summary(media=None):
+    """One printer: 'Printer: ...'.  Two: both, or only the one that holds media"""
+    if not two_printers():
+        return f"Printer: {printer_where()}    Language: {setting('language')}"
+    if media is None:
+        return f"Receipt paper: {printer_where(RECEIPT)}    Labels: {printer_where(LABELS)}    Language: {setting('language')}"
+    return f"{media} printer: {printer_where(media)}    Language: {setting('language')}"
 
 
 def open_setup():
@@ -176,18 +216,18 @@ def zpl_graphic(img1):
     return f'^GFA,{len(data)},{len(data)},{img1.width // 8},{data.hex().upper()}'
 
 
-def zpl_job(img1, media, copies=1, extra_dark=False):
+def zpl_job(img1, media, copies=1, extra_dark=False, edge=False):
     """Continuous media (^MNN), tear-off (^MMT), direct thermal (^MTD).  Full head width with the bitmap placed over the centered paper."""
     darkness, speed = job_darkness_speed(extra_dark)
-    lines = [f"~SD{darkness:02d}", '^XA', '^MTD', '^MMT', '^MNN', f'^PW{HEAD_DOTS}', f'^LL{img1.height}', f'^LH{media_offset(media)},0',
+    lines = [f"~SD{darkness:02d}", '^XA', '^MTD', '^MMT', '^MNN', f'^PW{HEAD_DOTS}', f'^LL{img1.height}', f'^LH{media_offset(media, edge)},0',
              f"^PR{speed}", '^FO0,0' + zpl_graphic(img1) + '^FS', f'^PQ{max(1, int(copies))}', '^XZ']
     return '\n'.join(lines).encode('ascii')
 
 
-def tspl_job(img1, media, copies=1, extra_dark=False):
+def tspl_job(img1, media, copies=1, extra_dark=False, edge=False):
     """TSPL BITMAP data uses 0 = black dot, 1 = white - the same as Pillow, so the bytes go out as-is"""
     darkness, speed = job_darkness_speed(extra_dark)
-    head = [f'SIZE {HEAD_DOTS / DOTS_PER_MM:.1f} mm,{img1.height / DOTS_PER_MM:.1f} mm', 'GAP 0 mm,0 mm', 'DIRECTION 1', f'REFERENCE {media_offset(media)},0',
+    head = [f'SIZE {HEAD_DOTS / DOTS_PER_MM:.1f} mm,{img1.height / DOTS_PER_MM:.1f} mm', 'GAP 0 mm,0 mm', 'DIRECTION 1', f'REFERENCE {media_offset(media, edge)},0',
             f"DENSITY {round(darkness / 2)}", f"SPEED {speed}", 'SET TEAR ON', 'CLS', f'BITMAP 0,0,{img1.width // 8},{img1.height},0,']
     return '\r\n'.join(head).encode('ascii') + img1.tobytes() + f'\r\nPRINT 1,{max(1, int(copies))}\r\n'.encode('ascii')
 
@@ -200,18 +240,19 @@ def job_darkness_speed(extra_dark=False):
     return int(float(setting('darkness'))), int(float(setting('speed')))
 
 
-def build_job(img1, media, copies=1, extra_dark=False):
-    return tspl_job(img1, media, copies, extra_dark) if setting('language') == 'TSPL' else zpl_job(img1, media, copies, extra_dark)
+def build_job(img1, media, copies=1, extra_dark=False, edge=False):
+    return tspl_job(img1, media, copies, extra_dark, edge) if setting('language') == 'TSPL' else zpl_job(img1, media, copies, extra_dark, edge)
 
 
-def print_bitmap(img1, media, copies=1, extra_dark=False):
-    """Print a 1-bit bitmap (from to_1bit) on media (RECEIPT or LABELS).  Returns a short message, raises on failure."""
-    return send_raw(build_job(img1, media, copies, extra_dark))
+def print_bitmap(img1, media, copies=1, extra_dark=False, edge=False):
+    """Print a 1-bit bitmap (from to_1bit) on media (RECEIPT or LABELS).  edge: the bitmap is print_width(media, True) wide and runs past both
+    sides of the paper.  Goes to the printer that holds media.  Returns a short message, raises on failure."""
+    return send_raw(build_job(img1, media, copies, extra_dark, edge), media)
 
 
-def print_bitmaps(pages, media, sets=1):
+def print_bitmaps(pages, media, sets=1, edge=False):
     """Print several 1-bit bitmaps one after another as one job, the whole run sets times (1, 2, 3, 1, 2, 3...).  Returns a short message."""
-    return send_raw(b'\n'.join(build_job(page, media) for _ in range(max(1, int(sets))) for page in pages))
+    return send_raw(b'\n'.join(build_job(page, media, edge=edge) for _ in range(max(1, int(sets))) for page in pages), media)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -225,32 +266,35 @@ def list_windows_printers():
         return []
 
 
-def feed(inches=1):
-    """Feed paper out of the printer (no printing).  Returns a short message, raises on failure."""
+def feed(inches=1, media=None):
+    """Feed paper out of the printer that holds media (no printing; None = the receipt paper's printer).  Returns a short message, raises on failure."""
     dots = round(inches * DPI)
     if setting('language') == 'TSPL':
         data = f'FEED {dots}\r\n'.encode('ascii')
     else:
         data = f'^XA^MNN^PW{HEAD_DOTS}^LL{dots}^FO0,0^GB8,1,1,W^FS^XZ'.encode('ascii')
-    return send_raw(data)
+    return send_raw(data, media)
 
 
-def send_raw(data):
-    """Send printer-language bytes unchanged.  Returns a short message, raises an exception with a readable reason on failure."""
-    if setting('connection') == 'network':
+def send_raw(data, media=None):
+    """Send printer-language bytes unchanged to the printer that holds media (RECEIPT or LABELS; None = the receipt paper's printer).
+    Returns a short message, raises an exception with a readable reason on failure."""
+    p = printer_prefix(media)
+    if setting(p + 'connection') == 'network':
+        ip, port = setting(p + 'ip'), int(setting(p + 'port'))
         try:
-            with socket.create_connection((setting('ip'), int(setting('port'))), timeout=6) as sock:
+            with socket.create_connection((ip, port), timeout=6) as sock:
                 sock.sendall(data)
         except OSError as e:
-            raise RuntimeError(f"Could not reach the printer at {setting('ip')}:{setting('port')}\n{e}")
-        return f"Sent {len(data):,} bytes to {setting('ip')}"
+            raise RuntimeError(f"Could not reach the printer at {ip}:{port}\n{e}")
+        return f"Sent {len(data):,} bytes to {ip}"
     try:
         import win32print
     except ImportError:
         raise RuntimeError('USB printing needs pywin32:    python -m pip install pywin32\n(or switch Setup to Ethernet)')
-    name = setting('win_printer')
+    name = setting(p + 'win_printer')
     if not name:
-        raise RuntimeError('No printer picked yet - open Printer setup and choose the iD880')
+        raise RuntimeError(f'No printer picked yet{" for the labels" if p else ""} - open Printer setup and choose the iD880')
     handle = win32print.OpenPrinter(name)
     try:
         win32print.StartDocPrinter(handle, 1, ('iD880 PySimpleGUI job', None, 'RAW'))
@@ -265,12 +309,13 @@ def send_raw(data):
     return f'Sent {len(data):,} bytes to "{name}"'
 
 
-def query_network(data, wait=1.5):
-    """Send a status request over Ethernet and return whatever the printer answers (USB through Windows can't read answers)"""
-    if setting('connection') != 'network':
+def query_network(data, wait=1.5, media=None):
+    """Send a status request over Ethernet to the printer that holds media and return whatever it answers (USB through Windows can't read answers)"""
+    p = printer_prefix(media)
+    if setting(p + 'connection') != 'network':
         raise RuntimeError('Reading answers from the printer only works with the Ethernet connection')
     reply = b''
-    with socket.create_connection((setting('ip'), int(setting('port'))), timeout=6) as sock:
+    with socket.create_connection((setting(p + 'ip'), int(setting(p + 'port'))), timeout=6) as sock:
         sock.sendall(data)
         sock.settimeout(wait)
         try:

@@ -16,11 +16,16 @@ iD880 Banner - big lettering in any font on this computer, printed on the iD880 
     Darkness   1-30, starts at Setup's.  Slow prints darker - big black areas (Reverse, thick letters) need it
     Style      Thicker, Spacing, Outline, Shadow, Reverse (white letters on black), Frame, Inside (solid / gray / stripes / dots),
                Direction (banner: which end prints first), Line up (across: left / center / right).  Reset style puts them all back.
+    Paper      Receipt paper or Labels, Copies, Blank ends (banner).  Edge to edge: no white at the sides - the print runs about 1 mm past both
+               edges of the paper (made for 4" paper), the lettering goes right to the edges and Reverse's black runs off them.
 
 Needs id880_lib.py in the same folder (printer connection, language and paper widths come from iD880_Setup.pyw) and Pillow.
 Writes only its settings, into the iD880 programs' shared settings file (iD880_thermal_printer.json in PySimpleGUI's settings folder).
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-15  v1.0.3 Claude: two printers - Print and Feed go to the printer that holds the paper picked here (id880_lib 15-Nov)
+2026-11-14  v1.0.2 Claude: Edge to edge (Paper): no side margins, the print runs about 1 mm past both edges of the paper, Reverse's black to the edges;
+                          the preview marks the paper's edges in red.  Needs id880_lib with print_width / media_offset(edge)
 2026-11-12  v1.0.1 Claude: emoji and every alphabet - a letter the font lacks comes from a font that has it (Segoe UI Emoji, Segoe UI Symbol, Segoe UI...)
                           instead of a rectangle; Outline with Inside: Solid is hollow (it was only bolder)
 2026-11-12  v1.0.0 Claude: first version - every installed font in a flip-through list, banner + across, size, darkness, 8 styles, no Figlet
@@ -39,7 +44,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, features
 
 import id880_lib as lib
 
-VERSION = '1.0.1'
+VERSION = '1.0.3'
 TITLE = 'iD880 Banner'
 ICON = b'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'
 
@@ -78,7 +83,8 @@ PREVIEW_W, PREVIEW_H = 900, 380
 MAX_SCALE = 0.6                                                     # preview never bigger than this many screen pixels per dot
 
 DEFAULT_OPTIONS = {'mode': BANNER, 'fill': True, 'mm': 25, 'darkness': None, 'slow': True, 'thick': 0, 'spacing': 0, 'outline': False, 'shadow': False,
-                   'reverse': False, 'frame': False, 'pattern': 'Solid', 'direction': 'start', 'align': 'Center', 'ends': 10, 'media': lib.RECEIPT}
+                   'reverse': False, 'frame': False, 'pattern': 'Solid', 'direction': 'start', 'align': 'Center', 'ends': 10, 'media': lib.RECEIPT,
+                   'edge': False}
 STYLE_KEYS = ('thick', 'spacing', 'outline', 'shadow', 'reverse', 'frame', 'pattern', 'direction', 'align', 'ends', 'fill', 'mm')
 
 K_TEXT, K_SEARCH, K_COUNT, K_GALLERY, K_SLIDER, K_FONT_NAME = '-TEXT-', '-SEARCH-', '-COUNT-', '-GALLERY-', '-SLIDER-', '-FONT NAME-'
@@ -88,6 +94,7 @@ K_BANNER, K_ACROSS, K_INFO, K_PREVIEW, K_PREVIEW_COL = '-BANNER-', '-ACROSS-', '
 K_FILL, K_MM, K_SIZE_TEXT, K_DARKNESS, K_SLOW = '-FILL-', '-MM-', '-SIZE TEXT-', '-DARKNESS-', '-SLOW-'
 K_THICK, K_SPACING, K_OUTLINE, K_SHADOW, K_REVERSE, K_FRAME = '-THICK-', '-SPACING-', '-OUTLINE-', '-SHADOW-', '-REVERSE-', '-FRAME-'
 K_PATTERN, K_DIRECTION, K_ALIGN, K_ENDS, K_ENDS_ROW, K_MEDIA, K_COPIES = '-PATTERN-', '-DIRECTION-', '-ALIGN-', '-ENDS-', '-ENDS ROW-', '-MEDIA-', '-COPIES-'
+K_EDGE = '-EDGE-'
 K_PRINT, K_FEED, K_SETUP, K_RESET, K_STATUS = '-PRINT-', '-FEED-', '-SETUP-', '-RESET-', '-STATUS-'
 K_SCAN_PROGRESS, K_SCAN_DONE = '-SCAN PROGRESS-', '-SCAN DONE-'
 K_UP, K_DOWN, K_PGUP, K_PGDN, K_HOME, K_END = '-UP-', '-DOWN-', '-PGUP-', '-PGDN-', '-HOME-', '-END-'
@@ -99,7 +106,7 @@ STEP = {K_UP: -1, K_DOWN: 1, K_PGUP: -10, K_PGDN: 10, K_ALT_UP: -1, K_ALT_DOWN: 
 BG, PANEL, PANEL2, PREVIEW_BG = '#161a22', '#1e2430', '#232a37', '#3c4650'
 C_TEXT, C_DIM, C_SEL = '#d6dbe5', '#8a93a6', '#2a62a8'
 C_FONTS, C_WORDS, C_SIZE, C_DARK, C_STYLE, C_PAPER = '#7fb2ff', '#e6eaf2', '#4cc38a', '#f0b429', '#c58cff', '#4fd1c5'
-C_OK, C_WARN, C_BAD, C_STAR, C_HIDDEN = '#4cc38a', '#f0b429', '#ff6b6b', '#ffd23f', '#6b7385'
+C_OK, C_WARN, C_BAD, C_STAR, C_HIDDEN, C_EDGE = '#4cc38a', '#f0b429', '#ff6b6b', '#ffd23f', '#6b7385', '#ff6b6b'
 ON_COLORS, OFF_COLORS, MODE_OFF = ('#ffffff', C_SEL), ('#c9cfdb', '#2a3140'), ('#c9cfdb', '#2a3140')
 PRINT_COLORS = ('#ffffff', '#1f8a55')
 sg.theme_add_new('BannerDark', {'BACKGROUND': BG, 'TEXT': C_TEXT, 'INPUT': PANEL2, 'TEXT_INPUT': '#e6eaf2', 'SCROLL': PANEL2, 'BUTTON': OFF_COLORS,
@@ -108,8 +115,8 @@ sg.theme('BannerDark')
 sg.set_options(icon=ICON)
 FONT, BOLD, HEAD, LIST_FONT = ('Segoe UI', 10), ('Segoe UI', 10, 'bold'), ('Segoe UI', 11, 'bold'), ('Segoe UI', 9)
 TOGGLES = {K_FAV_ONLY: '★ only', K_FAMILY: 'One per family', K_SHOW_HIDDEN: 'Hidden', K_FILL: 'Fill the paper', K_SLOW: 'Slow - darker',
-           K_OUTLINE: 'Outline', K_SHADOW: 'Shadow', K_REVERSE: 'Reverse', K_FRAME: 'Frame'}
-OPTION_TOGGLES = {K_FILL: 'fill', K_SLOW: 'slow', K_OUTLINE: 'outline', K_SHADOW: 'shadow', K_REVERSE: 'reverse', K_FRAME: 'frame'}
+           K_OUTLINE: 'Outline', K_SHADOW: 'Shadow', K_REVERSE: 'Reverse', K_FRAME: 'Frame', K_EDGE: 'Edge to edge'}
+OPTION_TOGGLES = {K_FILL: 'fill', K_SLOW: 'slow', K_OUTLINE: 'outline', K_SHADOW: 'shadow', K_REVERSE: 'reverse', K_FRAME: 'frame', K_EDGE: 'edge'}
 FILTER_TOGGLES = {K_FAV_ONLY: 'fav_only', K_FAMILY: 'family_only', K_SHOW_HIDDEN: 'show_hidden'}
 SLIDERS = {K_MM: 'mm', K_DARKNESS: 'darkness', K_THICK: 'thick', K_SPACING: 'spacing', K_ENDS: 'ends'}
 
@@ -465,11 +472,16 @@ def framed(art, o):
     return ImageOps.invert(block) if o['reverse'] else block
 
 
-def make_print(fd, text, paper_w, o):
-    """(paper picture 'L' as it prints, info line, notes, cap height mm).  Banner: the lettering turned to run down the strip."""
+def make_print(fd, text, paper_w, o, print_w=None):
+    """(paper picture 'L' as it prints, info line, notes, cap height mm).  Banner: the lettering turned to run down the strip.
+    Edge to edge (o['edge']): the picture is print_w wide - the paper plus a little past each side - with no white margin at the sides,
+    and Reverse's black runs all the way across."""
     text = text.rstrip() or ' '
+    print_w = print_w or paper_w
+    margin = 0 if o.get('edge') else MARGIN
+    bleed = (print_w - paper_w) // 2                                # how far the print runs past each side of the paper (0 unless Edge to edge)
     room = 2 * BLOCK_PAD if (o['reverse'] or o['frame']) else 0
-    target = paper_w - 2 * MARGIN - room                            # across the paper, for the lettering itself
+    target = paper_w - 2 * margin - room                            # across the paper, for the lettering itself
     notes = []
     banner = o['mode'] == BANNER
     measure = (lambda img: img.height) if banner else (lambda img: img.width)
@@ -492,14 +504,19 @@ def make_print(fd, text, paper_w, o):
         if not o['fill'] and attempt == 0:
             notes.append('Shrunk to fit the paper' if banner else 'A word was too wide - shrunk to fit')
     block = framed(art, o)
+    black_across = o.get('edge') and o['reverse']                   # Edge to edge + Reverse: the black runs off both sides of the paper
     if banner:
         block = block.rotate(270 if o['direction'] == 'start' else 90, expand=True)
         ends = lib.mm_dots(o['ends'])
-        paper = Image.new('L', (paper_w, block.height + 2 * ends), 255)
-        paper.paste(block, ((paper_w - block.width) // 2, ends))
+        paper = Image.new('L', (print_w, block.height + 2 * ends), 255)
+        if black_across:
+            paper.paste(0, (0, ends, print_w, ends + block.height))
+        paper.paste(block, ((print_w - block.width) // 2, ends))
     else:
-        x = {'Left': MARGIN, 'Center': (paper_w - block.width) // 2, 'Right': paper_w - MARGIN - block.width}[o['align']]
-        paper = Image.new('L', (paper_w, block.height + 2 * TOP), 255)
+        x = {'Left': bleed + margin, 'Center': (print_w - block.width) // 2, 'Right': bleed + paper_w - margin - block.width}[o['align']]
+        paper = Image.new('L', (print_w, block.height + 2 * TOP), 255)
+        if black_across:
+            paper.paste(0, (0, TOP, print_w, TOP + block.height))
         paper.paste(block, (max(0, x), TOP))
     cap_mm = cap_height(fd, px) / lib.DOTS_PER_MM
     inches = paper.height / lib.DPI
@@ -507,6 +524,8 @@ def make_print(fd, text, paper_w, o):
         info = f'Banner {inches:.1f} in long  -  capitals {cap_mm:.0f} mm tall'
     else:
         info = f'{lines} line{"s" if lines != 1 else ""}  -  capitals {cap_mm:.0f} mm tall  -  {inches:.1f} in of paper'
+    if o.get('edge'):
+        info += '  -  edge to edge'
     if inches > LONG_PRINT_IN:
         notes.append(f'Long - {inches:.0f} in')
     if o['reverse'] and not o['slow']:
@@ -514,11 +533,12 @@ def make_print(fd, text, paper_w, o):
     return paper, info, notes, cap_mm
 
 
-def job_bytes(img1, media, copies, darkness, slow):
-    """The print job at this darkness and speed (Slow = 2 in/s, else Setup's).  The same commands as id880_lib's jobs."""
+def job_bytes(img1, media, copies, darkness, slow, edge=False):
+    """The print job at this darkness and speed (Slow = 2 in/s, else Setup's).  The same commands as id880_lib's jobs.
+    edge: the picture starts id880_lib's bleed left of the paper, so it runs past both sides."""
     speed = 2 if slow else int(float(lib.setting('speed')))
     darkness, copies = max(0, min(30, int(darkness))), max(1, int(copies))
-    offset = lib.media_offset(media)
+    offset = lib.media_offset(media, edge)
     if lib.setting('language') == 'TSPL':
         head = [f'SIZE {lib.HEAD_DOTS / lib.DOTS_PER_MM:.1f} mm,{img1.height / lib.DOTS_PER_MM:.1f} mm', 'GAP 0 mm,0 mm', 'DIRECTION 1', f'REFERENCE {offset},0',
                 f'DENSITY {round(darkness / 2)}', f'SPEED {speed}', 'SET TEAR ON', 'CLS', f'BITMAP 0,0,{img1.width // 8},{img1.height},0,']
@@ -558,6 +578,7 @@ def ruler_steps(px_per_inch):
 def preview_png(paper, o, width):
     """What will print, for the window: a banner turned so it reads left to right, with inch marks along it"""
     banner = o['mode'] == BANNER
+    edge = (paper.width - lib.media_width(o['media'])) // 2 if o.get('edge') else 0
     strip = paper.rotate(90 if o['direction'] == 'start' else 270, expand=True) if banner else paper
     scale = min(MAX_SCALE if banner else 1.0, (width - 70) / strip.width)
     small = strip.resize((max(1, round(strip.width * scale)), max(1, round(strip.height * scale))), LANCZOS).convert('RGB')
@@ -576,6 +597,9 @@ def preview_png(paper, o, width):
             d.line((x, small.height + 12, x, small.height + (22 if n % step == 0 else 17)), fill='#aab4c3', width=1)
             if n % step == 0:
                 d.text((x + 2, small.height + 22), f'{n}"', fill='#aab4c3', font=tick_font)
+        if edge:                                                    # the paper's edges, inside the wider print
+            for y in (10 + edge * scale, 10 + (paper.width - edge) * scale):
+                d.line((12, y, 12 + small.width, y), fill=C_EDGE, width=1)
     else:
         img = Image.new('RGB', (small.width + 54, small.height + 24), PREVIEW_BG)
         img.paste(small, (42, 12))
@@ -585,6 +609,9 @@ def preview_png(paper, o, width):
             d.line((40 - (12 if n % step == 0 else 6), y, 40, y), fill='#aab4c3', width=1)
             if n % step == 0:
                 d.text((4, y + 1), f'{n}"', fill='#aab4c3', font=tick_font)
+        if edge:
+            for x in (42 + edge * scale, 42 + (paper.width - edge) * scale):
+                d.line((x, 12, x, 12 + small.height), fill=C_EDGE, width=1)
     return lib.png_bytes(img)
 
 
@@ -612,8 +639,8 @@ def frame(title, color, rows):
     return sg.Frame(f' {title} ', rows, title_color=color, font=BOLD, relief=sg.RELIEF_GROOVE, pad=(5, 4), vertical_alignment='top')
 
 
-def max_mm(media):
-    return max(6, int((lib.media_width(media) - 2 * MARGIN) / lib.DOTS_PER_MM))
+def max_mm(media, edge=False):
+    return max(6, int((lib.media_width(media) - (0 if edge else 2 * MARGIN)) / lib.DOTS_PER_MM))
 
 
 def style_menus(window):
@@ -662,7 +689,7 @@ def make_window(state):
                 sg.Text('', key=K_INFO, text_color=C_TEXT, expand_x=True, justification='right')]
     preview = sg.Column([[sg.Image(key=K_PREVIEW, background_color=PREVIEW_BG)]], key=K_PREVIEW_COL, scrollable=True, size=(PREVIEW_W, PREVIEW_H),
                         background_color=PREVIEW_BG, expand_x=True, expand_y=True)
-    top = max_mm(o['media'])
+    top = max_mm(o['media'], o['edge'])
     size = frame('Size', C_SIZE, [[toggle(K_FILL, o['fill'], 'As big as the paper allows')],
                                   [slider(K_MM, (3, top), min(o['mm'], top), 'How tall the capital letters are, in mm - turns Fill off', 16)],
                                   [sg.Text('', key=K_SIZE_TEXT, text_color=C_DIM, font=LIST_FONT, size=(24, 1))]])
@@ -672,7 +699,8 @@ def make_window(state):
                                       sg.Text('Copies'), sg.Spin(list(range(1, 21)), 1, key=K_COPIES, size=(3, 1))],
                                      [sg.pin(sg.Column([[sg.Text('Blank ends', font=LIST_FONT),
                                                          slider(K_ENDS, (0, 60), o['ends'], 'Blank paper before and after the banner, in mm', 12)]],
-                                                       key=K_ENDS_ROW, pad=0, visible=o['mode'] == BANNER))]])
+                                                       key=K_ENDS_ROW, pad=0, visible=o['mode'] == BANNER))],
+                                     [toggle(K_EDGE, o['edge'], 'No white at the sides: the print runs about 1 mm past both edges of the paper (made for 4" paper)')]])
     style = frame('Style', C_STYLE, [[sg.Text('Thicker', font=LIST_FONT), slider(K_THICK, (0, 10), o['thick'], 'Fatter letters - 0 is the font as drawn', 14),
                                       sg.Text('Spacing', font=LIST_FONT), slider(K_SPACING, (-10, 40), o['spacing'], 'Room between the letters', 14)],
                                      [toggle(K_OUTLINE, o['outline'], 'Hollow letters - a line around each one'),
@@ -826,7 +854,7 @@ def render(window, state):
     if fd is None:
         return
     try:
-        paper, info, notes, cap_mm = make_print(fd, state['text'], lib.media_width(o['media']), o)
+        paper, info, notes, cap_mm = make_print(fd, state['text'], lib.media_width(o['media']), o, lib.print_width(o['media'], o['edge']))
     except Exception as e:
         window[K_INFO].update(f"Can't draw this: {e}", text_color=C_WARN)
         window[K_PREVIEW].update(data=None)
@@ -835,7 +863,7 @@ def render(window, state):
     window[K_INFO].update(info + ('   -   ' + '   -   '.join(notes) if notes else ''), text_color=C_WARN if notes else C_TEXT)
     window[K_SIZE_TEXT].update(f'Capitals {cap_mm:.0f} mm tall' + ('  (Fill)' if o['fill'] else ''))
     if o['fill']:                                                   # the slider shows the size Fill picked, so turning Fill off starts there
-        window[K_MM].update(value=max(3, min(max_mm(o['media']), round(cap_mm))))
+        window[K_MM].update(value=max(3, min(max_mm(o['media'], o['edge']), round(cap_mm))))
     show_preview(window, state)
 
 
@@ -861,7 +889,7 @@ def do_print(window, state, values):
     if inches > LONG_PRINT_IN and sg.popup_yes_no(f'This uses {inches:.0f} inches of paper.  Print it?', title=TITLE, keep_on_top=True, font=FONT) != 'Yes':
         return
     try:
-        sent = lib.send_raw(job_bytes(img1, o['media'], copies, o['darkness'], o['slow']))
+        sent = lib.send_raw(job_bytes(img1, o['media'], copies, o['darkness'], o['slow'], o['edge']), o['media'])
         window[K_STATUS].update(f'Printed {state["font"]}: {sent}    ({lib.printer_summary()})', text_color=C_OK)
     except Exception as e:
         window[K_STATUS].update('Print failed - see the message', text_color=C_BAD)
@@ -1048,6 +1076,10 @@ def main():
             o[name] = not o[name]
             if event == K_FILL and not o['fill']:
                 o['mm'] = int(values[K_MM])
+            if event == K_EDGE:                                     # no side margins: the size slider can go a little higher
+                top = max_mm(o['media'], o['edge'])
+                o['mm'] = min(o['mm'], top)
+                window[K_MM].update(value=o['mm'], range=(3, top))
             show_toggle(window, event, o[name])
             save_options(state)
             state['dirty'] = True
@@ -1079,7 +1111,7 @@ def main():
             focus_list(window)
         elif event == K_MEDIA:
             o['media'] = values[K_MEDIA]
-            top = max_mm(o['media'])
+            top = max_mm(o['media'], o['edge'])
             o['mm'] = min(o['mm'], top)
             window[K_MM].update(value=o['mm'], range=(3, top))
             save_options(state)
@@ -1099,7 +1131,7 @@ def main():
             do_print(window, state, values)
         elif event == K_FEED:
             try:
-                lib.feed(1)
+                lib.feed(1, state['options']['media'])
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color=C_OK)
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color=C_BAD)

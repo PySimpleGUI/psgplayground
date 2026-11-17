@@ -38,6 +38,15 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.59  14-Nov-2026     Claude: a program's file.  Right-click a program > Open file location (PySimpleGUI's Explorer Program when one is
+                            set - the program standard) / Copy the path.  Drag a program out of the Panel and hold it still past the dock (over
+                            no other dock - dock to dock still moves it) and it becomes its file - drop it into Explorer, a chat, any program
+                            that takes files (tkdnd: CF_HDROP);
+                            a Bar's stack and its search fly-out let you drag a program out too.  A link may name the file it belongs to
+                            (the entry's -FILE-, set by whoever filled the dock): then its menu has Run / Open file location / Copy the
+                            file's path / Edit the source, the bottom line names the file and the row shows its version.  A dock whose
+                            settings name a fill script (-FILL SCRIPT-) gets right-click > Refresh this dock from <script>: the dock closes,
+                            the script fills it and starts it again.  A dock without these looks and works as before.
     2.2.58  12-Nov-2026     Claude: right-click > Start with Windows in every dock (program standards; Windows only, off until ticked).
                             ONE shortcut, "PSG Dock.lnk" in the Startup folder, runs psgdock.pyw like the taskbar pin, so the docks that
                             were open come back after a reboot; unticking removes it.  The STARTUP block from the widget recipe.
@@ -253,12 +262,13 @@ import json
     Right-click a heading > Start all to start every program under it - all your widgets at once.
     Start psgdock.pyw with no --dock (the taskbar pin) to open every dock you had open;  right-click > Close all docks / Restart all docks.
     Right-click > Start with Windows (Windows): "PSG Dock.lnk" in your Startup folder runs it like the pin;  its icon is "PSG Dock.ico" in the settings folder.
+    Right-click a program > Open file location / Copy the path.  Drag a program out of the Panel and hold it still: then drop its file into Explorer or a chat.
     Requires:  PySimpleGUI, pillow, psgdnd  (pip install psgdnd)
 
     Copyright 2026_PySimpleGUI
 """
 
-VERSION = '2.2.58'
+VERSION = '2.2.59'
 version = VERSION                                               # (the name the code has always used - VERSION is the one the UPDATE block reads)
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
@@ -410,13 +420,14 @@ KIND_APP, KIND_HEADING = 'app', 'heading'                          # an entry is
 
 class Block:
     active_blocks = {}  # type:  Dict[int, Block]
-    def __init__(self, block_num, name, path, iconb64, kind=KIND_APP, bar=True):
+    def __init__(self, block_num, name, path, iconb64, kind=KIND_APP, bar=True, file=''):
         self.block_num = block_num
         self.name = name
         self.path= path
         self.iconb64 = iconb64
         self.kind = kind
         self.bar = bar                                  # shown in the Bar style (the Panel shows everything)
+        self.file = file                                # a link: the file it belongs to (a chat link's program) - '' = none
 
 class G:
     right_click_menu = []
@@ -460,6 +471,8 @@ class G:
     wheel_size = None                                   # Ctrl + the scroll wheel: the size the notches so far add up to, applied once tk is idle
     tip_shown, scroll_since = False, None               # the Bar's 'rearrange in the Panel' tip was shown; Programs window: held at an edge since
     drag_item = None                                    # Panel: a program / section being dragged to a new place (its list positions, the copy that follows the mouse...)
+    drag_out, out_pending = None, None                  # the files of a drag out of the dock while it runs;  the Panel's, just before it starts
+    fill_script = ''                                    # settings: the script that fills this dock - right-click > Refresh this dock from it
     stacks_hover, rest = True, None                     # Stacks open when the mouse rests on them; (the stack it rests on, since, opened yet)
     stack_open, stack_closed, drop_stack = None, None, None                                   # Bar Stacks: the one flown out, the last closed (num, time), a drop aimed at one
     dock_slug, dock_title, mutex = '', APP_NAME, None   # which dock this is: '' = the one started without a name;  its name as shown;  the handle that says it's running
@@ -583,6 +596,9 @@ K_E_ADD_LINK = '-E ADD LINK-'                   # a heading's menu: Add a link h
 K_ADD_HEAD = '-ADD A HEADING-'                  # right-click > Add a heading... (at the end of the list)
 K_E_ADD_HEAD = '-E ADD A HEADING-'              # a heading's menu: Add a heading here... (after its section);  a program's: Add a heading above this...
 K_E_START_ALL = '-E START ALL-'                 # a heading's menu: Start all N programs - every program and link under it, one after another
+K_E_RUN, K_E_COPY_FILE = '-E RUN-', '-E COPY FILE-'           # a link that names its file: Run <file> / Copy the file's path
+K_FILL_SCRIPT = '-FILL SCRIPT-'                 # settings: a script that fills this dock (written by that script) - right-click > Refresh this dock from it
+K_FILL_RUN = '-FILL RUN-'                       # right-click > Refresh this dock from <script>: the dock closes, the script fills it and starts it again
 K_SEARCH = '-SEARCH-'                           # right-click > Search > Search box / Search button (settings entry too: True / False - not there = by itself)
 K_SEARCH_MODE = '-SEARCH MODE-'                 # right-click > Search > Hide / Dim (settings entry, and the prefix of the menu keys)
 K_FIND_OPEN = '-FIND OPEN-'                     # a letter typed while the Bar has the keyboard: its search flies out with it, value = the letter
@@ -736,8 +752,9 @@ def make_menu():
     items += [f'{tick(G.on_top)}Keep on top::{K_KEEP_ON_TOP}']
     if sg.running_windows():                                            # ONE Startup shortcut for the set - it runs psgdock.pyw like the taskbar pin
         items += [f'{tick(startup_on())}Start with Windows::{K_STARTUP}']
-    items += ['---', f'    Sharper icons - fetch them again...::{K_SHARPEN_ALL}', f'    Refresh::{K_REFRESH}',
-              '    Edit Me::Edit Me', '    Version::Version', '---']
+    fill = fill_script()                                                # a dock filled by a script: that script refreshes it
+    items += ['---', f'    Sharper icons - fetch them again...::{K_SHARPEN_ALL}', f'    Refresh::{K_REFRESH}'] + \
+             ([f'    Refresh this dock from {menu_label(os.path.basename(fill))}::{K_FILL_RUN}'] if fill else []) + ['    Edit Me::Edit Me', '    Version::Version', '---']
     if any(slug != G.dock_slug and dock_running(slug) for slug, _ in list_docks()):          # the docks are one set: restarted / closed together
         ready = f'  -  {Update.ready} is ready' if Update.ready else ''
         items += [f'    Restart all docks{ready}::Restart', f'    Close all docks::{K_CLOSE_ALL}']
@@ -1157,7 +1174,8 @@ def load_blocks():
                 block_num = G.block_number
                 G.block_number += 1
                 block = Block(block_num=block_num, name=saved_blocks[K_B_NAME(saved_block_num)], path=saved_blocks[K_B_PATH(saved_block_num)], iconb64=saved_blocks[K_B_ICON64(saved_block_num)],
-                              kind=saved_blocks.get(K_B_KIND(saved_block_num), KIND_APP), bar=saved_blocks.get(K_B_BARVIS(saved_block_num), True))
+                              kind=saved_blocks.get(K_B_KIND(saved_block_num), KIND_APP), bar=saved_blocks.get(K_B_BARVIS(saved_block_num), True),
+                              file=str(saved_blocks.get(K_B_FILE(saved_block_num), '') or ''))
                 if is_link(block.path) and not block.iconb64.strip():  # a link typed in without an icon: the icon of the app that opens it
                     try:
                         block.iconb64 = image_to_icon_b64(link_icon_image(block.path))
@@ -1345,6 +1363,8 @@ K_KIND = '-KIND-'                               # saved: 'app' or 'heading' (mis
 K_B_KIND = lambda num: (K_KIND, num)
 K_BARVIS = '-IN BAR-'                           # saved: False = left out of the Bar style (missing = shown)
 K_B_BARVIS = lambda num: (K_BARVIS, num)
+K_FILE = '-FILE-'                               # saved: a link's file - the program it belongs to (missing = none, so older lists load unchanged)
+K_B_FILE = lambda num: (K_FILE, num)
 K_DETAILS = '-DETAILS-'                         # the path + icon rows of an entry - hidden for a heading
 K_B_DETAILS = lambda num: (K_DETAILS, num)
 K_COLUMN = '-COLUMN-'
@@ -2083,12 +2103,12 @@ def move_block_to_index(window:sg.Window, src, index):
         The blocks keep their numbers, their CONTENTS move - same trick the old Up/Down buttons used """
     keys = list(Block.active_blocks.keys())
     contents = [(Block.active_blocks[k].name, Block.active_blocks[k].path, Block.active_blocks[k].iconb64, Block.active_blocks[k].kind, Block.active_blocks[k].bar,
-                 window[K_B_CBOX(k)].get()) for k in keys]
+                 Block.active_blocks[k].file, window[K_B_CBOX(k)].get()) for k in keys]
     item = contents.pop(keys.index(src))
     contents.insert(index, item)
-    for key, (name, path, iconb64, kind, bar, checked) in zip(keys, contents):
+    for key, (name, path, iconb64, kind, bar, file, checked) in zip(keys, contents):
         b = Block.active_blocks[key]
-        b.name, b.path, b.iconb64, b.kind, b.bar = name, path, iconb64, kind, bar
+        b.name, b.path, b.iconb64, b.kind, b.bar, b.file = name, path, iconb64, kind, bar, file
         update_block_elements(window, b)
         window[K_B_CBOX(key)].update(checked)
         set_block_border(window, key)
@@ -2109,6 +2129,7 @@ def load_blocks_into_window(window:sg.Window):
                 b.iconb64 = saved_blocks[K_B_ICON64(saved_block_num)].strip('"')
                 b.kind = saved_blocks.get(K_B_KIND(saved_block_num), KIND_APP)
                 b.bar = saved_blocks.get(K_B_BARVIS(saved_block_num), True)
+                b.file = str(saved_blocks.get(K_B_FILE(saved_block_num), '') or '')
                 update_block_elements(window, b)
                 set_block_border(window, block_num)
     except Exception as e:
@@ -2136,6 +2157,8 @@ def save_blocks(window:sg.Window):
             G.launcher_settings.set(K_B_PATH(key), window[K_B_PATH(key)].get().strip('"'))
             G.launcher_settings.set(K_B_KIND(key), Block.active_blocks[key].kind)
             G.launcher_settings.set(K_B_BARVIS(key), Block.active_blocks[key].bar)
+            if Block.active_blocks[key].file:                           # (a link's file - not shown here, kept as it was)
+                G.launcher_settings.set(K_B_FILE(key), Block.active_blocks[key].file)
     after = [window[K_B_NAME(k)].get().strip('"') for k, b in Block.active_blocks.items() if b.kind == KIND_HEADING and K_B_BLOCK(k) in window.key_dict.keys()]
     carry_heading_colors(G.heads_at_load, after)
     G.heads_at_load = after
@@ -3267,7 +3290,10 @@ def hint(part):
         if b.kind == KIND_HEADING:
             return f'{b.name}   ·   right-click: add a program here, rename, remove'
         ver = G.versions.get(b.block_num, '') if G.show_versions else ''
-        return (b.path + (f'   ·   v{ver}' if ver else '')) if b.path else 'No program set for this entry - add one in the Programs window'
+        file = entry_file(b) if is_link(b.path) else ''                 # a link that names its file: both
+        if not b.path:
+            return 'No program set for this entry - add one in the Programs window'
+        return b.path + (f'   ·   {file}' if file else '') + (f'   ·   v{ver}' if ver else '')
     n = program_count()
     if not n:
         return 'No programs yet - drop some here, or click the gear'
@@ -4565,7 +4591,7 @@ def version_tick(window):
             idle = False
     if idle:
         G.version_busy = True
-        paths = {b.block_num: b.path for b in Block.active_blocks.values() if b.kind != KIND_HEADING and not is_link(b.path)}
+        paths = {b.block_num: entry_file(b) for b in Block.active_blocks.values() if entry_file(b)}          # (a link that names its file: that file)
         import threading
         threading.Thread(target=version_scan, args=(window, paths), daemon=True).start()
     window.TKroot.after((VERSION_CHECK_S if idle else VERSION_RETRY_S) * 1000, lambda: version_tick(window))
@@ -4900,10 +4926,14 @@ def part_menu(part):
         return ['', [title, '---'] + start + [f'    Add a program here...::{K_E_ADD_HERE}', f'    Add a link here...::{K_E_ADD_LINK}',
                      f'    Add a heading here...::{K_E_ADD_HEAD}', f'    Rename...::{K_E_RENAME}',
                      '    Colour', colours, f'{tick(b.bar)}Show this section in the Bar::{K_E_BAR}', f'    Remove this heading::{K_E_REMOVE}'] + dock]
-    if is_link(b.path):                                                 # a link: no folder, source or sharper icon
-        return ['', [title, '---', f'    Open::{K_E_OPEN}', f'    Copy the link::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}',
+    if is_link(b.path):                                                 # a link: no folder, source or sharper icon - unless it names its file
+        file = entry_file(b)
+        mine = [f'    Run {menu_label(os.path.basename(file))}::{K_E_RUN}', f'    Open file location::{K_E_FOLDER}'] + \
+               ([f'    Edit the source::{K_E_EDIT}'] if file.lower().endswith(('.py', '.pyw')) else []) if file else []
+        copies = [f'    Copy the link::{K_E_COPY}'] + ([f'    Copy the file\'s path::{K_E_COPY_FILE}'] if file else [])
+        return ['', [title, '---', f'    Open::{K_E_OPEN}'] + mine + copies + [f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}',
                      f'    Add a heading above this...::{K_E_ADD_HEAD}', f'    Remove from the dock::{K_E_REMOVE}'] + dock]
-    items = [title, '---', f'    Open::{K_E_OPEN}', f'    Open its folder::{K_E_FOLDER}']
+    items = [title, '---', f'    Open::{K_E_OPEN}', f'    Open file location::{K_E_FOLDER}']
     if b.path.lower().endswith(('.py', '.pyw')):
         items.append(f'    Edit the source::{K_E_EDIT}')
     items += [f'    Copy the path::{K_E_COPY}', f'    Rename...::{K_E_RENAME}', f'{tick(b.bar)}Show in the Bar::{K_E_BAR}', f'    Sharper icon - fetch it again::{K_E_SHARPEN}',
@@ -5259,6 +5289,11 @@ def drag_entry(window, x_root, y_root):
             drag['link'] = DockLink(window, other_docks())
         drag['link'].move(x_root, y_root)
         hint = f'Moving {drag["what"]}   ·   let go over another dock to move it there - hold Ctrl to copy   ·   anywhere else: no change'
+        if drag['kind'] == KIND_APP and entry_file(Block.active_blocks.get(drag['num'])):          # a program: resting past the dock it becomes its file
+            hint = f'Moving {drag["what"]}   ·   onto another dock: moves it there (Ctrl: a copy)   ·   hold still out here: its file, for Explorer or a chat'
+            if not drag.get('watch'):
+                drag['watch'] = True
+                window.TKroot.after(60, lambda: drag_out_watch(window, drag))
     elif drag.get('link') is not None:
         drag['link'].move(None, None)                                   # back on this dock: the other docks' lines go
     if index != drag['index'] or hint != drag['hint']:
@@ -5292,6 +5327,116 @@ def finish_entry_drag(window, copy=False, x_root=None, y_root=None):
     redraw(window)
 
 
+# ------------------------------------------------------------ A program dragged OUT of the dock: its file ------------------------------------------------------------
+DRAG_OUT_ACTIONS = ('copy', 'link')             # what a drop may do with the file: Explorer copies it (Alt: a shortcut), a chat or another program takes it
+DRAG_OUT_PAST = 12                              # Panel: how far (x dpi) past the dock's window a dragged program goes before it becomes its file
+DRAG_OUT_REST = 0.4                             # ... and how long it rests there, over no other dock, when other docks are open (on its way to one it doesn't stop)
+
+
+def entry_file(b):
+    """ The file an entry stands for: a program's own path - or, for a link, the file it belongs to (b.file, set by whoever filled the dock: a chat
+        link's program).  '' for a heading, a link that names none, an empty entry """
+    if b is None or b.kind == KIND_HEADING:
+        return ''
+    path = str((b.file if is_link(b.path) else b.path) or '').strip().strip('"')
+    return '' if not path or is_link(path) else path
+
+
+def bind_drag_out(widget, files, ended=None):
+    """ `widget` can be where a drag of files out of the dock starts: files() gives the paths to hand over (none - no drag).  The drag itself is
+        tkdnd's (psgdnd's base): CF_HDROP on Windows, so Explorer, a chat or any program that takes dropped files gets them.  While it runs,
+        G.drag_out holds the paths: this dock won't take them back, and a fly-out stays open.  ended(): called when it is over """
+    def init(e):
+        paths = [p for p in files() if p and os.path.exists(p)]
+        if not paths:
+            return 'refuse_drop'
+        G.drag_out = paths
+        return DRAG_OUT_ACTIONS, psgdnd.DND_FILES, tuple(paths)
+
+    def end(e):
+        G.drag_out = None
+        if ended:
+            ended()
+
+    try:
+        widget.dnd_bind('<<DragInitCmd>>', init)
+        widget.dnd_bind('<<DragEndCmd>>', end)
+        return True
+    except Exception:                                                   # (no tkdnd: no dragging out - everything else works)
+        return False
+
+
+def drag_out_source(widget, files, ended=None):
+    """ A fly-out's tiles (a Bar's stack, its search): a press on one and a drag hands over its file - tkdnd starts it by itself after a few pixels.
+        ended(): the drag is over (the fly-out forgets the press, so letting go isn't a click too) """
+    try:
+        if bind_drag_out(widget, files, ended):
+            widget.drag_source_register(1, psgdnd.DND_FILES)
+            step = max(4, round(4 * G.dpi))                             # (a click that wobbles a little is still a click)
+            widget.tk.eval(f'set ::tkdnd::_dx {step}; set ::tkdnd::_dy {step}')
+    except Exception:
+        pass
+
+
+def past_dock(window, x_root, y_root):
+    """ The mouse is DRAG_OUT_PAST pixels or more outside the dock's window """
+    try:
+        wx, wy = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
+    except Exception:
+        return False
+    w, h = G.win_size or (0, 0)
+    return max(wx - x_root, x_root - (wx + w), wy - y_root, y_root - (wy + h)) >= DRAG_OUT_PAST * G.dpi
+
+
+def drag_out_watch(window, drag):
+    """ (a timer while a program is dragged outside the Panel)  Past the dock, over no other dock, and resting there DRAG_OUT_REST seconds - or at once
+        when no other dock is open: it becomes its file (drag_out_panel).  Moving on toward another dock never stops long enough, so dock to dock
+        still moves it.  Ends with the drag, or when it comes back onto the dock """
+    if G.drag_item is not drag or not drag.get('outside'):
+        drag['watch'] = False
+        return
+    try:
+        x, y = window.TKroot.winfo_pointerxy()
+    except Exception:
+        drag['watch'] = False
+        return
+    rest = drag.get('rest')
+    if rest is None or math.hypot(x - rest[0], y - rest[1]) > 6 * G.dpi:  # moved: the rest starts again here
+        drag['rest'] = rest = (x, y, time.time())
+    link = drag.get('link')
+    alone = link is not None and link.ready and not link.conns
+    if past_dock(window, x, y) and link is not None and link.free_at(x, y) and (alone or time.time() - rest[2] >= DRAG_OUT_REST):
+        drag['watch'] = False
+        drag_out_panel(window, drag, x, y)
+        return
+    window.TKroot.after(60, lambda: drag_out_watch(window, drag))
+
+
+def drag_out_panel(window, drag, x_root, y_root):
+    """ A program dragged out of the Panel, past the dock and over no other dock: from here it is a drag of its file (bind_drag_out).  This dock's own
+        drag ends - the copy, the line, the other docks' lines go - and tkdnd's runs until the drop (the mouse is the system's meanwhile).
+        False if there's no file to give or no tkdnd """
+    path = entry_file(Block.active_blocks.get(drag['num']))
+    widget = window[K_IMAGE].Widget
+    try:
+        ready = bool(widget.tk.call('info', 'commands', '::tkdnd::_init_drag'))
+    except Exception:
+        ready = False
+    if not path or not os.path.exists(path) or not ready:
+        return False
+    finish_entry_drag(window)
+    G.press = None
+    widget.configure(cursor='')
+    G.out_pending = [path]
+    try:
+        window.TKroot.update_idletasks()
+        widget.tk.call('::tkdnd::_init_drag', 1, str(widget), 0, x_root, y_root, x_root - widget.winfo_rootx(), y_root - widget.winfo_rooty())
+    except Exception:
+        pass
+    G.out_pending = G.drag_out = None
+    return True
+
+
 def move_entries(window, start, end, index):
     """ List positions start .. end-1 (a program, or a heading with its programs) move to list position index - saved at once, with a short glow """
     order = list(Block.active_blocks.values())
@@ -5322,6 +5467,8 @@ def setup_drop(window):
     action = getattr(psgdnd, 'COPY', 'copy')
 
     def over(e):
+        if G.drag_out:                                                  # this dock's own program being dragged out: not back in here
+            return 'refuse_drop'
         if G.hidden:                                                    # dragged onto the handle: fly out first
             slide(window, True)
         drop_over(window, e.x_root, e.y_root)
@@ -5332,6 +5479,8 @@ def setup_drop(window):
         return action
 
     def drop(e):
+        if G.drag_out:
+            return 'refuse_drop'
         files = list(widget.tk.splitlist(e.data))
         window.write_event_value(K_DROP, (files, e.x_root, e.y_root))
         return action
@@ -5340,6 +5489,7 @@ def setup_drop(window):
     widget.dnd_bind('<<DropPosition>>', over)
     widget.dnd_bind('<<DropLeave>>', leave)
     widget.dnd_bind('<<Drop>>', drop)
+    bind_drag_out(widget, lambda: G.out_pending or [])                 # the Panel's drag out (started by hand - drag_out_panel)
     return True
 
 
@@ -5422,6 +5572,8 @@ def save_entries():
         entries[K_B_PATH(n)] = b.path
         entries[K_B_KIND(n)] = b.kind
         entries[K_B_BARVIS(n)] = b.bar
+        if b.file:                                                      # (only a link that names its file - other lists are written as before)
+            entries[K_B_FILE(n)] = b.file
     G.launcher_settings.write_new_dictionary(entries)
 
 
@@ -5456,7 +5608,7 @@ def insert_entries(window, new, index=None):
     save_entries()
     now = time.time()
     for b in new:
-        G.versions[b.block_num] = get_version(b.path)
+        G.versions[b.block_num] = get_version(entry_file(b))
         G.bounce[b.block_num] = now
         G.flash[b.block_num] = now + 1.2
     relayout(window)
@@ -5506,8 +5658,17 @@ def sharpen_icons(window, nums=None):
 
 
 def open_folder(path):
-    """ Show a program in Explorer (selected), or open its folder """
+    """ Right-click > Open file location: the program's folder in PySimpleGUI's global Explorer Program when one is set (program standards, "Opening a
+        folder" - every PSG program opens folders there; quoted, as a path with spaces needs it), else Explorer with the program selected """
     folder = path if os.path.isdir(path) else os.path.dirname(path)
+    try:
+        sg.pysimplegui_user_settings.load()
+        explorer = sg.pysimplegui_user_settings.get('-explorer program-', None)
+    except Exception:
+        explorer = None
+    if explorer and os.path.isdir(folder):
+        sg.execute_file_explorer(f'"{folder}"' if ' ' in folder else folder)
+        return
     if sys.platform == 'win32':
         if os.path.exists(path):
             subprocess.Popen(['explorer', '/select,', os.path.normpath(path)])
@@ -5531,10 +5692,18 @@ def entry_action(window, key):
         else:
             redraw(window)
             window.TKroot.after(400, lambda: redraw(window))
+    elif key == K_E_RUN:                                                # a link that names its file: run that
+        launch(entry_file(b))
+        G.flash[b.block_num] = time.time() + 0.35
+        redraw(window)
     elif key == K_E_FOLDER:
-        open_folder(b.path)
+        open_folder(entry_file(b))
     elif key == K_E_EDIT:
-        sg.execute_editor(b.path)
+        sg.execute_editor(entry_file(b))
+    elif key == K_E_COPY_FILE:
+        window.TKroot.clipboard_clear()
+        window.TKroot.clipboard_append(entry_file(b))
+        notice('Path copied', seconds=1)
     elif key == K_E_COPY:
         window.TKroot.clipboard_clear()
         window.TKroot.clipboard_append(b.path)
@@ -5618,10 +5787,34 @@ def relayout(window, before=None):
         place_window(window)
 
 
+def fill_script():
+    """ The script that fills this dock, if its settings name one and it is there - '' otherwise """
+    path = G.fill_script.strip().strip('"')
+    return path if path.lower().endswith(('.py', '.pyw')) and os.path.isfile(path) else ''
+
+
+def run_fill_script():
+    """ Right-click > Refresh this dock from <script>: start the script with --refresh <this dock's name>.  This dock then closes (a running dock keeps
+        its own list); the script fills it and starts it again.  False if the script couldn't be started """
+    script = fill_script()
+    if not script:
+        return False
+    exe = sys.executable
+    if sg.running_windows():                                            # no console window
+        quiet = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+        exe = quiet if os.path.isfile(quiet) else exe
+    try:
+        subprocess.Popen([exe, script, '--refresh', G.dock_title], cwd=os.path.dirname(script))
+    except OSError as e:
+        sg.popup_error(f'Could not start {script}:\n{e}', title=APP_NAME, keep_on_top=True, non_blocking=True, icon=dock_icon_64)
+        return False
+    return True
+
+
 def refresh_dock(window):
     """ Reload the list of programs (after the Programs window, or from the menu) and redraw """
     load_blocks()
-    G.versions = {b.block_num: get_version(b.path) for b in Block.active_blocks.values() if b.kind != KIND_HEADING}
+    G.versions = {b.block_num: get_version(entry_file(b)) for b in Block.active_blocks.values() if b.kind != KIND_HEADING}
     G.hover, G.drop_index, G.drop_item, G.drop_line, G.drop_stack = None, None, None, None, None
     relayout(window)
 
@@ -5796,12 +5989,14 @@ def open_stack(window, heading_num, by_hover=False):
     widget.bind('<Leave>', lambda e: set_hover(None), add='+')
     widget.bind('<ButtonPress-1>', lambda e: state.update(press=tile_at(e.x, e.y)), add='+')
     widget.bind('<ButtonRelease-1>', release, add='+')
+    drag_out_source(widget, lambda: [entry_file(members[state['press']])] if state['press'] is not None and state['press'] < len(members) else [],
+                    lambda: state.update(press=None))
     for seq, step in (('<Left>', -1), ('<Right>', 1), ('<Up>', -cols), ('<Down>', cols)):
         popup.TKroot.bind(seq, lambda e, step=step: key_move(step))
     popup.TKroot.bind('<Return>', lambda e: popup.write_event_value(K_STACK_CLICK, state['hover']) if state['hover'] is not None else None)
     popup.bind('<Escape>', K_STACK_CLOSE)
     if not by_hover:                                                    # opened by a click: keys work, and clicking anywhere else closes it
-        popup.TKroot.bind('<FocusOut>', lambda e: popup.write_event_value(K_STACK_CLOSE, 'focus') if e.widget is popup.TKroot else None, add='+')
+        popup.TKroot.bind('<FocusOut>', lambda e: popup.write_event_value(K_STACK_CLOSE, 'focus') if e.widget is popup.TKroot and not G.drag_out else None, add='+')
         popup.force_focus()
     G.stack_open = heading_num
     G.last_signature = None
@@ -5842,7 +6037,7 @@ def open_stack(window, heading_num, by_hover=False):
                 over_bar = rx <= px < rx + G.win_size[0] and ry <= py < ry + G.win_size[1]
             except Exception:
                 break
-            if over_popup or over_bar:
+            if over_popup or over_bar or G.drag_out:                    # (a program being dragged out of it: it stays)
                 away_since = None
             else:
                 away_since = away_since or time.time()
@@ -5949,8 +6144,10 @@ def open_search(window, text=''):
     widget.bind('<Motion>', motion, add='+')
     widget.bind('<ButtonPress-1>', lambda e: state.update(press=tile_at(e.x, e.y)), add='+')
     widget.bind('<ButtonRelease-1>', release, add='+')
+    drag_out_source(widget, lambda: [entry_file(state['drawn'][state['press']])] if state['press'] is not None and state['press'] < len(state['drawn']) else [],
+                    lambda: state.update(press=None))
     popup.TKroot.bind('<KeyPress>', lambda e: popup.write_event_value(K_FIND_KEY, (e.keysym, e.char, e.state)))
-    popup.TKroot.bind('<FocusOut>', lambda e: popup.write_event_value(K_STACK_CLOSE, 'focus') if e.widget is popup.TKroot else None, add='+')
+    popup.TKroot.bind('<FocusOut>', lambda e: popup.write_event_value(K_STACK_CLOSE, 'focus') if e.widget is popup.TKroot and not G.drag_out else None, add='+')
     popup.force_focus()
     G.stack_open = 'search'                                             # (the bar keeps still meanwhile, as for a stack)
     G.last_signature = None
@@ -6029,7 +6226,7 @@ def open_search(window, text=''):
 def make_psg_launcher():
     """ The dock window: one Image the whole dock is drawn into.  Made again whenever the Style, Position, Auto-hide or Glass changes """
     load_blocks()
-    G.versions = {b.block_num: get_version(b.path) for b in Block.active_blocks.values() if b.kind != KIND_HEADING}
+    G.versions = {b.block_num: get_version(entry_file(b)) for b in Block.active_blocks.values() if b.kind != KIND_HEADING}
     floating = G.place == 'Floating'
     key_color = sg.running_windows() and not G.glass
     bg = TRANSPARENT if sg.running_windows() else T()['card']
@@ -6369,7 +6566,7 @@ def ipc_answer(window, req):
     for e in entries:
         kind = KIND_HEADING if e.get('kind') == KIND_HEADING else KIND_APP
         b = Block(block_num=G.block_number, name=str(e.get('name', '')), path=str(e.get('path', '')), iconb64=str(e.get('icon', '')), kind=kind,
-                  bar=bool(e.get('bar', True)))
+                  bar=bool(e.get('bar', True)), file=str(e.get('file') or ''))
         G.block_number += 1
         new.append(b)
         color = str(e.get('color') or '')
@@ -6382,9 +6579,9 @@ def ipc_answer(window, req):
 
 
 def entry_payload(blocks):
-    """ Entries as plain data for another dock: name, path, icon, kind, Show in the Bar, a heading's own Colour """
+    """ Entries as plain data for another dock: name, path, icon, kind, Show in the Bar, a heading's own Colour, a link's file """
     return [{'name': b.name, 'path': b.path, 'icon': b.iconb64.decode() if isinstance(b.iconb64, bytes) else (b.iconb64 or ''), 'kind': b.kind, 'bar': b.bar,
-             'color': G.head_colors.get(b.name, '') if b.kind == KIND_HEADING else ''} for b in blocks]
+             'color': G.head_colors.get(b.name, '') if b.kind == KIND_HEADING else '', 'file': b.file or ''} for b in blocks]
 
 
 def other_docks():
@@ -6412,6 +6609,7 @@ class DockLink:
         self.window, self.docks = window, docks                        # [(slug, name, port)]
         self.wake, self.lock = threading.Event(), threading.Lock()
         self.pos, self.final, self.under = None, None, None
+        self.ready, self.answered = False, None                         # connected to every dock that answers;  the position the last 'over' was for
         self.conns = {}                                                 # slug -> (socket, file, name)
         threading.Thread(target=self.run, daemon=True).start()
 
@@ -6420,6 +6618,11 @@ class DockLink:
         with self.lock:
             self.pos = (x, y)
         self.wake.set()
+
+    def free_at(self, x, y):
+        """ True when every other dock has said the mouse at (about) x, y isn't on it - or there are none """
+        a, under = self.answered, self.under
+        return self.ready and under is None and a is not None and a[0] is not None and abs(a[0] - x) <= 6 * G.dpi and abs(a[1] - y) <= 6 * G.dpi
 
     def finish(self, x, y, payload, meta):
         """ Let go at x, y with payload (the entries) - None: just clear the other docks' lines """
@@ -6464,6 +6667,7 @@ class DockLink:
                 self.close(slug)                                        # an old port that something else uses now
             else:
                 self.conns[slug] = self.conns[slug][:2] + (hello.get('dock') or name,)
+        self.ready = True
         while True:
             self.wake.wait()
             self.wake.clear()
@@ -6492,7 +6696,7 @@ class DockLink:
             r = self.ask(slug, {'op': 'over' if x is not None and under is None else 'leave', 'x': x, 'y': y}, 2.5)
             if isinstance(r, dict) and r.get('mine') and under is None:
                 under = slug
-        self.under = under
+        self.under, self.answered = under, (x, y)
 
     def drop(self, x, y, payload, meta):
         """ Hand the entries to the dock under x, y: {'ok': True, 'dock', 'slug', ...meta}, or {'ok': False, 'busy': [names]} """
@@ -7259,6 +7463,7 @@ def main():
     if new:
         start_new_dock(name)
     sg.user_settings_set_entry(K_IN_SET, True)                          # open: the pin opens it again next time (unless it's closed on its own)
+    G.fill_script = str(sg.user_settings_get_entry(K_FILL_SCRIPT, '') or '')          # (a dock some script fills - that script says so here)
     G.dock_title = sg.user_settings_get_entry(K_DOCK_NAME, None) or name or APP_NAME
     G.dock_ready = True
     G.launcher_settings = sg.UserSettings(ENTRIES_FILENAME)
@@ -7408,6 +7613,10 @@ def main():
             sg.execute_editor(__file__)
         elif menu_key in (K_REFRESH, 'Refresh'):
             refresh_dock(window)
+        elif menu_key == K_FILL_RUN:                                    # Refresh this dock from <script>: it waits for this dock to close, fills it, starts it
+            if run_fill_script():
+                G.leave = 'refresh'
+                break
         elif menu_key == K_ADD:
             files = ask_for_programs(window)
             if files:
@@ -7419,7 +7628,8 @@ def main():
                 sharpen_icons(window)
         elif menu_key == K_E_START_ALL:                                 # a heading's Start all N programs
             start_section(window, G.menu_target)
-        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK, K_E_ADD_HEAD):
+        elif menu_key in (K_E_OPEN, K_E_FOLDER, K_E_EDIT, K_E_COPY, K_E_RENAME, K_E_REMOVE, K_E_SHARPEN, K_E_ADD_HERE, K_E_BAR, K_E_ADD_LINK, K_E_ADD_HEAD,
+                          K_E_RUN, K_E_COPY_FILE):
             entry_action(window, menu_key)
         elif isinstance(menu_key, str) and menu_key.startswith(K_E_COLOR):     # a heading's Colour > a choice
             heading_color(window, menu_key[len(K_E_COLOR):])

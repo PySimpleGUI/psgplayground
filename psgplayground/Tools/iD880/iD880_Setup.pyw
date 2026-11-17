@@ -2,15 +2,18 @@
 """
 iD880 Setup - connect to the iD880 thermal printer, line up your two rolls, test, and send printer commands
 
-    1. Connection: USB (pick the iD880 in the Windows printer list) or Ethernet (type its IP address)
+    1. Printers: for each roll, USB (pick the iD880 in the Windows printer list) or Ethernet (type its IP address).
+       One printer for both rolls?  Labels: Same printer.  Two?  Test print puts the printer's name on the paper, so you can tell them apart.
     2. Load a roll and click its Test print.  The box should sit right at the paper's edges - use Nudge if it's off.
-    3. "Set continuous mode" once, so the printer doesn't look for gaps between labels (both of your rolls are continuous)
+    3. "Set continuous mode" once on each printer, so it doesn't look for gaps between labels (both of your rolls are continuous)
     Everything is saved for the other iD880 programs.   Ctrl+Enter sends the commands box.   Esc closes.
     Up/Down, PgUp/PgDn, Home/End scroll the log.
 
 Needs id880_lib.py in the same folder.  USB needs pywin32:  python -m pip install pywin32
 
 CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Printers frame with a row per roll (Labels: USB, Ethernet or Same printer); Test print names the printer on the paper;
+            "The [roll] printer:" picks where Printer tools and Send printer commands go; Refresh fills both lists
 2026-11-07  Receipt paper width combo (3-1/8" or 4") - the receipt_width setting in id880_lib
 """
 import datetime
@@ -24,6 +27,12 @@ K_CONNECTION = '-CONNECTION-'
 KT_CONNECTION = lambda kind: (K_CONNECTION, kind)
 K_PRINTER = '-PRINTER-'
 K_REFRESH = '-REFRESH-'
+K_LABEL_CONNECTION = '-LABEL CONNECTION-'
+KT_LABEL_CONNECTION = lambda kind: (K_LABEL_CONNECTION, kind)
+K_LABEL_PRINTER = '-LABEL PRINTER-'
+K_LABEL_IP = '-LABEL IP-'
+K_LABEL_PORT = '-LABEL PORT-'
+K_TOOLS_MEDIA = '-TOOLS MEDIA-'
 K_IP = '-IP-'
 K_PORT = '-PORT-'
 K_LANGUAGE = '-LANGUAGE-'
@@ -47,7 +56,8 @@ K_LOG = '-LOG-'
 K_ESCAPE = '-ESCAPE-'
 
 FIELD_SETTINGS = {K_PRINTER: 'win_printer', K_IP: 'ip', K_PORT: 'port', K_LANGUAGE: 'language', K_SPEED: 'speed', K_DARKNESS: 'darkness',
-                  K_RECEIPT_NUDGE: 'receipt_nudge', K_LABEL_NUDGE: 'label_nudge', K_LABEL_WIDTH: 'label_width', K_RECEIPT_WIDTH: 'receipt_width'}
+                  K_RECEIPT_NUDGE: 'receipt_nudge', K_LABEL_NUDGE: 'label_nudge', K_LABEL_WIDTH: 'label_width', K_RECEIPT_WIDTH: 'receipt_width',
+                  K_LABEL_PRINTER: 'label_win_printer', K_LABEL_IP: 'label_ip', K_LABEL_PORT: 'label_port'}
 
 # Each tool button's commands in both printer languages
 TOOL_COMMANDS = {K_FEED: {'ZPL': f'^XA^MNN^PW{lib.HEAD_DOTS}^LL203^FO0,0^GB8,1,1,W^FS^XZ', 'TSPL': 'FEED 203'},
@@ -99,7 +109,7 @@ def test_pattern(media):
     text = lib.font('Sans', 10, bold=True)
     nudge = lib.setting(lib.NUDGE_SETTING[media])
     lines = [f'{media}  -  {width} dots = {width / lib.DOTS_PER_MM:.0f} mm wide', f'Nudge {nudge}   {lib.setting("language")}   darkness {lib.setting("darkness")}',
-             'The box should sit right at the paper edges']
+             f'Printer: {lib.printer_where(media)}', 'The box should sit right at the paper edges']
     for i, line in enumerate(lines):
         d.text(((width - text.getlength(line)) / 2, 76 + i * lib.line_height(text)), line, font=text, fill=0)
     return img
@@ -115,7 +125,7 @@ def save_fields(values):
         value = values.get(key)
         if value in (None, ''):
             continue
-        if key in (K_PORT, K_SPEED, K_DARKNESS, K_RECEIPT_NUDGE, K_LABEL_NUDGE):
+        if key in (K_PORT, K_LABEL_PORT, K_SPEED, K_DARKNESS, K_RECEIPT_NUDGE, K_LABEL_NUDGE):
             try:
                 value = int(float(value))
             except ValueError:
@@ -123,17 +133,17 @@ def save_fields(values):
         lib.save_setting(name, value)
 
 
-def send(window, data, what):
+def send(window, data, what, media=None):
     try:
-        log(window, f'{what}: {lib.send_raw(data)}', '#9CCC65')
+        log(window, f'{what}: {lib.send_raw(data, media)}', '#9CCC65')
     except Exception as e:
         log(window, f'{what} FAILED: {e}', '#FF8A65')
 
 
-def read_status(window, language):
+def read_status(window, language, media=None):
     request = to_bytes(TOOL_COMMANDS[K_READ_STATUS][language], language)
     try:
-        reply = lib.query_network(request)
+        reply = lib.query_network(request, media=media)
         log(window, f'Printer answered {len(reply)} bytes: {reply!r}' if reply else 'No answer (the printer may not support this request)', '#9CCC65' if reply else lib.ORANGE)
     except Exception as e:
         log(window, f'Read status FAILED: {e}', '#FF8A65')
@@ -147,12 +157,21 @@ def make_window(printers):
     usb = lib.setting('connection') != 'network'
     language = lib.setting('language')
     hint = dict(font=lib.SMALL_FONT, text_color=lib.HINT_COLOR)
-    usb_row = [sg.Radio('USB  -  Windows printer', 'CONNECTION', usb, key=KT_CONNECTION('windows'), enable_events=True, size=(20, 1)),
-               sg.Combo(printers, lib.setting('win_printer'), key=K_PRINTER, size=(36, 1), readonly=True, enable_events=True), sg.Button('Refresh', key=K_REFRESH)]
-    net_row = [sg.Radio('Ethernet', 'CONNECTION', not usb, key=KT_CONNECTION('network'), enable_events=True, size=(20, 1)),
-               sg.Text('IP address'), sg.Input(str(lib.setting('ip')), key=K_IP, size=(16, 1), enable_events=True),
-               sg.Text('Port'), sg.Input(str(lib.setting('port')), key=K_PORT, size=(6, 1), enable_events=True)]
-    connection = sg.Frame('Connection', [usb_row, net_row], expand_x=True)
+    label_kind = lib.setting('label_connection')
+    usb_row = [sg.Text('Receipt paper', size=(13, 1)), sg.Radio('USB', 'CONNECTION', usb, key=KT_CONNECTION('windows'), enable_events=True),
+               sg.Combo(printers, lib.setting('win_printer'), key=K_PRINTER, size=(36, 1), readonly=True, enable_events=True),
+               sg.Radio('Ethernet', 'CONNECTION', not usb, key=KT_CONNECTION('network'), enable_events=True),
+               sg.Text('IP'), sg.Input(str(lib.setting('ip')), key=K_IP, size=(16, 1), enable_events=True),
+               sg.Text('Port'), sg.Input(str(lib.setting('port')), key=K_PORT, size=(6, 1), enable_events=True), sg.Button('Refresh', key=K_REFRESH)]
+    net_row = [sg.Text('Labels', size=(13, 1)), sg.Radio('USB', 'LABEL CONNECTION', label_kind == 'windows', key=KT_LABEL_CONNECTION('windows'), enable_events=True),
+               sg.Combo(printers, lib.setting('label_win_printer'), key=K_LABEL_PRINTER, size=(36, 1), readonly=True, enable_events=True),
+               sg.Radio('Ethernet', 'LABEL CONNECTION', label_kind == 'network', key=KT_LABEL_CONNECTION('network'), enable_events=True),
+               sg.Text('IP'), sg.Input(str(lib.setting('label_ip')), key=K_LABEL_IP, size=(16, 1), enable_events=True),
+               sg.Text('Port'), sg.Input(str(lib.setting('label_port')), key=K_LABEL_PORT, size=(6, 1), enable_events=True),
+               sg.Radio('Same printer', 'LABEL CONNECTION', label_kind == lib.SAME_PRINTER, key=KT_LABEL_CONNECTION(lib.SAME_PRINTER), enable_events=True,
+                        tooltip=' One printer for both rolls - the labels print on the receipt paper\'s printer ')]
+    printers_hint = [sg.Text('Two printers?  Pick the one that holds each roll.   Test print (below) prints the printer\'s name on the paper.', **hint)]
+    connection = sg.Frame('Printers  -  one for both rolls, or one per roll', [usb_row, net_row, printers_hint], expand_x=True)
     quality_row = [sg.Text('Language'), sg.Combo(['ZPL', 'TSPL'], language, key=K_LANGUAGE, readonly=True, enable_events=True, size=(6, 1)),
                    sg.Text('     Speed'), sg.Combo([2, 3, 4, 5, 6], lib.setting('speed'), key=K_SPEED, readonly=True, enable_events=True, size=(3, 1)), sg.Text('inches / second'),
                    sg.Text('     Darkness'), sg.Slider((0, 30), lib.setting('darkness'), orientation='h', key=K_DARKNESS, enable_events=True, size=(18, 15))]
@@ -168,7 +187,9 @@ def make_window(printers):
                  sg.Combo(list(lib.LABEL_WIDTHS), lib.setting('label_width'), key=K_LABEL_WIDTH, readonly=True, enable_events=True, size=(14, 1))]
     nudge_hint = [sg.Text('Box cut off on the left: nudge up (+).  Cut off on the right: nudge down (-).   8 dots = 1 mm', **hint)]
     rolls = sg.Frame('Your two rolls  (both continuous)', [receipt_row, label_row, nudge_hint], expand_x=True)
-    tool_row = [sg.Button('Set continuous mode  (do once)', key=K_CONTINUOUS, button_color=('white', lib.BLUE)), sg.Button('Feed 1 inch', key=K_FEED),
+    tool_row = [sg.Text('The'), sg.Combo(lib.MEDIA, lib.RECEIPT, key=K_TOOLS_MEDIA, readonly=True, size=(13, 1),
+                                         tooltip=' The printer these buttons and Send printer commands go to - the one with this roll in it '), sg.Text('printer:'),
+                sg.Button('Set continuous mode  (do once)', key=K_CONTINUOUS, button_color=('white', lib.BLUE)), sg.Button('Feed 1 inch', key=K_FEED),
                 sg.Button('Print config page', key=K_CONFIG), sg.Button('Read status  (Ethernet)', key=K_READ_STATUS)]
     tools = sg.Frame('Printer tools', [tool_row], expand_x=True)
     snippet_row = [sg.Combo(list(SNIPPETS[language]), key=K_SNIPPET, readonly=True, size=(46, 1)), sg.Button('Insert', key=K_INSERT)]
@@ -195,6 +216,8 @@ def main():
     if not printers:
         log(window, 'No Windows printers found  (not on Windows, or pywin32 missing:  python -m pip install pywin32)', lib.ORANGE)
     log(window, lib.printer_summary())
+    if not lib.two_printers() and sum('id880' in p.lower() or 'idprt' in p.lower() for p in printers) > 1:
+        log(window, 'Found 2 iD880 printers - pick the one with the labels in the Labels row, then Test print each roll', lib.ORANGE)
     while True:
         event, values = window.read()
         if event in ('Exit', sg.WINDOW_CLOSED):
@@ -215,6 +238,14 @@ def main():
         if isinstance(event, tuple) and event[0] == K_CONNECTION:
             lib.save_setting('connection', event[1])
             log(window, lib.printer_summary())
+        elif isinstance(event, tuple) and event[0] == K_LABEL_CONNECTION:
+            lib.save_setting('label_connection', event[1])
+            log(window, lib.printer_summary())
+        elif event == K_LABEL_PRINTER:
+            if not lib.two_printers() and values[K_LABEL_PRINTER]:              # picking a printer for the labels = USB
+                lib.save_setting('label_connection', 'windows')
+                window[KT_LABEL_CONNECTION('windows')].update(True)
+            log(window, lib.printer_summary())
         elif event in (K_PRINTER, K_LANGUAGE):
             log(window, lib.printer_summary())
             if event == K_LANGUAGE:
@@ -222,18 +253,19 @@ def main():
         elif event == K_REFRESH:
             printers = lib.list_windows_printers()
             window[K_PRINTER].update(values=printers, value=lib.setting('win_printer'))
+            window[K_LABEL_PRINTER].update(values=printers, value=lib.setting('label_win_printer'))
             log(window, f'{len(printers)} Windows printers found')
         elif isinstance(event, tuple) and event[0] == K_TEST:
-            send(window, lib.build_job(lib.to_1bit(test_pattern(event[1])), event[1]), f'Test print, {event[1].lower()}')
+            send(window, lib.build_job(lib.to_1bit(test_pattern(event[1])), event[1]), f'Test print, {event[1].lower()}', event[1])
         elif event in (K_FEED, K_CONTINUOUS, K_CONFIG):
-            send(window, to_bytes(TOOL_COMMANDS[event][language], language), window[event].get_text().strip())
+            send(window, to_bytes(TOOL_COMMANDS[event][language], language), window[event].get_text().strip(), values[K_TOOLS_MEDIA])
         elif event == K_READ_STATUS:
-            read_status(window, language)
+            read_status(window, language, values[K_TOOLS_MEDIA])
         elif event == K_INSERT and values[K_SNIPPET]:
             window[K_RAW].update(SNIPPETS[language][values[K_SNIPPET]])
         elif event == K_SEND:
             if values[K_RAW].strip():
-                send(window, to_bytes(values[K_RAW], language), f'Sent your {language} commands')
+                send(window, to_bytes(values[K_RAW], language), f'Sent your {language} commands', values[K_TOOLS_MEDIA])
     window.close()
 
 

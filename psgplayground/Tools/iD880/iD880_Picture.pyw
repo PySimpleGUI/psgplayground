@@ -19,11 +19,17 @@ iD880 Picture - print photos, drawings and screenshots on the iD880 (receipt pap
         Glue tab sets the least tab width (strips share the picture equally, so tabs are often wider).
         Print picks one strip to reprint.   Copies prints whole sets.   Rotate "Auto" leaves strips as they are.
 
+    Edge to edge: no white at the sides - the picture runs about 1 mm past both edges of the paper (made for 4" paper).  Not for the strip sizes.
+
     Pictures come from the folder list on the left (click one, or use the arrow keys), Open..., Paste (Ctrl+V),
     Newest download, or by dragging a file onto the preview.  Double-click a folder in the list to go into it.
     Ctrl+P prints.   Esc closes.   Click the preview, then Up/Down, PgUp/PgDn, Home/End scroll it.
 
 Needs id880_lib.py in the same folder.   Drag and drop needs psgdnd:   python -m pip install psgdnd
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Feed goes to the printer that holds the roll picked here (id880_lib 15-Nov)
+2026-11-14  Claude: Edge to edge checkbox - no side margins, the picture runs about 1 mm past both edges; off for the "in strips" sizes (needs id880_lib with print_width / edge)
 """
 import collections
 import functools
@@ -79,6 +85,7 @@ K_ESCAPE = '-ESCAPE-'
 K_CTRL_P = '-CTRL P-'
 K_CTRL_V = '-CTRL V-'
 K_RENDERED = '-RENDERED-'
+K_EDGE = '-EDGE-'
 
 FLOYD, ATKINSON, HALFTONE, BAYER, THRESHOLD = 'floyd', 'atkinson', 'halftone', 'bayer', 'threshold'
 LOOKS = {'Photo - smooth': dict(method=FLOYD, bright=10, contrast=15, sharp=4),
@@ -109,7 +116,8 @@ STRIP_GAP = lib.mm_dots(5)                                          # space betw
 MAX_PREVIEW_PIXELS = 16_000_000                                     # bigger previews are shrunk, even with "actual dots"
 UP = '..' + os.sep
 SETTINGS = {K_LOOK: 'pic_look', K_BRIGHT: 'pic_bright', K_CONTRAST: 'pic_contrast', K_SHARP: 'pic_sharp', K_AUTO_LEVELS: 'pic_auto_levels',
-            K_INVERT: 'pic_invert', K_MEDIA: 'pic_media', K_ROTATE: 'pic_rotate', K_SIZE: 'pic_size', K_TAB: 'pic_glue_tab', K_DOTS: 'pic_dots'}
+            K_INVERT: 'pic_invert', K_MEDIA: 'pic_media', K_ROTATE: 'pic_rotate', K_SIZE: 'pic_size', K_TAB: 'pic_glue_tab', K_DOTS: 'pic_dots',
+            K_EDGE: 'pic_edge'}
 PREVIEW_W, PREVIEW_H = 560, 620
 THUMB = 220
 Strip = collections.namedtuple('Strip', 'img top left land')       # picture, y of its top cut line, x of its picture's left edge, x where the next strip goes
@@ -407,7 +415,7 @@ def render(job, cache):
     dots = cached(cache, 'dots', src, (rotate, pic_w) + look, lambda: to_dots(adjust(base, *look), job['method'], job['bright']))
     paper = job['media'].lower()
     if not job['big']:
-        page = on_paper(dots, job['width'])
+        page = on_paper(dots, job['print_w'])
         png = lib.png_bytes(page.convert('L')) if job['dots'] else lib.preview_png(page, max_width=PREVIEW_W)
         inches = page.height / lib.DPI
         info = f'Picture {dots.width / lib.DPI:.2f} x {dots.height / lib.DPI:.2f} in\n{paper_used(inches, paper)}' + ('   (long!)' if inches > LONG_PRINT_IN else '')
@@ -515,6 +523,9 @@ def make_window():
     paper_frame = sg.Frame('Paper and picture size', [[sg.Text('Print on', size=(8, 1)), media_combo],
                                                       [sg.Text('Rotate', size=(8, 1)), sg.Combo(list(ROTATIONS), rotate, key=K_ROTATE, **combo)],
                                                       [sg.Text('Picture', size=(8, 1)), size_combo],
+                                                      [sg.Checkbox('Edge to edge  (no white at the sides)', value(K_EDGE, False), key=K_EDGE, enable_events=True,
+                                                                   tooltip=' No side margins - the picture runs about 1 mm past both edges of the paper (made for 4" paper).  '
+                                                                           'Not for the "in strips" sizes ')],
                                                       [sg.Text('Glue tab', size=(8, 1)), tab_combo],
                                                       [sg.Text('Print', size=(8, 1)), which_combo],
                                                       [sg.Text('', key=K_INFO, size=(44, 3), **hint)]], expand_x=True)
@@ -550,6 +561,7 @@ def sync_strip_controls(window, size):
     big = size in BIG_SIZES
     window[K_TAB].update(disabled=not big)
     window[K_WHICH].update(disabled=not big)
+    window[K_EDGE].update(disabled=big)                             # strips keep their white sides for cutting and gluing
     window[K_HELP].update(STRIP_HELP if big else LOOK_HELP, text_color=STRIP_HELP_COLOR if big else lib.HINT_COLOR)
 
 
@@ -568,10 +580,12 @@ def make_job(window, state, values):
     big = BIG_SIZES.get(values[K_SIZE])
     tab = lib.inch_dots(GLUE_TABS.get(values[K_TAB], 0.5))
     rotate = ROTATIONS[values[K_ROTATE]]
-    pic_w = lib.inch_dots(big) if big else max(8, round((width - 2 * SIDE) * SIZES[values[K_SIZE]]))
+    edge = bool(values[K_EDGE]) and not big                         # Edge to edge: no white sides, the picture a little wider than the paper
+    print_w = lib.print_width(values[K_MEDIA], True) if edge else width
+    pic_w = lib.inch_dots(big) if big else max(8, round((print_w if edge else width - 2 * SIDE) * SIZES[values[K_SIZE]]))
     which = strip_choices(window, len(strip_seams(pic_w, width, tab)) - 1 if big else 0, values[K_WHICH])
     state.seq += 1
-    return dict(seq=state.seq, src=state.src, media=values[K_MEDIA], width=width, big=bool(big), pic_w=pic_w, tab=tab, which=which,
+    return dict(seq=state.seq, src=state.src, media=values[K_MEDIA], width=width, print_w=print_w, edge=edge, big=bool(big), pic_w=pic_w, tab=tab, which=which,
                 rotate=(rotate or 0) if big else rotate, method=LOOKS[values[K_LOOK]]['method'], bright=int(values[K_BRIGHT]),
                 contrast=int(values[K_CONTRAST]), sharp=int(values[K_SHARP]), auto_levels=values[K_AUTO_LEVELS], invert=values[K_INVERT], dots=values[K_DOTS])
 
@@ -637,7 +651,7 @@ def print_picture(window, state, values):
             what = f'{len(rendered.pages)} strips' if job['which'] == ALL_STRIPS else job['which'].lower()
             sent = lib.print_bitmaps(rendered.pages, values[K_MEDIA], copies)
         else:
-            what, sent = 'picture', lib.print_bitmap(rendered.pages[0], values[K_MEDIA], copies)
+            what, sent = 'picture', lib.print_bitmap(rendered.pages[0], values[K_MEDIA], copies, edge=job['edge'])
         window[K_STATUS].update(f'Printed {what}: {sent}    ({lib.printer_summary()})', text_color='#9CCC65')
     except Exception as e:
         window[K_STATUS].update('Print failed - see the message', text_color='#FF8A65')
@@ -740,7 +754,7 @@ def main():
         elif event == K_FEED:
             try:
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color='#9CCC65')
-                lib.feed(1)
+                lib.feed(1, values[K_MEDIA])
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)

@@ -60,7 +60,7 @@ import webbrowser
 
 import PySimpleGUI as sg
 
-VERSION = '1.12.8'
+VERSION = '1.12.9'
 APP_NAME = 'Toybox'
 TITLE = 'PySimpleGUI Playground - Toybox'
 ROOT = os.path.dirname(os.path.abspath(__file__))

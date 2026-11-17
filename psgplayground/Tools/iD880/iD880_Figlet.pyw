@@ -9,10 +9,15 @@ iD880 Figlet - big FIGlet lettering printed on the iD880 - psgfiglet for the rec
         Size      Fit the paper - as big as it can go             or a fixed size, 1 to 48 points (under 4 points use Solid blocks)
         Draw as   Characters - the FIGlet text itself              Solid blocks - every character filled in (bold - best for fonts made of #)
         Extra dark  prints at the darkest setting and slowest speed, whatever Setup says - big black areas print gray at normal speed
+        Edge to edge  no white at the sides: no margins, and the print runs about 1 mm past both edges of the paper (made for 4" paper)
     Copy text puts the FIGlet text on the clipboard.   Random font picks one from the list.
     Ctrl+P prints.   Esc closes.   Click the preview, then Up/Down, PgUp/PgDn, Home/End scroll it.
 
 Needs id880_lib.py in the same folder, and pyfiglet:   python -m pip install pyfiglet
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Feed goes to the printer that holds the roll picked here (id880_lib 15-Nov)
+2026-11-14  Claude: Edge to edge checkbox - no side margins, the print runs about 1 mm past both edges (needs id880_lib with print_width / edge)
 """
 import functools
 import random
@@ -44,6 +49,7 @@ K_SIZE = '-SIZE-'
 K_STYLE = '-STYLE-'
 K_ALIGN = '-ALIGN-'
 K_EXTRA_DARK = '-EXTRA DARK-'
+K_EDGE = '-EDGE-'
 K_INFO = '-INFO-'
 K_PREVIEW = '-PREVIEW-'
 K_PREVIEW_COL = '-PREVIEW COL-'
@@ -61,7 +67,8 @@ UPRIGHT, SIDEWAYS = 'Upright', 'Sideways (banner)'
 FIT = 'Fit the paper'
 SIZES = [FIT] + [f'{n} pt' for n in (1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 18, 24, 36, 48)]
 CHARACTERS, SOLID = 'Characters', 'Solid blocks'
-SETTINGS = {K_MEDIA: 'fig_media', K_LAYOUT: 'fig_layout', K_SIZE: 'fig_size', K_STYLE: 'fig_style', K_ALIGN: 'fig_align', K_EXTRA_DARK: 'fig_extra_dark'}
+SETTINGS = {K_MEDIA: 'fig_media', K_LAYOUT: 'fig_layout', K_SIZE: 'fig_size', K_STYLE: 'fig_style', K_ALIGN: 'fig_align', K_EXTRA_DARK: 'fig_extra_dark',
+            K_EDGE: 'fig_edge'}
 MARGIN = lib.mm_dots(2)                                             # white left and right of the lettering
 TOP = lib.mm_dots(3)                                                # white above and below
 SMALLEST_CHARACTER = 5                                              # dots - drawn characters narrower than this blur together
@@ -140,9 +147,12 @@ def draw_grid(grid, columns, cell_w, style):
     return img
 
 
-def make_print(text, font, paper_w, layout, size, style, align):
-    """Returns (1-bit picture to print, FIGlet text, info lines, warn).  Raises if the font can't draw the text."""
-    usable = paper_w - 2 * MARGIN
+def make_print(text, font, paper_w, layout, size, style, align, print_w=None):
+    """Returns (1-bit picture to print, FIGlet text, info lines, warn).  Raises if the font can't draw the text.
+    print_w (Edge to edge): the picture is that wide - a little wider than the paper - with no white margins at the sides."""
+    margin = 0 if print_w else MARGIN
+    print_w = print_w or paper_w
+    usable = paper_w - 2 * margin
     sideways, center = layout == SIDEWAYS, align == 'Center' or layout == SIDEWAYS
     tall = lib.DPI / 72 / mono_advance()                            # cell height / cell width
     notes = []
@@ -161,8 +171,8 @@ def make_print(text, font, paper_w, layout, size, style, align):
     img = draw_grid(grid, columns, cell_w, style)
     if sideways:
         img = img.rotate(270, expand=True)                          # turned clockwise: the start of the text prints first
-    paper = Image.new('L', (paper_w, img.height + 2 * TOP), 255)
-    paper.paste(img, ((paper_w - img.width) // 2 if center else MARGIN, TOP))
+    paper = Image.new('L', (print_w, img.height + 2 * TOP), 255)
+    paper.paste(img, ((print_w - img.width) // 2 if center else (print_w - paper_w) // 2 + margin, TOP))
     letters = len(grid) * cell_w * tall / lib.DPI
     inches = paper.height / lib.DPI
     warn = cell_w < SMALLEST_BLOCK or (style == CHARACTERS and cell_w < SMALLEST_CHARACTER)
@@ -242,6 +252,8 @@ def make_window():
         [sg.Text('Line up', size=(8, 1)), sg.Combo(['Center', 'Left'], value(K_ALIGN, 'Center', ('Center', 'Left')), key=K_ALIGN, **combo)],
         [sg.Checkbox('Extra dark  (prints slower)', value(K_EXTRA_DARK, True, (True, False)), key=K_EXTRA_DARK, enable_events=True,
                      tooltip=' Darkest setting at the slowest speed - big black areas need the extra heat to print solid black ')],
+        [sg.Checkbox('Edge to edge  (no white at the sides)', value(K_EDGE, False, (True, False)), key=K_EDGE, enable_events=True,
+                     tooltip=' No side margins - the print runs about 1 mm past both edges of the paper (made for 4" paper) ')],
         [sg.Text('', key=K_INFO, size=(40, 3), **hint)]])
     print_row = [sg.Button('Print', key=K_PRINT, size=(10, 1), button_color=('white', lib.GREEN)), sg.Text('Copies'),
                  sg.Spin(list(range(1, 21)), initial_value=1, key=K_COPIES, size=(3, 1))]
@@ -268,7 +280,7 @@ def update_preview(window, font, values):
     """Redraw what will print.  Returns (1-bit picture, FIGlet text) - or (None, '') if the font can't draw the text."""
     try:
         img1, text, info, warn = make_print(values[K_TEXT].rstrip() or ' ', font, lib.media_width(values[K_MEDIA]), values[K_LAYOUT], values[K_SIZE],
-                                            values[K_STYLE], values[K_ALIGN])
+                                            values[K_STYLE], values[K_ALIGN], lib.print_width(values[K_MEDIA], True) if values[K_EDGE] else None)
     except Exception as e:
         window[K_INFO].update(f'The font "{font}" can\'t draw this\n{str(e)[:80]}', text_color=lib.ORANGE)
         return None, ''
@@ -346,7 +358,7 @@ def main():
             if inches > LONG_PRINT_IN and sg.popup_yes_no(f'This uses {inches:.0f} inches of paper.  Print it?', title='iD880 Figlet', keep_on_top=True) != 'Yes':
                 continue
             try:
-                sent = lib.print_bitmap(img1, values[K_MEDIA], values[K_COPIES], values[K_EXTRA_DARK])
+                sent = lib.print_bitmap(img1, values[K_MEDIA], values[K_COPIES], values[K_EXTRA_DARK], values[K_EDGE])
                 window[K_STATUS].update(f'Printed: {sent}    ({lib.printer_summary()})', text_color='#9CCC65')
             except Exception as e:
                 window[K_STATUS].update('Print failed - see the message', text_color='#FF8A65')
@@ -354,7 +366,7 @@ def main():
         elif event == K_FEED:
             try:
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color='#9CCC65')
-                lib.feed(1)
+                lib.feed(1, values[K_MEDIA])
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)

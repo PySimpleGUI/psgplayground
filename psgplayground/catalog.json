@@ -27,8 +27,8 @@
 
     {"name": "PSG Dock", "section": "Tools", "file": "psgdock.pyw", "icon": "psgdock_64.png", "platform": "any", "requires": ["pillow", "psgdnd"], "featured": true,
      "blurb": "A small always-on-top dock of icon buttons that launch your programs. Set it up by dropping programs onto it; drag entries to reorder."},
-    {"name": "Network Scanner", "section": "Tools", "file": "network_scanner_v2.pyw", "icon": "network_scanner.png", "platform": "any", "requires": [], "args_demo": "--demo",
-     "blurb": "Every device on your LAN as a color-coded tile: names, IPs, MACs, open ports, kind. Standard library only - runs on Python 3.6+."},
+    {"name": "Network Scanner", "section": "Tools", "file": "network_scanner.pyw", "icon": "network_scanner.png", "platform": "any", "requires": ["pillow"], "args_demo": "--demo",
+     "blurb": "Every device on your network, as tiles that fill the window or as a list you can sort: names, IPs, MACs, makers, open ports, kind. Ctrl + wheel sizes the tiles."},
     {"name": "Task Manager", "section": "Tools", "file": "task_manager.pyw", "icon": "task_manager.png", "platform": "any", "requires": ["psutil", "pillow"], "args_demo": "--demo",
      "blurb": "Every running process with its CPU, memory, threads and command line, kept up to date in place. Type to filter, click a heading to sort, Delete ends a process and all it started."},
     {"name": "Claude Chat Search", "section": "Tools", "file": "claude_chat_search.pyw", "icon": "claude_chat_search.png", "platform": "any", "requires": [],

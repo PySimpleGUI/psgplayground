@@ -7,6 +7,9 @@ iD880 Address Labels - mailing labels (From + To), To-only labels and return add
     Ctrl+P prints.   Esc closes.   Up/Down, PgUp/PgDn, Home/End scroll the preview (or the address book when it has focus).
 
 Needs id880_lib.py in the same folder.   Run iD880_Setup.pyw once first to pick the printer.
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Feed goes to the printer that holds the roll picked here (id880_lib 15-Nov)
 """
 import PySimpleGUI as sg
 from PIL import Image, ImageDraw
@@ -262,7 +265,7 @@ def main():
         elif event == K_FEED:
             try:
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color='#9CCC65')
-                lib.feed(1)
+                lib.feed(1, values[K_MEDIA])
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)

@@ -10,6 +10,9 @@ iD880 Ship Label - print a carrier's shipping or return label (PDF or picture) a
 
 PDFs need PyMuPDF:   python -m pip install pymupdf        Drag and drop needs psgdnd:   python -m pip install psgdnd
 Needs id880_lib.py in the same folder.   Run iD880_Setup.pyw once first to pick the printer.
+
+CHANGE LOG (newest first, 1 line per change):
+2026-11-15  Claude: two printers - Print and Feed go to the printer that holds the roll picked here (id880_lib 15-Nov)
 """
 import os
 import sys
@@ -301,7 +304,7 @@ def main():
         elif event == K_FEED:
             try:
                 window[K_STATUS].update(f'Fed 1 inch    ({lib.printer_summary()})', text_color='#9CCC65')
-                lib.feed(1)
+                lib.feed(1, values[K_MEDIA])
             except Exception as e:
                 window[K_STATUS].update('Feed failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)
@@ -358,7 +361,7 @@ def main():
             try:
                 jobs = [lib.build_job(build_label(state.doc, p, crop_for(state.doc, p, state.mode, state.manual), TURNS[values[K_TURN]], width, height, int(values[K_DARKER])),
                                       values[K_MEDIA], values[K_COPIES]) for p in pages]
-                window[K_STATUS].update(f'Printed {len(jobs)} label(s): {lib.send_raw(b"".join(jobs))}    ({lib.printer_summary()})', text_color='#9CCC65')
+                window[K_STATUS].update(f'Printed {len(jobs)} label(s): {lib.send_raw(b"".join(jobs), values[K_MEDIA])}    ({lib.printer_summary()})', text_color='#9CCC65')
             except Exception as e:
                 window[K_STATUS].update('Print failed - see the message', text_color='#FF8A65')
                 lib.popup_print_error(e)
