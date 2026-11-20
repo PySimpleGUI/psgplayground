@@ -4,7 +4,7 @@
     {"name": "Widgets",     "folder": "Widgets",     "color": "#1e9bff", "blurb": "Small (optionally) always-on-top desktop widgets that sit in a corner and quietly keep you informed."},
     {"name": "Tools",       "folder": "Tools",       "color": "#2ecc71", "blurb": "Everyday utilities - a program dock, a network scanner, a task manager, chat search, a translator, screen and window inspectors, printer tools."},
     {"name": "System Tray", "folder": "Tray",        "color": "#2ad4c8", "blurb": "Programs that live in the system tray, out of the way until you need them - right-click the icon for the menu."},
-    {"name": "Programming", "folder": "Programming", "color": "#c48cff", "blurb": "Tools that help with PySimpleGUI programming - screenshot regression tests and a previewer for dark themes."},
+    {"name": "Programming", "folder": "Programming", "color": "#c48cff", "blurb": "Tools that help with PySimpleGUI programming - screenshot regression tests, a previewer for dark themes, and PSG Bounce, which shows what a computer, its Python and tk can do."},
     {"name": "Music",       "folder": "Music",       "color": "#ffc53d", "blurb": "MIDI piano practice tools. Plug in a MIDI keyboard, pick its port, play - every one of these listens and shows you something interesting and maybe even helpful.  I use the Tempo and Harmony Wheel daily.  I was using the Staff Trainer for a few weeks working on music theory.\n\nThere's one additional music application, Player Coach, that I use constantly when playing/practicing.  I want to spend a little more time getting that one documented first.",
      "warning": "Lightly tested. I've only run these on Windows, a few of them only briefly, and they have no screenshots yet. Expect rough edges on Linux and Mac."},
     {"name": "Templates",   "folder": "Templates",   "color": "#9aa5b1", "blurb": "Starting points that already follow the Playground conventions. Copy one and go."}
@@ -57,6 +57,8 @@
      "requires": ["pillow"], "blurb": "Pixel-compares two labeled runs and writes a release-ready report.html plus a GitHub-issue-ready report.md and flagged image."},
     {"name": "Dark Theme Preview", "section": "Programming", "file": "dark_theme_preview.py", "icon": "dark_theme_chooser.png", "platform": "any", "requires": [],
      "blurb": "Dozens of custom dark PySimpleGUI themes with a previewer - view them all at once or try one live. Copy the dict into your program."},
+    {"name": "PSG Bounce", "section": "Programming", "file": "psgbounce.pyw", "icon": "psgbounce.png", "platform": "any", "requires": ["pillow"], "args_demo": "--demo",
+     "blurb": "Thousands of balls bouncing off each other: five scenes, blast and pull them with the mouse, set them loose on your desktop (Windows), and measure what your PC, Python and tk can do."},
 
     {"name": "Piano Dynamics Monitor", "section": "Music", "file": "piano_dynamics_monitor.pyw", "icon": "piano_dynamics_monitor.png", "platform": "any", "requires": ["mido", "python-rtmidi"],
      "blurb": "How hard you hit the keys, as a 1-10 loudness line that scrolls as you play - overall and per voice (bass / middle / top). Plays MIDI files too."},

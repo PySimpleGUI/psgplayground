@@ -43,7 +43,7 @@ The Widget Template has all of it, ready for a widget of your own.
 
 Paths are inside the `psgplayground` package - in this repo, or in site-packages once you've installed it.
 
-<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 2e1be80bfe70) -->
+<!-- PROGRAMS START: a sync writes everything from here to PROGRAMS END from catalog.json - change the catalog, not these tables  (sync 3b188d6f8122) -->
 
 ### Widgets
 
@@ -86,13 +86,14 @@ Programs that live in the system tray, out of the way until you need them - righ
 
 ### Programming
 
-Tools that help with PySimpleGUI programming - screenshot regression tests and a previewer for dark themes.
+Tools that help with PySimpleGUI programming - screenshot regression tests, a previewer for dark themes, and PSG Bounce, which shows what a computer, its Python and tk can do.
 
 | Program | What it does | Needs |
 |---|---|---|
 | <img src="psgplayground/icons/regression_run.png" width="40" height="40"><br>**Snapshot Test Runner** | Runs the SNAP_*.py screenshot tests against any PySimpleGUI.py you point it at - installed or a local folder - and labels the run.<br>`Programming/snap_regression/run_snapshots_gui.py`<br><a href="psgplayground/screenshots/run_snapshots_gui.png"><img src="psgplayground/screenshots/run_snapshots_gui.png" width="127" height="150"></a> | pillow, psgdnd |
 | <img src="psgplayground/icons/regression_compare.png" width="40" height="40"><br>**Snapshot Compare** | Pixel-compares two labeled runs and writes a release-ready report.html plus a GitHub-issue-ready report.md and flagged image.<br>`Programming/snap_regression/compare_screenshots_gui.py`<br><a href="psgplayground/screenshots/compare_screenshots_gui.png"><img src="psgplayground/screenshots/compare_screenshots_gui.png" width="116" height="150"></a> | pillow |
 | <img src="psgplayground/icons/dark_theme_chooser.png" width="40" height="40"><br>**Dark Theme Preview** | Dozens of custom dark PySimpleGUI themes with a previewer - view them all at once or try one live. Copy the dict into your program.<br>`Programming/dark_theme_preview.py`<br><a href="psgplayground/screenshots/dark_theme_preview.png"><img src="psgplayground/screenshots/dark_theme_preview.png" width="208" height="150"></a> | - |
+| <img src="psgplayground/icons/psgbounce.png" width="40" height="40"><br>**PSG Bounce** | Thousands of balls bouncing off each other: five scenes, blast and pull them with the mouse, set them loose on your desktop (Windows), and measure what your PC, Python and tk can do.<br>`Programming/psgbounce.pyw`<br><a href="psgplayground/screenshots/psgbounce.png"><img src="psgplayground/screenshots/psgbounce.png" width="238" height="150"></a> | pillow |
 
 ### Music
 

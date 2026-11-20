@@ -38,6 +38,18 @@ import json
     2.1.2   30-Oct-2026     Claude: the drop slot shown while dragging takes its colour from the theme (lighter shade of the background with a
                             faint outline) instead of fixed grey.
     2.1.3   30-Oct-2026     Claude: "Settings..." added to the right-click menu.
+    2.2.62  20-Nov-2026     Claude: a Bar's controls are always tucked into the three dots at its end unless right-click > Controls says
+                            Always shown or None - a big bar no longer shows them all the time, and adding a program never brings them out.
+    2.2.61  19-Nov-2026     Claude: new versions, the program standard's way.  Right-click > New versions:  Ask me first (the default -
+                            a pop-up beside the dock, now always on the screen),  By itself, while I'm not using it,  or Only say so in
+                            this menu - one choice for all the docks on this PC.  Docks that are all tucked away restart at once.  Nothing
+                            happens while any dock is in use.  After an update each dock shows a yellow UPDATED tag by its version (a Bar:
+                            yellow dots on its end cap); click it, or right-click > What's new..., for the changes since.
+    2.2.60  19-Nov-2026     Claude: touch screens.  A finger leaves the pointer where it lifted, so a Bar kept that icon magnified and an
+                            auto-hidden dock never tucked away.  Now (Windows: the pointer not drawn = a finger or a pen) a finger's lift
+                            counts as the mouse leaving: the magnification eases back, the Panel's highlight goes, auto-hide tucks the dock
+                            away after 3 s (or Hide after, if longer), and a lift at the edge doesn't bring it out again - tap the handle.
+                            Tucked controls tapped out stay out until tapped again or the dock hides.  The mouse works as before.
     2.2.59  14-Nov-2026     Claude: a program's file.  Right-click a program > Open file location (PySimpleGUI's Explorer Program when one is
                             set - the program standard) / Copy the path.  Drag a program out of the Panel and hold it still past the dock (over
                             no other dock - dock to dock still moves it) and it becomes its file - drop it into Explorer, a chat, any program
@@ -263,12 +275,13 @@ import json
     Start psgdock.pyw with no --dock (the taskbar pin) to open every dock you had open;  right-click > Close all docks / Restart all docks.
     Right-click > Start with Windows (Windows): "PSG Dock.lnk" in your Startup folder runs it like the pin;  its icon is "PSG Dock.ico" in the settings folder.
     Right-click a program > Open file location / Copy the path.  Drag a program out of the Panel and hold it still: then drop its file into Explorer or a chat.
+    A newer psgdock.pyw saved over this one: right-click > New versions decides - Ask me first (default), By itself while you're not using it, or Only say so.
     Requires:  PySimpleGUI, pillow, psgdnd  (pip install psgdnd)
 
     Copyright 2026_PySimpleGUI
 """
 
-VERSION = '2.2.59'
+VERSION = '2.2.62'
 version = VERSION                                               # (the name the code has always used - VERSION is the one the UPDATE block reads)
 APP_NAME = 'PSG Dock'
 ENTRIES_FILENAME = 'psgdock_entries.json'                       # the list of programs (was launcher2.json)
@@ -277,34 +290,52 @@ MAIN_SETTINGS_FILENAME = WINDOW_SETTINGS_FILENAME               # the dock start
 DOCK_PREFIX = 'psgdock_dock_'                                   #   psgdock_dock_claude_chats.json and psgdock_dock_claude_chats_entries.json - set by use_dock()
 
 
-# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026) - paste unchanged ---
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026, block 3.1 of 15-Nov) - paste unchanged ---
 # Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
-# once a NEWER VERSION has been saved over it and has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts),
-# a program hidden in the tray restarts by itself; a showing one asks with a small pop-up - Restart now / Later (Later after 30 s on its own).
-# Later keeps "Restart - x.y.z is ready" in the menu.  Not the internet: the file itself, which Dropbox brings to every PC.
-# Wiring (see the standards):  menu item  f'{restart_label()}::Restart'  ->  Update.restart = True and end the loop;
-#   on the timer:  new = update_check();  if Update.ready and hidden in the tray: Update.restart = True  (also after a Later)
-#                  elif new: update_offer(window, new, colors) and remake the menu;  if Update.restart: end the loop
-#   at the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+# a NEWER VERSION saved over it counts once it has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts).
+# Then right-click > New versions decides (remembered, -NEW VERSIONS-; the program sets Update.default for its kind):
+#   'auto'  By itself - hidden in the tray at once, showing once the mouse has been off the window UPDATE_QUIET seconds and nothing of it is open
+#   'ask'   Ask me first - a small pop-up, Restart now / Later (Later by itself after 30 s); hidden in the tray it goes by itself
+#   'menu'  Only say so here - never by itself; the menu reads "Restart - x.y.z is ready"
+# Not the internet: the file itself - whatever put the newer copy there (a synced folder, pip, a download).
+# Block 3: at each start the program compares its VERSION with the one that last ran on this PC (-RAN VERSION-).  Newer = it was updated - by
+# itself, from the menu or by hand.  Update.was holds the old version; update_tag() is the version it was updated from until the user has looked
+# (-UPDATED FROM-, kept across restarts) - the program shows an UPDATED tag by its version, and clicking it shows update_news(update_tag()) (the
+# change-log lines since then) and calls update_tag_seen().  If this PC already has a card-log folder (a notifications program reads it), one line
+# goes into it as well - nothing is created on a PC that doesn't have one.
+# Wiring (update_block.md):  main() start: Update.default = 'auto' / 'ask' / 'menu';   menu, just above Exit: *update_menu(tick)
+#   each event: if update_event(event): end the loop if Update.restart, else remake the menu
+#   timer (every 2-5 s): if update_tick(window, hidden, busy, colors): remake the menu;  if Update.restart: end the loop
+#   the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
 UPDATE_SETTLE = 60
+UPDATE_QUIET = 10
+UPDATE_CHOICES = (('auto', "By itself, while I'm not using it"), ('ask', 'Ask me first'), ('menu', 'Only say so in this menu'))
 
 
 class Update:
+    default = 'ask'                   # the program's kind: 'auto' widgets + tray apps, 'ask' other programs that run all day, 'menu' open-and-close
     seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
     ready = ''                        # a newer VERSION saved over this file (settled, compiles)
     asked = ''                        # the version the pop-up already asked about - not asked again
+    away = None                       # when the mouse left the window (for 'auto')
     restart = False                   # set -> the main loop ends, then restart_self()
+    was = ''                          # block 3: the version that ran before on this PC, when this start is a newer one ('' = not updated)
+
+
+def update_mode():
+    mode = sg.user_settings_get_entry('-NEW VERSIONS-', Update.default)
+    return mode if mode in dict(UPDATE_CHOICES) else Update.default
 
 
 def update_check():
-    """ Call every few seconds.  Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only
-        after it has changed and settled """
+    """ Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only after it changed and settled """
     try:
         mtime = os.path.getmtime(os.path.abspath(__file__))
     except OSError:
         return ''
     if Update.seen is None:
         Update.seen = (mtime, None)
+        update_noted()                                                    # block 3: the first look - an update since the last run?
     if mtime != Update.seen[0]:
         Update.seen = (mtime, time.time())
         return ''
@@ -325,16 +356,139 @@ def update_check():
     return ''
 
 
+def update_noted():
+    """ Block 3, once per start: this VERSION against the one that last ran on this PC (-RAN VERSION-).  Newer: Update.was = the old version, the
+        UPDATED tag is set, and - only where a card-log folder already exists - one line goes into it.  Never raises """
+    try:
+        ran_before = bool(sg.user_settings())                             # a settings file with something in it: it ran here before
+        last = str(sg.user_settings_get_entry('-RAN VERSION-', '') or '')
+        sg.user_settings_set_entry('-RAN VERSION-', VERSION)
+        if not last and not ran_before:                                   # its first run on this PC
+            return
+        if last and tuple(int(x) for x in last.split('.')) >= tuple(int(x) for x in VERSION.split('.')):
+            return
+        last = last or 'an earlier version'                               # it ran here before block 3 kept the version
+        Update.was = last
+        if not sg.user_settings_get_entry('-UPDATED FROM-'):              # not looked at yet since an earlier update: keep the oldest
+            sg.user_settings_set_entry('-UPDATED FROM-', last)
+        import datetime, json, uuid
+        name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+        new = next((re.sub(r'^\s*\d{4}-\d\d-\d\d\s+v?' + re.escape(VERSION) + r'\s*(Claude:\s*)?', '', line).strip()
+                    for line in (globals().get('__doc__') or '').splitlines() if re.match(r'\s*\d{4}-\d\d-\d\d\s+v?' + re.escape(VERSION) + r'\b', line)), '')
+        base = sg.DEFAULT_USER_SETTINGS_WIN_PATH if sys.platform.startswith('win') else sg.DEFAULT_USER_SETTINGS_MAC_PATH if sys.platform == 'darwin' \
+            else sg.DEFAULT_USER_SETTINGS_LINUX_PATH
+        folder = os.path.join(os.path.expanduser(base), 'Notifications')
+        if not os.path.isdir(folder):                                     # no notifications program on this PC: nothing is written
+            return
+        now = datetime.datetime.now()
+        line = {'v': 1, 'id': uuid.uuid4().hex[:12], 'at': now.strftime('%Y-%m-%d %H:%M:%S'), 'program': str(name)[:60], 'title': f'Updated to {VERSION}',
+                'text': (f'Was {last}.  ' + new[:1].upper() + new[1:])[:2000].strip(), 'click': None, 'private': False}
+        with open(os.path.join(folder, f'cards_{now:%Y-%m}.jsonl'), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(line, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+
+
+def update_tag():
+    """ Block 3: the version this program was updated from, until the user has looked ('' = nothing to show).  The program shows an UPDATED tag """
+    return str(sg.user_settings_get_entry('-UPDATED FROM-', '') or '')
+
+
+def update_tag_seen():
+    """ Block 3: the user looked (clicked the tag) - the tag goes away """
+    sg.user_settings_set_entry('-UPDATED FROM-', '')
+
+
+def update_news(since=''):
+    """ Block 3: the change-log lines of the versions after since, up to this one, newest first, each 'x.y.z  what changed' (a line that goes on
+        is joined on).  since = '' or 'an earlier version': all of them """
+    try:
+        floor = tuple(int(x) for x in since.split('.'))
+    except ValueError:
+        floor = ()
+    top, out, keep = tuple(int(x) for x in VERSION.split('.')), [], False
+    for line in (globals().get('__doc__') or '').splitlines():
+        found = re.match(r'\s*\d{4}-\d\d-\d\d\s+v?([0-9]+(?:\.[0-9]+)+)\s+(?:Claude:\s*)?(.*)', line)
+        if found:
+            ver = tuple(int(x) for x in found.group(1).split('.'))
+            keep = floor < ver <= top
+            if keep:
+                out.append(f'{found.group(1)}  {found.group(2).strip()}')
+        elif keep and line.startswith((' ', '\t')) and line.strip():
+            out[-1] += ' ' + line.strip()
+        else:
+            keep = False
+    return out
+
+
 def restart_label():
     """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
     return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
 
 
+def update_menu(tick=None, indent='    '):
+    """ The right-click items to put just above Exit: the New versions sub-menu (its choice ticked) and Restart.  tick(on) = the program's own
+        check-mark prefix, so the items line up with its other ones """
+    tick = tick or (lambda on: '✓ ' if on else indent)
+    mode = update_mode()
+    return [f'{indent}New versions', [f'{tick(k == mode)}{text}::-NEW VERSIONS {k}-' for k, text in UPDATE_CHOICES], f'{indent}{restart_label()}::Restart']
+
+
+def update_event(event):
+    """ True when the event was one of this block's: Restart (sets Update.restart) or a New versions choice (saved - remake the menu) """
+    key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event
+    if key == 'Restart':
+        Update.restart = True
+        return True
+    for k, _ in UPDATE_CHOICES:
+        if key == f'-NEW VERSIONS {k}-':
+            sg.user_settings_set_entry('-NEW VERSIONS-', k)
+            return True
+    return False
+
+
+def mouse_away(window):
+    """ True once the mouse has been off the window UPDATE_QUIET seconds in a row """
+    try:
+        root = window.TKroot
+        px, py = root.winfo_pointerxy()
+        x, y, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        inside = x <= px < x + w and y <= py < y + h
+    except Exception:
+        inside = False
+    if inside:
+        Update.away = None
+        return False
+    Update.away = Update.away or time.time()
+    return time.time() - Update.away >= UPDATE_QUIET
+
+
+def update_tick(window, hidden=False, busy=False, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Call on the timer.  hidden = the window is hidden in the tray;  busy = a dialog, panel or edit of the program is open (nothing happens
+        then);  colors = (background, text, button) of the pop-up - the program's own theme.  Sets Update.restart when it is time.
+        Returns True when the menu should be remade (a version became ready, or the pop-up was answered Later) """
+    new = update_check()
+    if not Update.ready or Update.restart:
+        return bool(new)
+    mode = update_mode()
+    if mode == 'menu':
+        return bool(new)
+    if hidden:
+        Update.restart = True
+        return False
+    quiet = mouse_away(window) and not busy
+    if mode == 'auto':
+        Update.restart = quiet
+        return bool(new)
+    if Update.asked != Update.ready and not busy:
+        Update.asked = Update.ready                                       # once per version
+        update_offer(window, Update.ready, colors)
+        return not Update.restart
+    return bool(new)
+
+
 def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
-    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  colors = (background, text, button)
-        - pass the program's own theme colors.  Sets Update.restart """
-    if new == Update.asked:
-        return
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  Sets Update.restart """
     Update.asked = new
     bg, fg, button = colors
     try:
@@ -343,9 +497,9 @@ def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
     except Exception:
         spot = (None, None)
     name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
-    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', title='New version', custom_text=('Restart now', 'Later'),
-                      keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot, background_color=bg, text_color=fg,
-                      button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', '(Right-click > New versions: by itself, ask, or only say so)',
+                      title='New version', custom_text=('Restart now', 'Later'), keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot,
+                      background_color=bg, text_color=fg, button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
     Update.restart = answer == 'Restart now'
 
 
@@ -491,6 +645,11 @@ class G:
     menu_up = False                                     # the right-click menu is showing (from the right-press until it closes) - tucked controls stay out
     flyout = 0.3                                        # right-click > Fly out: seconds the mouse rests on the handle before an auto-hidden dock comes out
     hide_delay = 0.7                                    # right-click > Hide after: seconds the mouse is away before an auto-hidden dock tucks away
+    cursor_api = None                                   # Windows: GetCursorInfo - tells a finger's lift from the mouse resting (made once;  False: not to be had)
+    updated_from = ''                                   # the UPDATE block's update_tag(): the version this dock was updated from, until What's new is looked at
+    update_asking = False                               # a new version waits: the other docks are being asked whether they are in use
+    set_mtime = None                                    # the set file's time when last read (the New versions choice for all the docks)
+    mouse_in = False                                    # the mouse is on the dock's window (Enter / Leave) - for another dock asking whether it is in use
     version_stamps = {}                                 # the versions' refresh: {program path: its file's mtime at the last look}
     starters = {}                                       # a starter file's program: {starter path: the source its version came from}
     remote_over = False                                 # another dock is dragging something over this one (its line / gap shows here)
@@ -589,7 +748,10 @@ K_DELETE_DOCK = '-DELETE DOCK-'                 # right-click > Docks > Delete t
 K_DOCK_SHORTCUT = '-DOCK SHORTCUT-'             # right-click > Docks > Desktop shortcut for this dock
 K_CLOSE_ALL = '-CLOSE ALL DOCKS-'               # right-click > Close all docks (the pin opens them all again);  Restart all docks is 'Restart'
 K_IN_SET = '-IN THE SET-'                       # settings: this dock was open (True) / closed on its own (False) - the pin opens the ones that were open
-K_UPDATE_FOUND = '-NEW VERSION-'                # a newer psgdock.pyw was saved over this one (the UPDATE block), value = its version
+K_UPDATE_DUE = '-UPDATE DUE-'                   # a newer psgdock.pyw waits and this dock speaks for the set: (another dock in use, all of them tucked away)
+K_WHATS_NEW = '-WHATS NEW-'                     # right-click > What's new... (and a click on the UPDATED tag)
+SET_FILENAME = 'psgdock_set.json'               # what the docks on this PC share: the New versions choice (no dock's own file - list_docks never reads it)
+C_UPDATED, C_UPDATED_TEXT = '#f5c542', '#241a02'                       # the UPDATED tag (program standards: yellow pill, dark text)
 UPDATE_POLL_MS = 5000                           # how often a dock looks at its own file for a newer version (one stat)
 K_ADD_LINK = '-ADD LINK-'                       # right-click > Add a link... (a web page, a claude:// chat ...)
 K_E_ADD_LINK = '-E ADD LINK-'                   # a heading's menu: Add a link here...
@@ -754,12 +916,15 @@ def make_menu():
         items += [f'{tick(startup_on())}Start with Windows::{K_STARTUP}']
     fill = fill_script()                                                # a dock filled by a script: that script refreshes it
     items += ['---', f'    Sharper icons - fetch them again...::{K_SHARPEN_ALL}', f'    Refresh::{K_REFRESH}'] + \
-             ([f'    Refresh this dock from {menu_label(os.path.basename(fill))}::{K_FILL_RUN}'] if fill else []) + ['    Edit Me::Edit Me', '    Version::Version', '---']
+             ([f'    Refresh this dock from {menu_label(os.path.basename(fill))}::{K_FILL_RUN}'] if fill else []) + \
+             ['    Edit Me::Edit Me', f'    Version {VERSION}::Version', f"    What's new...::{K_WHATS_NEW}", '---']
+    news = update_menu(tick)                                            # the UPDATE block: New versions > (one choice for the whole set) and Restart
+    items += news[:2]
     if any(slug != G.dock_slug and dock_running(slug) for slug, _ in list_docks()):          # the docks are one set: restarted / closed together
         ready = f'  -  {Update.ready} is ready' if Update.ready else ''
         items += [f'    Restart all docks{ready}::Restart', f'    Close all docks::{K_CLOSE_ALL}']
     else:
-        items += [f'    {restart_label()}::Restart']
+        items += [news[2]]
     items += ['    Exit::Exit']
     return ['', items]
 
@@ -2607,12 +2772,13 @@ SECTION_NAMES = ('Gold', 'Blue', 'Green', 'Purple', 'Coral', 'Teal', 'Pink', 'Ye
 HEAD_AUTO = 'Automatic'                                                # a heading's Colour menu: the palette's colour for its place (no colour of its own)
 BAR_ICON, BAR_GAP, BAR_PAD, BAR_SEP, BAR_TOOL = 48, 8, 9, 17, 0.62     # Bar style, design pixels at 96 dpi / Medium size.  The switch and the gear are 62% of an icon
 BAR_LABEL, BAR_LABEL_SIDE = 54, 260                                    # room for the name bubble: above / below a horizontal bar, beside a vertical one (x text size)
-BAR_MORE, CONTROLS_SHARE = 0.34, 0.2                                   # Controls tucked: the end cap is 34% of an icon;  not set = tucked when over this share of the bar
+BAR_MORE = 0.34                                                        # Controls tucked: the end cap is 34% of an icon
 BAR_CONTROLS = {'Tucked': 'Tucked at the end', 'Always': 'Always shown', 'None': 'None  (right-click only)'}        # right-click > Controls
 TOOLS_REST, TOOLS_GRACE = 0.15, 0.6                                    # seconds on the end cap before they come out;  a click this soon after doesn't fold them
 BAR_EDGE, BAR_SIDE = 10, 18                                            # room around the bar for its shadow: on the screen-edge side, at the ends
 PANEL_SHADOW = 18                                                      # Glass: room around the Panel card for its shadow
 AUTOHIDE_POLL_MS, AUTOHIDE_DWELL, AUTOHIDE_DELAY, SLIDE_MS = 90, 0.25, 0.7, 170    # auto-hide: pointer check, rest at the edge before showing, wait before hiding, slide time
+TOUCH_HIDE_S = 3.0                                                     # auto-hide after a finger lifted on the dock: out at least this long (no finger rests on it)
 HANDLE_COLORS = {'The theme\'s': None, 'Gold': '#e8a33d', 'Blue': '#1e9bff', 'Green': '#2ecc71', 'Purple': '#c48cff', 'Coral': '#ff7f50', 'Teal': '#2ad4c8',
                  'Pink': '#ff6b9a', 'Yellow': '#d9c63a', 'Lime': '#a6e22e', 'Periwinkle': '#8c9eff', 'Silver': '#c0c7d1', 'White': '#f4f6fa'}   # right-click > Handle colour
 HANDLE_CUSTOM = 'Custom...'                                            # its last item: any colour, from the colour picker (G.handle_custom)
@@ -3269,6 +3435,8 @@ def card_layout():
 
 def hint(part):
     """ The bottom line: what's under the mouse (a program's path), else a summary - while searching: how many match, and the one Enter opens """
+    if part == 'updated':
+        return f'Updated from {G.updated_from}  -  click UPDATED to see what changed'
     if part == 'gear':
         return 'Programs - add, remove and order them'
     if part == 'close':
@@ -3325,9 +3493,17 @@ def render_card():
         im.alpha_composite(icon, (round(13 * k), round((BTN_Y - 9) * k)))
     title_font = font(True, round(13 * min(ts, 1.25) * k))
     ver_font = font(False, round(12 * k))
-    title = fit(d, G.dock_title.upper(), title_font, max(40 * k, (W - 211 - 38 - 14) * k - d.textlength(f'v{version}', font=ver_font)))     # this dock's name
+    tag_font = font(True, round(12 * k))                                # after an update: a yellow UPDATED tag by the version until What's new is seen
+    tag_w = d.textlength('UPDATED', font=tag_font) / k + 14 if G.updated_from else 0
+    ver = f'v{version}' if not tag_w or W - 263 - tag_w - d.textlength(f'v{version}', font=ver_font) / k >= 40 else ''    # (a narrow card: the tag in its place)
+    title = fit(d, G.dock_title.upper(), title_font, max(40 * k, (W - 211 - 38 - 14 - tag_w) * k - d.textlength(ver, font=ver_font)))     # this dock's name
     d.text((38 * k, BTN_Y * k), title, font=title_font, fill=t['dim'], anchor='lm')
-    d.text((38 * k + d.textlength(title, font=title_font) + 7 * k, (BTN_Y + 1) * k), f'v{version}', font=ver_font, fill=mix_hex(t['dim'], t['card'], 0.4), anchor='lm')
+    d.text((38 * k + d.textlength(title, font=title_font) + 7 * k, (BTN_Y + 1) * k), ver, font=ver_font, fill=mix_hex(t['dim'], t['card'], 0.4), anchor='lm')
+    if tag_w:
+        tx = 38 + (d.textlength(title, font=title_font) + d.textlength(ver, font=ver_font)) / k + (13 if ver else 7)
+        d.rounded_rectangle((tx * k, (BTN_Y - 8) * k, (tx + tag_w - 6) * k, (BTN_Y + 8) * k), radius=8 * k, fill=C_UPDATED)
+        d.text(((tx + (tag_w - 6) / 2) * k, (BTN_Y + 0.5) * k), 'UPDATED', font=tag_font, fill=C_UPDATED_TEXT, anchor='mm')
+        hits.append((tx, BTN_Y - 9, tx + tag_w - 6, BTN_Y + 9, 'updated'))
     size_box = (W - 184, BTN_Y - 10, W - 89, BTN_Y + 10)                    # T S M L
     hot = (isinstance(G.hover, tuple) and G.hover[0] == 'size') or G.scrub is not None
     draw_size_control(d, tuple(v * k for v in size_box), True, t, hot)
@@ -3473,17 +3649,9 @@ def panel_drop(xd, yd):
 # ------------------------------------------------------------ Bar style ------------------------------------------------------------
 
 def bar_controls(items=None):
-    """ Right-click > Controls, as it is for this Bar now: 'Tucked' (an end cap, the controls come out of it), 'Always' or 'None'.  Not set:
-        tucked when the controls would take more than CONTROLS_SHARE of the bar - counted in icon widths from what the dock holds (items: its
-        programs, stacks and lines), so the size, the text size or the screen never change it """
-    if G.bar_controls in BAR_CONTROLS:
-        return G.bar_controls
-    if items is None:
-        items = bar_items('Always')
-    gap = BAR_GAP / BAR_ICON
-    programs = sum((1 if kind in ('app', 'stack') else BAR_SEP / BAR_ICON) + gap for kind, b, pos, sec in items if kind in ('app', 'stack', 'sep'))
-    tools = (len(SIZE_PRESETS) + 0.1) * 0.5 + gap + (2 + hide_shown()) * (BAR_TOOL + gap)
-    return 'Tucked' if programs and tools > CONTROLS_SHARE * (programs + tools) else 'Always'
+    """ Right-click > Controls, as it is for this Bar now: 'Tucked' (an end cap, the controls come out of it - also when not set), 'Always'
+        (handy on a touch screen: hide in one tap) or 'None'.  items: kept for the callers (until 2.2.61 a big bar showed them when not set) """
+    return G.bar_controls if G.bar_controls in BAR_CONTROLS else 'Tucked'
 
 
 def bar_tools(end, controls):
@@ -3530,7 +3698,7 @@ def tools_tick(hover, now):
         if now - G.tools_rest >= TOOLS_REST:
             G.tools_open, G.tools_since = True, now
     busy = G.menu_up or G.stack_open is not None or G.scrub is not None or G.press is not None
-    if G.tools_open and G.pointer is None and not busy:
+    if G.tools_open and G.pointer is None and not busy and not touch_lifted():   # (tapped out: they stay until tapped again or the dock hides)
         G.tools_open = False
     target = 1.0 if G.tools_open else 0.0
     G.tools_out += (target - G.tools_out) * 0.35
@@ -3890,7 +4058,7 @@ def render_bar():
         elif kind == 'more':                                            # Controls tucked: the end cap - lit under the mouse and while they are out
             hot = G.hover == 'more' or G.tools_open
             box = bar_box(L, m, base + zone * 0.2, m + w, base + zone * 0.8)
-            draw_more(d, box, vertical(), t['text'] if hot else t['dim'], mix_hex(t['text'], t['card'], 0.84) if hot else None)
+            draw_more(d, box, vertical(), t['text'] if hot else C_UPDATED if G.updated_from else t['dim'], mix_hex(t['text'], t['card'], 0.84) if hot else None)
             part, top = 'more', base + zone * 0.8
         elif kind == 'size':
             st = L['size_thick']
@@ -3907,6 +4075,9 @@ def render_bar():
                 d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=mix_hex(t['text'], t['card'], 0.84))
             if kind == 'gear':
                 draw_gear(d, cx, cy, w * 0.36, color, mix_hex(t['text'], t['card'], 0.84) if hot else rgba(t['card'], 208 if G.glass else 255))
+                if G.updated_from and L['more'] is None:                # updated: a yellow dot (tucked controls: the end cap's dots turn yellow)
+                    r = max(3, w * 0.11)
+                    d.ellipse((cx + w * 0.3 - r, cy - w * 0.3 - r, cx + w * 0.3 + r, cy - w * 0.3 + r), fill=C_UPDATED)
             elif kind == 'hide':
                 draw_hide(d, cx, cy, w * 0.26, color, max(2, round(w * 0.08)))
             elif kind == 'search':
@@ -3998,9 +4169,13 @@ def bar_bubble(im, d, L, part, text=None):
     elif part == 'gear':                                                # this dock's name, then what the gear does
         runs.append((G.dock_title, small, mix_hex(t['heading'], '#ffffff', 0.15)))
         runs.append(('Programs  -  add, remove and order them   ·   right-click for settings', sub_f, '#9aa3b2'))
+        if G.updated_from:
+            runs.append((f"UPDATED from {G.updated_from}  -  right-click > What's new", sub_f, C_UPDATED))
     elif part == 'more':                                                # the end cap: what is tucked into it
         runs.append(('Controls', small, '#eceff6'))
         runs.append(('size  ·  Panel  ·  Programs' + ('  ·  hide' if hide_shown() else '') + '   -   also on right-click', sub_f, '#9aa3b2'))
+        if G.updated_from:
+            runs.append((f"UPDATED from {G.updated_from}  -  right-click > What's new", sub_f, C_UPDATED))
     elif part == 'switch':
         runs.append(('Switch to the Panel  -  names and versions', small, '#eceff6'))
     elif part == 'hide':
@@ -4108,6 +4283,8 @@ def bar_tick(window):
     G.bar_geo = L
     m, c = bar_coords(L, x, y)
     inside = G.bar_extent[0] - L['gap'] <= m <= G.bar_extent[1] + L['gap'] and -L['edge'] <= c <= L['edge'] + L['thick'] + L['rise'] + 6
+    if inside and touch_lifted():                                       # a finger lifted here: the pointer only stays where it was - not the mouse
+        inside = False
     now = time.time()
     if inside or G.scrub is not None:
         G.pointer, G.out_since = (x, y), None
@@ -4530,6 +4707,30 @@ def at_edge(px, py):
     return {'Bottom': py >= bottom - 2 and along_x, 'Top': py <= top + 1 and along_x, 'Left': px <= left + 1 and along_y, 'Right': px >= right - 2 and along_y}[G.place]
 
 
+def touch_lifted():
+    """ Windows: a finger (or a pen) moved the pointer last and nothing is held on the dock now.  A finger leaves the pointer where it lifted -
+        Windows stops drawing it then (GetCursorInfo: CURSOR_SUPPRESSED) - so that spot is not the mouse resting on the dock: nothing stays
+        magnified or lit, auto-hide tucks the dock away, a spot left at the edge doesn't bring it out.  The mouse moving draws the pointer again """
+    if G.press is not None or G.cursor_api is False or not sg.running_windows():
+        return False
+    try:
+        if G.cursor_api is None:
+            import ctypes
+            from ctypes import wintypes
+
+            class CURSORINFO(ctypes.Structure):
+                _fields_ = [('cbSize', wintypes.DWORD), ('flags', wintypes.DWORD), ('hCursor', wintypes.HANDLE), ('ptScreenPos', wintypes.POINT)]
+            get = ctypes.WinDLL('user32').GetCursorInfo
+            get.restype, get.argtypes = wintypes.BOOL, [ctypes.POINTER(CURSORINFO)]
+            G.cursor_api = (get, CURSORINFO, ctypes.sizeof(CURSORINFO))
+        get, CURSORINFO, size = G.cursor_api
+        info = CURSORINFO(cbSize=size)
+        return bool(get(info)) and bool(info.flags & 2)
+    except Exception:
+        G.cursor_api = False
+        return False
+
+
 def autohide_tick(window):
     """ About 11 times a second with auto-hide on: fly the dock out when the pointer is on its handle or rests at its edge, tuck it away again
         when the pointer has left (not while a stack is open or files are being dragged over it) """
@@ -4543,7 +4744,9 @@ def autohide_tick(window):
     now = time.time()
     if G.hidden and G.anim is None and G.press is None:                 # (the handle held: it's being dragged)
         w, h = G.win_size
-        if wx <= px < wx + w and wy <= py < wy + h:                     # on the handle: out after a short rest - a press first drags the handle
+        if touch_lifted():                                              # a finger lifted: no resting on the handle or the edge - a tap on the handle brings it out
+            G.edge_since, G.handle_since = None, None
+        elif wx <= px < wx + w and wy <= py < wy + h:                   # on the handle: out after a short rest - a press first drags the handle
             G.edge_since = None
             if G.handle_since is None:
                 G.handle_since = now
@@ -4563,12 +4766,14 @@ def autohide_tick(window):
         w, h = G.full_size
         margin = round(30 * G.dpi)
         inside = x0 - margin <= px < x0 + w + margin and y0 - margin <= py < y0 + h + margin
+        lifted = inside and touch_lifted()                              # a finger lifted on the dock: away - after a longer wait, to tap something
+        inside = inside and not lifted
         busy = G.drop_index is not None or G.stack_open is not None or G.scrub is not None or G.drag_item is not None or G.press is not None
         if inside or busy or (G.search and G.focus):                    # (typing in its search: it stays out)
             G.out_since = None
         else:
             G.out_since = G.out_since or now
-            if now - G.out_since >= G.hide_delay:                       # (right-click > Hide after)
+            if now - G.out_since >= (max(G.hide_delay, TOUCH_HIDE_S) if lifted else G.hide_delay):     # (right-click > Hide after)
                 G.out_since = None
                 slide(window, False)
     window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
@@ -4586,7 +4791,7 @@ def version_tick(window):
             px, py = window.TKroot.winfo_pointerxy()
             wx, wy = window.TKroot.winfo_rootx(), window.TKroot.winfo_rooty()
             w, h = G.win_size
-            idle = not (wx <= px < wx + w and wy <= py < wy + h)
+            idle = touch_lifted() or not (wx <= px < wx + w and wy <= py < wy + h)
         except Exception:
             idle = False
     if idle:
@@ -4961,6 +5166,7 @@ def bind_mouse(window):
     widget = window[K_IMAGE].Widget
 
     def motion(e):
+        G.mouse_in = True
         if G.hidden:
             return
         if G.style == 'Bar':
@@ -5029,6 +5235,8 @@ def bind_mouse(window):
 
     def release(e):
         p, G.press = G.press, None
+        if G.style != 'Bar' and G.hover and touch_lifted():             # a finger lifted: nothing stays lit where it was
+            window.write_event_value(K_HOVER, None)
         if G.scrub is not None:
             scrub, G.scrub = G.scrub, None
             if not scrub['moved']:
@@ -5071,10 +5279,12 @@ def bind_mouse(window):
         set_right_click_menu(window, part_menu(part), armed=True)      # (Windows: emptied again a moment after it closes)
 
     def enter(e):
+        G.mouse_in = True
         if not G.hidden and G.style == 'Bar':
             bar_track_start(window)
 
     def leave(e):
+        G.mouse_in = False
         if G.style != 'Bar' and G.hover and G.scrub is None and not (G.press and G.press['moving']):
             window.write_event_value(K_HOVER, None)
 
@@ -6025,6 +6235,9 @@ def open_stack(window, heading_num, by_hover=False):
             if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the stack stays out)
                 versions_found(window, values[event])
                 continue
+            if event == K_UPDATE_DUE:                                   # (a new version: asked again once the stack is closed)
+                G.update_asking = False
+                continue
             if event == K_IPC:                                          # another dock asking: busy while the stack is out
                 values[event][1]['done'].set()
                 continue
@@ -6205,6 +6418,9 @@ def open_search(window, text=''):
             if event == K_VERSIONS_FOUND:                               # (the versions' refresh: the dock takes it, the search stays out)
                 versions_found(window, values[event])
                 continue
+            if event == K_UPDATE_DUE:                                   # (a new version: asked again once the search is closed)
+                G.update_asking = False
+                continue
             if event == K_IPC:                                          # another dock asking: busy while the search is out
                 values[event][1]['done'].set()
                 continue
@@ -6277,7 +6493,7 @@ def make_psg_launcher():
         G.out_since, G.edge_since = None, None
         window.TKroot.after(AUTOHIDE_POLL_MS, lambda: autohide_tick(window))
     window.TKroot.after(VERSION_CHECK_S * 1000, lambda: version_tick(window))         # the versions keep themselves up to date
-    window.TKroot.after(UPDATE_POLL_MS, lambda: update_tick(window))                    # a newer psgdock.pyw (the UPDATE block)
+    window.TKroot.after(UPDATE_POLL_MS, lambda: dock_update_tick(window))               # a newer psgdock.pyw (the UPDATE block)
     return window
 
 
@@ -6490,6 +6706,8 @@ def ipc_conn(conn):
                 break
             if req.get('op') == 'hello':
                 reply = {'psgdock': True, 'slug': G.dock_slug, 'dock': G.dock_title}
+            elif req.get('op') == 'in use':                             # a new version waits: is this dock being used (answered here, from G only)
+                reply = {'ok': True, 'in_use': dock_in_use(), 'tucked': bool(G.hidden and G.autohide)}
             else:
                 box = {'done': threading.Event(), 'reply': {'ok': False, 'mine': False, 'busy': True}, 'expired': False, 'taken': False}
                 try:
@@ -6539,6 +6757,12 @@ def ipc_answer(window, req):
     op, x, y = req.get('op'), req.get('x'), req.get('y')
     if op in ('quit', 'restart'):                                       # Close all docks / Restart all docks on another dock: this one goes too
         G.leave = op
+        return {'ok': True}
+    if op == 'news seen':                                               # What's new looked at in another dock: this one's UPDATED tag goes too
+        if G.updated_from:
+            update_tag_seen()
+            G.updated_from = ''
+            redraw(window)
         return {'ok': True}
     mine = on_my_window(window, x, y) if op in ('over', 'drop') else False
     if not mine:
@@ -6996,17 +7220,208 @@ def set_leader():
     return next((slug for slug, _ in list_docks() if dock_running(slug)), G.dock_slug) == G.dock_slug
 
 
-def update_tick(window):
-    """ Every UPDATE_POLL_MS: one stat() of this file (update_check, the UPDATE block); a newer, settled psgdock.pyw -> K_UPDATE_FOUND """
+def dock_update_tick(window):
+    """ Every UPDATE_POLL_MS - the UPDATE block for the whole set: the set's New versions choice; one stat() of this file; at the first look the
+        record (the dock that speaks for the set writes the one card-log line, the others only their own -RAN VERSION- and UPDATED tag).  When a
+        newer psgdock.pyw waits and something is due (By itself, a question not asked yet, or tucked away) and nothing of this dock is under way,
+        the other docks are asked whether they are in use (a thread), then K_UPDATE_DUE takes it to the main loop - update_tick there """
+    import threading
     try:
         if window is not G.window or window.is_closed(quick_check=True):
             return
-        new = update_check()
-        if new:
-            window.write_event_value(K_UPDATE_FOUND, new)
-        window.TKroot.after(UPDATE_POLL_MS, lambda: update_tick(window))
+        window.TKroot.after(UPDATE_POLL_MS, lambda: dock_update_tick(window))
     except Exception:                                                   # (the window went in the meantime)
+        return
+    try:
+        new_versions_sync()
+        if Update.seen is None and not set_leader():
+            update_noted_quiet()
+        update_check()
+        if update_tag() != G.updated_from:
+            G.updated_from = update_tag()
+            redraw(window)
+        mode = update_mode()
+        due = Update.ready and not Update.restart and mode != 'menu' and (mode == 'auto' or G.hidden or Update.asked != Update.ready)
+        if due and not G.update_asking and not update_busy() and set_leader():
+            G.update_asking = True
+            threading.Thread(target=ask_set_in_use, args=(window,), daemon=True).start()
+    except Exception:
+        G.update_asking = False
+
+
+def update_noted_quiet():
+    """ The UPDATE block's first look, for the other docks of the set: the same record in this dock's own settings (-RAN VERSION-, -UPDATED FROM-,
+        Update.was) without the card-log line - the dock that speaks for the set writes that one line for all of them """
+    try:
+        Update.seen = (os.path.getmtime(os.path.abspath(__file__)), None)
+        ran_before = bool(sg.user_settings())
+        last = str(sg.user_settings_get_entry('-RAN VERSION-', '') or '')
+        sg.user_settings_set_entry('-RAN VERSION-', VERSION)
+        if (not last and not ran_before) or (last and tuple(int(x) for x in last.split('.')) >= tuple(int(x) for x in VERSION.split('.'))):
+            return
+        Update.was = last or 'an earlier version'
+        if not sg.user_settings_get_entry('-UPDATED FROM-'):
+            sg.user_settings_set_entry('-UPDATED FROM-', Update.was)
+    except Exception:
         pass
+
+
+def update_busy():
+    """ The UPDATE block's busy, for a dock: something of it is under way - a press, a drag, a drop, a stack or search fly-out, the right-click menu,
+        typing in its search (no pop-up and no restart then) """
+    return bool(G.press is not None or G.drag_item is not None or G.drop_index is not None or G.stack_open is not None or G.scrub is not None
+                or G.menu_up or G.drag_out or (G.search and G.focus))
+
+
+def dock_in_use():
+    """ Another dock asks (a new version waits): is this one being used - busy, or the mouse on it (not a finger's lift).  From G and
+        GetCursorInfo only: it is answered in its connection's thread """
+    return update_busy() or (not G.hidden and (G.mouse_in or G.pointer is not None or G.hover is not None) and not touch_lifted())
+
+
+def ask_set_in_use(window):
+    """ (A thread) a new version waits: every other open dock is asked 'in use', then K_UPDATE_DUE (any in use, all tucked away).  No answer
+        counts as in use; an older dock that doesn't know the question counts as showing """
+    import socket
+    in_use, tucked = False, True
+    for slug, name, port in other_docks():
+        if not dock_running(slug):
+            continue
+        reply = None
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=1) as sock:
+                sock.settimeout(3)
+                f = sock.makefile('rw', encoding='utf-8', newline='\n')
+                f.write(json.dumps({'op': 'hello'}) + '\n')
+                f.flush()
+                hello = json.loads(f.readline() or 'null')
+                if not (isinstance(hello, dict) and hello.get('psgdock') and hello.get('slug') == slug):
+                    continue                                            # (an old port, now someone else's)
+                f.write(json.dumps({'op': 'in use'}) + '\n')
+                f.flush()
+                reply = json.loads(f.readline() or 'null')
+        except (OSError, ValueError):
+            pass
+        if not isinstance(reply, dict) or reply.get('busy'):
+            in_use, tucked = True, False
+        elif 'in_use' in reply:
+            in_use, tucked = in_use or bool(reply['in_use']), tucked and bool(reply.get('tucked'))
+        else:
+            tucked = False
+    try:
+        window.write_event_value(K_UPDATE_DUE, (in_use, tucked))
+    except Exception:
+        G.update_asking = False
+
+
+class UpdateSpot:
+    """ What the UPDATE block is handed in place of the dock's window: its pop-up lands on the screen beside the dock (the block puts it at the
+        window's corner + 20 - past the screen's edge for a dock on the right or the bottom), and a finger's lift doesn't count as the mouse resting
+        on the dock (touch_lifted) """
+    def __init__(self, window):
+        self.window = window
+        self.TKroot = self
+
+    def current_location(self):
+        x, y = self.window.current_location()
+        w, h = G.win_size or (0, 0)
+        pw, ph = round(500 * G.dpi), round(200 * G.dpi)                 # about the pop-up's size
+        x0, y0, x1, y1 = G.work or (0, 0, x + w + pw, y + h + ph)
+        sx = {'Left': x + w + 12, 'Right': x - pw - 12}.get(G.place, x + 20)
+        sy = {'Top': y + h + 12, 'Bottom': y - ph - 12}.get(G.place, y + 20)
+        sx, sy = max(x0 + 8, min(sx, x1 - pw - 8)), max(y0 + 8, min(sy, y1 - ph - 8))
+        return sx - 20, sy - 20                                         # (the block adds 20)
+
+    def winfo_pointerxy(self):
+        return (-99999, -99999) if touch_lifted() else self.window.TKroot.winfo_pointerxy()
+
+    def __getattr__(self, name):                                        # winfo_rootx, winfo_rooty, winfo_width, winfo_height
+        return getattr(self.window.TKroot, name)
+
+
+def set_file():
+    return os.path.join(settings_folder(), SET_FILENAME)
+
+
+def new_versions_share(mode):
+    """ Right-click > New versions in any dock is for the whole set: the block saved it in this dock's own settings; the set file tells the
+        other docks (new_versions_sync, within UPDATE_POLL_MS) """
+    try:
+        try:
+            with open(set_file(), encoding='utf-8') as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        data['-NEW VERSIONS-'] = mode
+        with open(set_file(), 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=1)
+        G.set_mtime = os.path.getmtime(set_file())
+    except OSError:
+        pass
+
+
+def new_versions_sync():
+    """ Another dock changed New versions: the set file's choice into this dock's own settings (one stat() a call; read only after a change) """
+    try:
+        mtime = os.path.getmtime(set_file())
+        if mtime == G.set_mtime:
+            return
+        with open(set_file(), encoding='utf-8') as f:
+            mode = json.load(f).get('-NEW VERSIONS-')
+    except (OSError, ValueError, AttributeError):
+        return                                                          # (half written: read again next time)
+    G.set_mtime = mtime
+    if mode in dict(UPDATE_CHOICES) and mode != sg.user_settings_get_entry('-NEW VERSIONS-'):
+        sg.user_settings_set_entry('-NEW VERSIONS-', mode)
+
+
+def dock_news(since=''):
+    """ The change-log lines of the versions after since, up to this one, newest first, 'x.y.z  what changed' - from this file's CHANGE LOG
+        (its lines start with the version: '2.2.61  19-Nov-2026  Claude: ...', so the block's update_news can't read them).  since '' or
+        'an earlier version': the latest 8 """
+    try:
+        floor = tuple(int(x) for x in since.split('.'))
+    except ValueError:
+        floor = None
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            head = f.read().split("\nVERSION = '", 1)[0]
+    except OSError:
+        return []
+    top, found, last = tuple(int(x) for x in VERSION.split('.')), [], None
+    for line in head.splitlines():
+        m = re.match(r'\s{4}(\d+(?:\.\d+)+)\s+\d\d-[A-Za-z]{3}-\d{4}\s+(?:Claude:\s*)?(.*)', line)
+        if m:
+            ver = tuple(int(x) for x in m.group(1).split('.'))
+            last = [ver, f'{m.group(1)}   {m.group(2).strip()}'] if ver <= top and (floor is None or ver > floor) else None
+            if last:
+                found.append(last)
+        elif last is not None and re.match(r'\s{20,}\S', line):
+            last[1] += ' ' + line.strip()
+        else:
+            last = None
+    found.sort(key=lambda v: v[0], reverse=True)
+    return [text for _, text in (found if floor is not None else found[:8])]
+
+
+def show_news(window):
+    """ Right-click > What's new... and a click on the UPDATED tag: the changes since the version it was updated from (else the latest ones), in
+        the dock's colours; then the tag goes - in the other open docks too (they were updated together) """
+    import threading
+    since = G.updated_from
+    lines = dock_news(since)
+    x, y = UpdateSpot(window).current_location()
+    body = [part for line in lines for part in (line, '')] or ['(no change-log lines found)']           # (a blank line between versions)
+    sg.popup_scrolled(f'{APP_NAME} {VERSION}' + (f'   -   updated from {since}' if since else ''), '', *body, title="What's new",
+                      size=(96, min(26, 6 + 3 * len(lines))), keep_on_top=True, non_blocking=True,
+                      location=(x + 20, y + 20), background_color=T()['card'], text_color=T()['text'], button_color=('#ffffff', C_SELECT), font=('Segoe UI', 10),
+                      icon=dock_icon_64)
+    if since:
+        update_tag_seen()
+        G.updated_from = ''
+        redraw(window)
+        threading.Thread(target=tell_docks, args=('news seen',), daemon=True).start()
 
 
 def let_go():
@@ -7213,6 +7628,9 @@ def keep_going(window, event, values):
         return True
     if event == K_VERSIONS_FOUND:
         versions_found(window, values[K_VERSIONS_FOUND])
+        return True
+    if event == K_UPDATE_DUE:                                           # (a new version: asked again once the panel is closed)
+        G.update_asking = False
         return True
     if event == K_IPC:                                                  # another dock asking: busy while the panel is open
         values[K_IPC][1]['done'].set()
@@ -7448,6 +7866,7 @@ def brightness_panel(card, keep_going):
 #  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝
 
 def main():
+    Update.default = 'ask'                                              # the UPDATE block: a program that runs all day - Ask me first (program standards)
     sg.set_options(border_width=0, dpi_awareness=True)
     if dock_arg() is None and '--alone' not in sys.argv and not open_the_set():      # the pin: every dock that was open last time
         return
@@ -7487,6 +7906,10 @@ def main():
         if menu_key == 'Exit':                                          # this dock alone: the pin leaves it out next time
             G.leave = 'one'
             break
+        if isinstance(menu_key, str) and menu_key.startswith('-NEW VERSIONS '):           # right-click > New versions: one choice for the whole set
+            update_event(event)
+            new_versions_share(update_mode())
+            continue
         if menu_key in ('Restart', K_CLOSE_ALL):                        # Restart all docks / Close all docks ('Restart' alone when it's the only one)
             leave_together(menu_key == 'Restart')
             break
@@ -7511,6 +7934,8 @@ def main():
                 break
             if part == 'hide':                                          # tuck it away now (auto-hide)
                 hide_now(window)
+            elif part == 'updated':                                     # the UPDATED tag: what changed
+                show_news(window)
             elif part == 'more':                                        # the Bar's end cap: its tucked controls out / folded
                 tools_click(window)
             elif part == 'gear':
@@ -7554,12 +7979,13 @@ def main():
             if G.leave:                                                 # another dock closed / restarted the set
                 Update.restart = G.leave == 'restart'
                 break
-        elif event == K_UPDATE_FOUND:                                   # a newer psgdock.pyw: the first open dock asks, once, for the whole set
-            if set_leader():
-                update_offer(window, values[K_UPDATE_FOUND], (T()['card'], T()['text'], C_SELECT))
-                if Update.restart:
-                    leave_together(True)
-                    break
+        elif event == K_UPDATE_DUE:                                     # a newer psgdock.pyw waits: the UPDATE block decides, for the whole set
+            G.update_asking = False
+            in_use, tucked = values[K_UPDATE_DUE]
+            update_tick(UpdateSpot(window), G.hidden and G.autohide and tucked, update_busy() or in_use, (T()['card'], T()['text'], C_SELECT))
+            if Update.restart:
+                leave_together(True)
+                break
         elif event == K_DOCK_SENT:                                      # what was dragged onto another dock: its answer
             dock_sent(window, values[K_DOCK_SENT])
         elif event == K_VERSIONS_FOUND:                                 # the versions' refresh found programs whose version changed
@@ -7607,8 +8033,11 @@ def main():
             make_dock_shortcut()
         elif menu_key == 'Version':
             startup = f'\nStart with Windows:  {startup_link() if startup_on() else "off"}' if sg.running_windows() else ''
-            sg.popup_scrolled(f'{__file__}\n{APP_NAME} version {version}{startup}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10),
+            news = f'\nNew versions:  {dict(UPDATE_CHOICES)[update_mode()]}  (all the docks on this PC)' + (f'\nUpdated from {Update.was}' if Update.was else '')
+            sg.popup_scrolled(f'{__file__}\n{APP_NAME} version {version}{startup}{news}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10),
                               icon=dock_icon_64)
+        elif menu_key == K_WHATS_NEW:
+            show_news(window)
         elif menu_key == 'Edit Me':
             sg.execute_editor(__file__)
         elif menu_key in (K_REFRESH, 'Refresh'):
