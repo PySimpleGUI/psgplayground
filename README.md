@@ -99,7 +99,7 @@ Tools that help with PySimpleGUI programming - screenshot regression tests, a pr
 
 MIDI piano practice tools. Plug in a MIDI keyboard, pick its port, play - every one of these listens and shows you something interesting and maybe even helpful.  I use the Tempo and Harmony Wheel daily.  I was using the Staff Trainer for a few weeks working on music theory.
 
-There's one additional music application, Player Coach, that I use constantly when playing/practicing.  I want to spend a little more time getting that one documented first.
+There's one additional music application, Imprint, that I use constantly when playing/practicing.  I want to spend a little more time getting that one documented first.
 
 > [!WARNING]
 > Lightly tested. I've only run these on Windows, a few of them only briefly, and they have no screenshots yet. Expect rough edges on Linux and Mac.
